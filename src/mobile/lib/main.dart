@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:signalr_netcore/signalr_client.dart';
 
@@ -28,12 +29,11 @@ class MusicAntiBlurApp extends StatelessWidget {
       ),
       GoRoute(
         path: '/verify',
-        builder: (_, state) => TokenScreen(
+        builder: (_, _) => CodeScreen(
           api: api,
           title: 'Verify email',
-          initialToken: state.uri.queryParameters['token'] ?? '',
           submitLabel: 'Confirm',
-          onSubmit: (token, _) => api.verify(token),
+          onSubmit: (code, _) => api.verify(code),
           onDone: (context) {
             api.hasSession().then((ok) {
               if (!context.mounted) {
@@ -47,14 +47,13 @@ class MusicAntiBlurApp extends StatelessWidget {
       GoRoute(path: '/forgot', builder: (_, _) => ForgotScreen(api: api)),
       GoRoute(
         path: '/reset',
-        builder: (_, state) => TokenScreen(
+        builder: (_, _) => CodeScreen(
           api: api,
           title: 'Reset password',
-          initialToken: state.uri.queryParameters['token'] ?? '',
           submitLabel: 'Change password',
           requirePassword: true,
-          onSubmit: (token, password) =>
-              api.reset(token: token, newPassword: password ?? ''),
+          onSubmit: (code, password) =>
+              api.reset(code: code, newPassword: password ?? ''),
           onDone: (context) => context.go('/login'),
         ),
       ),
@@ -92,6 +91,60 @@ class IdentifierTypeField extends StatelessWidget {
       ],
       selected: {value},
       onSelectionChanged: (s) => onChanged(s.first),
+    );
+  }
+}
+
+class PasswordField extends StatefulWidget {
+  const PasswordField({
+    super.key,
+    required this.controller,
+    required this.label,
+  });
+
+  final TextEditingController controller;
+  final String label;
+
+  @override
+  State<PasswordField> createState() => _PasswordFieldState();
+}
+
+class _PasswordFieldState extends State<PasswordField> {
+  bool _obscure = true;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: widget.controller,
+      obscureText: _obscure,
+      decoration: InputDecoration(
+        labelText: widget.label,
+        suffixIcon: IconButton(
+          tooltip: _obscure ? 'Show password' : 'Hide password',
+          onPressed: () => setState(() => _obscure = !_obscure),
+          icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
+        ),
+      ),
+    );
+  }
+}
+
+class CodeField extends StatelessWidget {
+  const CodeField({super.key, required this.controller});
+
+  final TextEditingController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      keyboardType: TextInputType.number,
+      maxLength: 6,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: const InputDecoration(
+        labelText: 'Code from email',
+        counterText: '',
+      ),
     );
   }
 }
@@ -163,11 +216,7 @@ class _LoginScreenState extends State<LoginScreen> {
             controller: _id,
             decoration: InputDecoration(labelText: _type == 'email' ? 'Email' : 'Login'),
           ),
-          TextField(
-            controller: _password,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: 'Password'),
-          ),
+          PasswordField(controller: _password, label: 'Password'),
           const SizedBox(height: 16),
           FilledButton(
             onPressed: _busy
@@ -197,7 +246,7 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
           TextButton(onPressed: () => context.push('/register'), child: const Text('Create account')),
           TextButton(onPressed: () => context.push('/forgot'), child: const Text('Forgot password')),
-          TextButton(onPressed: () => context.push('/verify'), child: const Text('I have a verification token')),
+          TextButton(onPressed: () => context.push('/verify'), child: const Text('I have a verification code')),
         ],
       ),
     );
@@ -242,11 +291,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             keyboardType: TextInputType.emailAddress,
             decoration: const InputDecoration(labelText: 'Email'),
           ),
-          TextField(
-            controller: _password,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: 'Password (12+ characters)'),
-          ),
+          PasswordField(controller: _password, label: 'Password (12+ characters)'),
           const SizedBox(height: 16),
           FilledButton(
             onPressed: _busy
@@ -285,43 +330,78 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 }
 
-class CheckEmailScreen extends StatelessWidget {
+class CheckEmailScreen extends StatefulWidget {
   const CheckEmailScreen({super.key, required this.api, required this.email});
   final ApiClient api;
   final String email;
 
   @override
+  State<CheckEmailScreen> createState() => _CheckEmailScreenState();
+}
+
+class _CheckEmailScreenState extends State<CheckEmailScreen> {
+  final _code = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _code.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: buildAppBar(context, 'Check your email'),
-      body: Padding(
+      body: ListView(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('We sent a confirmation link to $email. Open MailHog at http://localhost:8025 locally.'),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: () => context.push('/verify'), child: const Text('Enter token')),
-            TextButton(
-              onPressed: () async {
-                try {
-                  await api.resend(email);
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('If the account exists, another email was sent.')),
-                    );
-                  }
-                } catch (e) {
-                  if (context.mounted) {
-                    showApiError(context, e);
-                  }
+        children: [
+          Text('We sent a 6-digit code to ${widget.email}. Open MailHog at http://localhost:8025 locally.'),
+          const SizedBox(height: 16),
+          CodeField(controller: _code),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _busy
+                ? null
+                : () async {
+                    setState(() => _busy = true);
+                    try {
+                      await widget.api.verify(_code.text.trim());
+                      if (!context.mounted) {
+                        return;
+                      }
+                      context.go('/home');
+                    } catch (e) {
+                      if (context.mounted) {
+                        showApiError(context, e);
+                      }
+                    } finally {
+                      if (mounted) {
+                        setState(() => _busy = false);
+                      }
+                    }
+                  },
+            child: const Text('Confirm'),
+          ),
+          TextButton(
+            onPressed: () async {
+              try {
+                await widget.api.resend(widget.email);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('If the account exists, another email was sent.')),
+                  );
                 }
-              },
-              child: const Text('Resend'),
-            ),
-            TextButton(onPressed: () => popOrGo(context, '/login'), child: const Text('Back to sign in')),
-          ],
-        ),
+              } catch (e) {
+                if (context.mounted) {
+                  showApiError(context, e);
+                }
+              }
+            },
+            child: const Text('Resend'),
+          ),
+          TextButton(onPressed: () => popOrGo(context, '/login'), child: const Text('Back to sign in')),
+        ],
       ),
     );
   }
@@ -379,39 +459,38 @@ class _ForgotScreenState extends State<ForgotScreen> {
   }
 }
 
-class TokenScreen extends StatefulWidget {
-  const TokenScreen({
+class CodeScreen extends StatefulWidget {
+  const CodeScreen({
     super.key,
     required this.api,
     required this.title,
     required this.submitLabel,
     required this.onSubmit,
     required this.onDone,
-    this.initialToken = '',
     this.requirePassword = false,
   });
 
   final ApiClient api;
   final String title;
   final String submitLabel;
-  final String initialToken;
   final bool requirePassword;
-  final Future<void> Function(String token, String? password) onSubmit;
+  final Future<void> Function(String code, String? password) onSubmit;
   final void Function(BuildContext context) onDone;
 
   @override
-  State<TokenScreen> createState() => _TokenScreenState();
+  State<CodeScreen> createState() => _CodeScreenState();
 }
 
-class _TokenScreenState extends State<TokenScreen> {
-  late final TextEditingController _token;
+class _CodeScreenState extends State<CodeScreen> {
+  final _code = TextEditingController();
   final _password = TextEditingController();
   bool _busy = false;
 
   @override
-  void initState() {
-    super.initState();
-    _token = TextEditingController(text: widget.initialToken);
+  void dispose() {
+    _code.dispose();
+    _password.dispose();
+    super.dispose();
   }
 
   @override
@@ -421,13 +500,9 @@ class _TokenScreenState extends State<TokenScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          TextField(controller: _token, decoration: const InputDecoration(labelText: 'Token from email')),
+          CodeField(controller: _code),
           if (widget.requirePassword)
-            TextField(
-              controller: _password,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: 'New password'),
-            ),
+            PasswordField(controller: _password, label: 'New password'),
           const SizedBox(height: 16),
           FilledButton(
             onPressed: _busy
@@ -436,7 +511,7 @@ class _TokenScreenState extends State<TokenScreen> {
                     setState(() => _busy = true);
                     try {
                       await widget.onSubmit(
-                        _token.text.trim(),
+                        _code.text.trim(),
                         widget.requirePassword ? _password.text : null,
                       );
                       if (context.mounted) {
@@ -536,18 +611,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Text('Bind missing identifier (requires current password)'),
           TextField(controller: _email, decoration: const InputDecoration(labelText: 'Email')),
           TextField(controller: _login, decoration: const InputDecoration(labelText: 'Login')),
-          TextField(
-            controller: _password,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: 'Current password'),
-          ),
+          PasswordField(controller: _password, label: 'Current password'),
           FilledButton(
             onPressed: () async {
               try {
                 await widget.api.bindEmail(_email.text, _password.text);
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Check email to confirm.')),
+                    const SnackBar(content: Text('Check email for a 6-digit code.')),
                   );
                 }
               } catch (e) {

@@ -25,7 +25,7 @@ public sealed class AuthService(
 
     public async Task<SessionResponse> RegisterAsync(RegisterRequest req, Guid deviceId, string ip, CancellationToken ct)
     {
-        await limiter.HitAsync($"rl:register:{ip}", 5, TimeSpan.FromHours(1), ct);
+        await limiter.HitAsync($"rl:register:{ip}", 30, TimeSpan.FromHours(1), ct);
         PasswordRules.EnsurePassword(req.Password);
         if (string.IsNullOrWhiteSpace(req.Login) || string.IsNullOrWhiteSpace(req.Email))
         {
@@ -195,7 +195,7 @@ public sealed class AuthService(
             .Where(t => t.UserId == user.Id && t.UsedAt == null && t.InvalidatedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.InvalidatedAt, now), ct);
 
-        var raw = TokenHasher.NewOpaqueToken();
+        var raw = await NewUniqueCodeAsync(ct);
         var entity = new PasswordResetToken
         {
             Id = Guid.NewGuid(),
@@ -216,11 +216,12 @@ public sealed class AuthService(
         }
     }
 
-    public async Task ResetPasswordAsync(string token, string newPassword, string ip, CancellationToken ct)
+    public async Task ResetPasswordAsync(string code, string newPassword, string ip, CancellationToken ct)
     {
         await limiter.HitAsync($"rl:reset:{ip}", 10, TimeSpan.FromMinutes(15), ct);
+        TokenHasher.EnsureNumericCode(code);
         PasswordRules.EnsurePassword(newPassword);
-        var hash = TokenHasher.Hash(token);
+        var hash = TokenHasher.Hash(code);
         var now = DateTimeOffset.UtcNow;
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -229,7 +230,7 @@ public sealed class AuthService(
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.UsedAt, now), ct);
         if (affected != 1)
         {
-            throw new ApiException(400, "invalid_token", "Invalid token.");
+            throw new ApiException(400, "invalid_token", "Invalid code.");
         }
 
         var row = await db.PasswordResetTokens.FirstAsync(t => t.TokenHash == hash, ct);
@@ -248,10 +249,11 @@ public sealed class AuthService(
         await tx.CommitAsync(ct);
     }
 
-    public async Task VerifyEmailAsync(string token, string ip, CancellationToken ct)
+    public async Task VerifyEmailAsync(string code, string ip, CancellationToken ct)
     {
         await limiter.HitAsync($"rl:verify:{ip}", 10, TimeSpan.FromMinutes(15), ct);
-        await ConsumeVerificationAsync(token, ct);
+        TokenHasher.EnsureNumericCode(code);
+        await ConsumeVerificationAsync(code, ct);
     }
 
     public async Task ResendVerificationAsync(string emailRaw, string ip, CancellationToken ct)
@@ -369,9 +371,9 @@ public sealed class AuthService(
         }
     }
 
-    private async Task ConsumeVerificationAsync(string token, CancellationToken ct)
+    private async Task ConsumeVerificationAsync(string code, CancellationToken ct)
     {
-        var hash = TokenHasher.Hash(token);
+        var hash = TokenHasher.Hash(code);
         var now = DateTimeOffset.UtcNow;
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var affected = await db.EmailVerificationTokens
@@ -379,7 +381,7 @@ public sealed class AuthService(
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.UsedAt, now), ct);
         if (affected != 1)
         {
-            throw new ApiException(400, "invalid_token", "Invalid token.");
+            throw new ApiException(400, "invalid_token", "Invalid code.");
         }
 
         var row = await db.EmailVerificationTokens.FirstAsync(t => t.TokenHash == hash, ct);
@@ -407,7 +409,7 @@ public sealed class AuthService(
             .Where(t => t.UserId == userId && t.Purpose == purpose && t.UsedAt == null && t.InvalidatedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.InvalidatedAt, now), ct);
 
-        var raw = TokenHasher.NewOpaqueToken();
+        var raw = await NewUniqueCodeAsync(ct);
         var entity = new EmailVerificationToken
         {
             Id = Guid.NewGuid(),
@@ -427,7 +429,7 @@ public sealed class AuthService(
         }
         catch (Exception)
         {
-            throw new ApiException(503, "dependency_unavailable", "Mail token store is unavailable.");
+            throw new ApiException(503, "dependency_unavailable", "Mail code store is unavailable.");
         }
 
         jobs.Enqueue<EmailJobs>(x => x.SendVerification(key, email));
@@ -443,7 +445,7 @@ public sealed class AuthService(
         }
         catch (Exception)
         {
-            throw new ApiException(503, "dependency_unavailable", "Mail token store is unavailable.");
+            throw new ApiException(503, "dependency_unavailable", "Mail code store is unavailable.");
         }
 
         jobs.Enqueue<EmailJobs>(x => x.SendPasswordReset(key, email));
@@ -495,6 +497,23 @@ public sealed class AuthService(
         return db.Users.AnyAsync(u => u.Login != null && u.Login.ToLower() == lowered, ct);
     }
 
+    private async Task<string> NewUniqueCodeAsync(CancellationToken ct)
+    {
+        for (var i = 0; i < 32; i++)
+        {
+            var code = TokenHasher.NewNumericCode();
+            var hash = TokenHasher.Hash(code);
+            var taken = await db.EmailVerificationTokens.AnyAsync(t => t.TokenHash == hash, ct)
+                || await db.PasswordResetTokens.AnyAsync(t => t.TokenHash == hash, ct);
+            if (!taken)
+            {
+                return code;
+            }
+        }
+
+        throw new ApiException(503, "dependency_unavailable", "Could not allocate a confirmation code.");
+    }
+
     private static string ParseType(string? type)
     {
         if (type is "email" or "login")
@@ -512,11 +531,11 @@ public sealed class AuthService(
 
 public sealed record RegisterRequest(string Login, string Email, string Password);
 public sealed record LoginRequest(string IdentifierType, string Identifier, string Password);
-public sealed record TokenRequest(string Token);
+public sealed record CodeRequest(string Code);
 public sealed record RefreshRequest(string RefreshToken);
 public sealed record LogoutRequest(string? RefreshToken);
 public sealed record ForgotRequest(string Email);
-public sealed record ResetRequest(string Token, string NewPassword);
+public sealed record ResetRequest(string Code, string NewPassword);
 public sealed record EmailOnlyRequest(string Email);
 public sealed record BindEmailRequest(string Email, string CurrentPassword);
 public sealed record BindLoginRequest(string Login, string CurrentPassword);

@@ -4,34 +4,30 @@ using StackExchange.Redis;
 
 namespace MusicAntiBlur.Api.Jobs;
 
-public sealed class EmailJobs(SmtpEmailSender smtp, IConnectionMultiplexer redis, IConfiguration config)
+public sealed class EmailJobs(SmtpEmailSender smtp, IConnectionMultiplexer redis)
 {
     public async Task SendVerification(string redisKey, string toEmail)
     {
-        var token = await redis.GetDatabase().StringGetAsync(redisKey);
-        if (token.IsNullOrEmpty)
+        var code = await redis.GetDatabase().StringGetAsync(redisKey);
+        if (code.IsNullOrEmpty)
         {
             return;
         }
 
-        var scheme = config["App:DeepLinkScheme"] ?? "musicantiblur";
-        var body =
-            $"Confirm your email.\n\nDeep link: {scheme}://auth/verify?token={token}\n\nToken:\n{token}\n";
+        var body = $"Your confirmation code is:\n\n{code}\n\nEnter this code in the app. It expires in 24 hours.\n";
         await smtp.SendAsync(toEmail, "Confirm your email", body, CancellationToken.None);
         await redis.GetDatabase().KeyDeleteAsync(redisKey);
     }
 
     public async Task SendPasswordReset(string redisKey, string toEmail)
     {
-        var token = await redis.GetDatabase().StringGetAsync(redisKey);
-        if (token.IsNullOrEmpty)
+        var code = await redis.GetDatabase().StringGetAsync(redisKey);
+        if (code.IsNullOrEmpty)
         {
             return;
         }
 
-        var scheme = config["App:DeepLinkScheme"] ?? "musicantiblur";
-        var body =
-            $"Reset your password.\n\nDeep link: {scheme}://auth/reset?token={token}\n\nToken:\n{token}\n";
+        var body = $"Your password reset code is:\n\n{code}\n\nEnter this code in the app. It expires in 30 minutes.\n";
         await smtp.SendAsync(toEmail, "Reset your password", body, CancellationToken.None);
         await redis.GetDatabase().KeyDeleteAsync(redisKey);
     }

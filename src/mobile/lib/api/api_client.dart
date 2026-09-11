@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
@@ -67,11 +68,7 @@ class ApiClient {
   ApiClient({String? baseUrl})
       : _dio = Dio(
           BaseOptions(
-            baseUrl: baseUrl ??
-                const String.fromEnvironment(
-                  'API_BASE_URL',
-                  defaultValue: 'http://127.0.0.1:5080',
-                ),
+            baseUrl: resolveBaseUrl(baseUrl),
             connectTimeout: const Duration(seconds: 10),
             receiveTimeout: const Duration(seconds: 20),
             headers: {'Content-Type': 'application/json'},
@@ -120,6 +117,20 @@ class ApiClient {
   static const _accessKey = 'access';
   static const _refreshKey = 'refresh';
   static const _deviceKey = 'device';
+
+  static String resolveBaseUrl(String? baseUrl) {
+    if (baseUrl != null && baseUrl.isNotEmpty) {
+      return baseUrl;
+    }
+    const fromEnv = String.fromEnvironment('API_BASE_URL');
+    if (fromEnv.isNotEmpty) {
+      return fromEnv;
+    }
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return 'http://10.0.2.2:5080';
+    }
+    return 'http://127.0.0.1:5080';
+  }
 
   final Dio _dio;
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
@@ -228,17 +239,17 @@ class ApiClient {
     await _send(() => _dio.post('/api/v1/auth/forgot-password', data: {'email': email}));
   }
 
-  Future<void> reset({required String token, required String newPassword}) async {
+  Future<void> reset({required String code, required String newPassword}) async {
     await _send(
       () => _dio.post(
         '/api/v1/auth/reset-password',
-        data: {'token': token, 'newPassword': newPassword},
+        data: {'code': code, 'newPassword': newPassword},
       ),
     );
   }
 
-  Future<void> verify(String token) async {
-    await _send(() => _dio.post('/api/v1/auth/email/verify', data: {'token': token}));
+  Future<void> verify(String code) async {
+    await _send(() => _dio.post('/api/v1/auth/email/verify', data: {'code': code}));
   }
 
   Future<void> resend(String email) async {
@@ -259,9 +270,9 @@ class ApiClient {
     );
   }
 
-  Future<void> confirmEmail(String token) async {
+  Future<void> confirmEmail(String code) async {
     await _send(
-      () => _dio.post('/api/v1/me/identifiers/email/confirm', data: {'token': token}),
+      () => _dio.post('/api/v1/me/identifiers/email/confirm', data: {'code': code}),
     );
   }
 
@@ -283,6 +294,14 @@ class ApiClient {
   }
 
   ApiException _toApi(DioException e) {
+    if (e.type == DioExceptionType.connectionError ||
+        e.type == DioExceptionType.connectionTimeout) {
+      return ApiException(
+        0,
+        'connection_failed',
+        'Cannot reach API at ${_dio.options.baseUrl}',
+      );
+    }
     final data = e.response?.data;
     if (data is Map) {
       return ApiException(

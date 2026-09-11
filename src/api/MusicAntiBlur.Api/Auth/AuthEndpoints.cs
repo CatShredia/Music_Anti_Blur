@@ -45,13 +45,13 @@ public static class AuthEndpoints
 
         auth.MapPost("/reset-password", async (ResetRequest req, AuthService svc, HttpContext http, CancellationToken ct) =>
         {
-            await svc.ResetPasswordAsync(req.Token, req.NewPassword, ClientIp(http), ct);
+            await svc.ResetPasswordAsync(req.Code, req.NewPassword, ClientIp(http), ct);
             return Results.NoContent();
         });
 
-        auth.MapPost("/email/verify", async (TokenRequest req, AuthService svc, HttpContext http, CancellationToken ct) =>
+        auth.MapPost("/email/verify", async (CodeRequest req, AuthService svc, HttpContext http, CancellationToken ct) =>
         {
-            await svc.VerifyEmailAsync(req.Token, ClientIp(http), ct);
+            await svc.VerifyEmailAsync(req.Code, ClientIp(http), ct);
             return Results.NoContent();
         });
 
@@ -76,9 +76,9 @@ public static class AuthEndpoints
             return Results.StatusCode(StatusCodes.Status202Accepted);
         });
 
-        me.MapPost("/identifiers/email/confirm", async (TokenRequest req, AuthService svc, HttpContext http, CancellationToken ct) =>
+        me.MapPost("/identifiers/email/confirm", async (CodeRequest req, AuthService svc, HttpContext http, CancellationToken ct) =>
         {
-            await svc.VerifyEmailAsync(req.Token, ClientIp(http), ct);
+            await svc.VerifyEmailAsync(req.Code, ClientIp(http), ct);
             return Results.NoContent();
         });
 

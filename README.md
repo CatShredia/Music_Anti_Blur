@@ -44,11 +44,11 @@ Sandbox admin (Development): login `admin`, password `AdminPassword123`.
 ```bash
 cd src/mobile
 flutter pub get
-flutter run --dart-define=API_BASE_URL=http://127.0.0.1:5080
+flutter run
 ```
 
-Android emulator: `--dart-define=API_BASE_URL=http://10.0.2.2:5080`
+Эмулятор Android сам ходит на `http://10.0.2.2:5080`. На Windows/iOS simulator — `http://127.0.0.1:5080`. Физическое устройство: `--dart-define=API_BASE_URL=http://<LAN-IP-ПК>:5080`.
 
-Письма verification/reset смотреть в MailHog. В теле письма есть deep link `musicantiblur://auth/verify?token=...` и сырой токен для ручного ввода.
+Письма verification/reset содержат 6-значный код для ввода в приложении. Смотреть в MailHog.
 
 Переменные окружения: см. `.env.example`.

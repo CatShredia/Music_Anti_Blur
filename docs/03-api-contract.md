@@ -58,9 +58,9 @@ Idempotency records хранятся в PostgreSQL (`idempotency_records`). Тр
 
 `login` и `email` обязательны. Тип по `@` не угадывается. Email = `lower(trim)`. Пароль 12–128 Unicode-символов, не нормализуется. Успех → `201` + access/refresh (вход по login сразу). `email_verified_at` пуст, пока не пройдёт `email/verify`; вход и reset по email до verification запрещены.
 
-- `POST /auth/email/verify { token }` → `204`, atomic consume.
-- `POST /auth/email/resend { email }` → всегда `202`; старые registration tokens инвалидируются.
-- `POST /me/identifiers/email { email, currentPassword }` → `202`; email активируется только через `/me/identifiers/email/confirm`.
+- `POST /auth/email/verify { code }` → `204`, atomic consume. `code` — 6 цифр из письма.
+- `POST /auth/email/resend { email }` → всегда `202`; старые registration codes инвалидируются.
+- `POST /me/identifiers/email { email, currentPassword }` → `202`; email активируется только через `/me/identifiers/email/confirm { code }`.
 - `POST /me/identifiers/login { login, currentPassword }` → `204`.
 
 Bind требует recent re-auth не старше 10 минут. Занятый identifier → `409 identifier_taken`.
@@ -74,7 +74,7 @@ Bind требует recent re-auth не старше 10 минут. Заняты
 - `POST /auth/logout` → revoke family, `204`.
 - `POST /auth/logout-all` → revoke всех refresh пользователя, `204`.
 - `POST /auth/forgot-password { email }` → всегда одинаковый `200`; письмо только verified email.
-- `POST /auth/reset-password { token, newPassword }` → одной транзакцией consume, смена password, invalidate reset tokens и revoke всех refresh.
+- `POST /auth/reset-password { code, newPassword }` → одной транзакцией consume, смена password, invalidate reset codes и revoke всех refresh.
 
 ---
 
@@ -223,7 +223,7 @@ Admin catalog использует идентичные routes/DTO под рол
 
 | Группа | Лимит MVP |
 |---|---|
-| register | 5/час/IP |
+| register | 30/час/IP |
 | login | 10/5 мин/IP+identifier |
 | verification resend, forgot | 3/час/email hash+IP |
 | reset, verify | 10/15 мин/IP |
