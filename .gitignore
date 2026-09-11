@@ -1,1 +1,39 @@
 no_commit/*
+
+# Secrets
+.env
+appsettings.*.local.json
+*.user
+secrets.json
+
+# .NET
+bin/
+obj/
+*.suo
+*.userosscache
+*.sln.docstates
+artifacts/
+
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+*.iml
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log

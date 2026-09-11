@@ -1,0 +1,309 @@
+import 'dart:convert';
+
+import 'package:dio/dio.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:uuid/uuid.dart';
+
+class ApiException implements Exception {
+  ApiException(this.status, this.code, this.title);
+  final int status;
+  final String code;
+  final String title;
+  @override
+  String toString() => title;
+}
+
+class Session {
+  Session({
+    required this.accessToken,
+    required this.refreshToken,
+    required this.accessExpiresAt,
+    required this.refreshExpiresAt,
+    required this.user,
+  });
+
+  final String accessToken;
+  final String refreshToken;
+  final DateTime accessExpiresAt;
+  final DateTime refreshExpiresAt;
+  final UserDto user;
+
+  factory Session.fromJson(Map<String, dynamic> json) => Session(
+        accessToken: json['accessToken'] as String,
+        refreshToken: json['refreshToken'] as String,
+        accessExpiresAt: DateTime.parse(json['accessExpiresAt'] as String),
+        refreshExpiresAt: DateTime.parse(json['refreshExpiresAt'] as String),
+        user: UserDto.fromJson(json['user'] as Map<String, dynamic>),
+      );
+}
+
+class UserDto {
+  UserDto({
+    required this.id,
+    this.login,
+    this.email,
+    required this.role,
+    this.emailVerifiedAt,
+  });
+
+  final String id;
+  final String? login;
+  final String? email;
+  final String role;
+  final DateTime? emailVerifiedAt;
+
+  factory UserDto.fromJson(Map<String, dynamic> json) => UserDto(
+        id: json['id'] as String,
+        login: json['login'] as String?,
+        email: json['email'] as String?,
+        role: json['role'] as String,
+        emailVerifiedAt: json['emailVerifiedAt'] == null
+            ? null
+            : DateTime.parse(json['emailVerifiedAt'] as String),
+      );
+}
+
+class ApiClient {
+  ApiClient({String? baseUrl})
+      : _dio = Dio(
+          BaseOptions(
+            baseUrl: baseUrl ??
+                const String.fromEnvironment(
+                  'API_BASE_URL',
+                  defaultValue: 'http://127.0.0.1:5080',
+                ),
+            connectTimeout: const Duration(seconds: 10),
+            receiveTimeout: const Duration(seconds: 20),
+            headers: {'Content-Type': 'application/json'},
+          ),
+        ) {
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) async {
+          options.headers['X-Device-Id'] = await deviceId();
+          final token = await _storage.read(key: _accessKey);
+          if (token != null && token.isNotEmpty) {
+            options.headers['Authorization'] = 'Bearer $token';
+          }
+          handler.next(options);
+        },
+        onError: (error, handler) async {
+          final status = error.response?.statusCode;
+          final path = error.requestOptions.path;
+          if (status == 401 &&
+              !_refreshing &&
+              !path.contains('/auth/login') &&
+              !path.contains('/auth/refresh') &&
+              !path.contains('/auth/register')) {
+            _refreshing = true;
+            try {
+              final refreshed = await refresh();
+              if (refreshed) {
+                final req = error.requestOptions;
+                req.headers['Authorization'] =
+                    'Bearer ${await _storage.read(key: _accessKey)}';
+                final clone = await _dio.fetch(req);
+                _refreshing = false;
+                return handler.resolve(clone);
+              }
+            } catch (_) {
+              await clearSession();
+            }
+            _refreshing = false;
+          }
+          handler.next(error);
+        },
+      ),
+    );
+  }
+
+  static const _accessKey = 'access';
+  static const _refreshKey = 'refresh';
+  static const _deviceKey = 'device';
+
+  final Dio _dio;
+  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  bool _refreshing = false;
+
+  String get hubUrl {
+    final base = _dio.options.baseUrl;
+    return '$base/hubs/playback';
+  }
+
+  Future<String> deviceId() async {
+    var id = await _storage.read(key: _deviceKey);
+    if (id == null || id.isEmpty) {
+      id = const Uuid().v4();
+      await _storage.write(key: _deviceKey, value: id);
+    }
+    return id;
+  }
+
+  Future<String?> accessToken() => _storage.read(key: _accessKey);
+
+  Future<void> saveSession(Session session) async {
+    await _storage.write(key: _accessKey, value: session.accessToken);
+    await _storage.write(key: _refreshKey, value: session.refreshToken);
+  }
+
+  Future<void> clearSession() async {
+    await _storage.delete(key: _accessKey);
+    await _storage.delete(key: _refreshKey);
+  }
+
+  Future<bool> hasSession() async {
+    try {
+      final token = await _storage.read(key: _accessKey);
+      return token != null && token.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<Session?> register({
+    required String identifierType,
+    required String identifier,
+    required String password,
+  }) async {
+    final res = await _send(
+      () => _dio.post(
+        '/api/v1/auth/register',
+        data: {
+          'identifierType': identifierType,
+          'identifier': identifier,
+          'password': password,
+        },
+      ),
+    );
+    if (res.statusCode == 201) {
+      final session = Session.fromJson(res.data as Map<String, dynamic>);
+      await saveSession(session);
+      return session;
+    }
+    return null;
+  }
+
+  Future<Session> login({
+    required String identifierType,
+    required String identifier,
+    required String password,
+  }) async {
+    final res = await _send(
+      () => _dio.post(
+        '/api/v1/auth/login',
+        data: {
+          'identifierType': identifierType,
+          'identifier': identifier,
+          'password': password,
+        },
+      ),
+    );
+    final session = Session.fromJson(res.data as Map<String, dynamic>);
+    await saveSession(session);
+    return session;
+  }
+
+  Future<bool> refresh() async {
+    final refreshToken = await _storage.read(key: _refreshKey);
+    if (refreshToken == null) {
+      return false;
+    }
+    final res = await _dio.post(
+      '/api/v1/auth/refresh',
+      data: {'refreshToken': refreshToken},
+    );
+    if (res.statusCode == 200) {
+      await saveSession(Session.fromJson(res.data as Map<String, dynamic>));
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> logout() async {
+    final refreshToken = await _storage.read(key: _refreshKey);
+    try {
+      await _dio.post('/api/v1/auth/logout', data: {'refreshToken': refreshToken});
+    } catch (_) {}
+    await clearSession();
+  }
+
+  Future<void> forgot(String email) async {
+    await _send(() => _dio.post('/api/v1/auth/forgot-password', data: {'email': email}));
+  }
+
+  Future<void> reset({required String token, required String newPassword}) async {
+    await _send(
+      () => _dio.post(
+        '/api/v1/auth/reset-password',
+        data: {'token': token, 'newPassword': newPassword},
+      ),
+    );
+  }
+
+  Future<void> verify(String token) async {
+    await _send(() => _dio.post('/api/v1/auth/email/verify', data: {'token': token}));
+  }
+
+  Future<void> resend(String email) async {
+    await _send(() => _dio.post('/api/v1/auth/email/resend', data: {'email': email}));
+  }
+
+  Future<UserDto> me() async {
+    final res = await _send(() => _dio.get('/api/v1/me'));
+    return UserDto.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<void> bindEmail(String email, String currentPassword) async {
+    await _send(
+      () => _dio.post(
+        '/api/v1/me/identifiers/email',
+        data: {'email': email, 'currentPassword': currentPassword},
+      ),
+    );
+  }
+
+  Future<void> confirmEmail(String token) async {
+    await _send(
+      () => _dio.post('/api/v1/me/identifiers/email/confirm', data: {'token': token}),
+    );
+  }
+
+  Future<void> bindLogin(String login, String currentPassword) async {
+    await _send(
+      () => _dio.post(
+        '/api/v1/me/identifiers/login',
+        data: {'login': login, 'currentPassword': currentPassword},
+      ),
+    );
+  }
+
+  Future<Response<dynamic>> _send(Future<Response<dynamic>> Function() run) async {
+    try {
+      return await run();
+    } on DioException catch (e) {
+      throw _toApi(e);
+    }
+  }
+
+  ApiException _toApi(DioException e) {
+    final data = e.response?.data;
+    if (data is Map) {
+      return ApiException(
+        e.response?.statusCode ?? 0,
+        data['code'] as String? ?? 'error',
+        data['title'] as String? ?? e.message ?? 'Request failed',
+      );
+    }
+    if (data is String) {
+      try {
+        final map = jsonDecode(data) as Map<String, dynamic>;
+        return ApiException(
+          e.response?.statusCode ?? 0,
+          map['code'] as String? ?? 'error',
+          map['title'] as String? ?? 'Request failed',
+        );
+      } catch (_) {}
+    }
+    return ApiException(e.response?.statusCode ?? 0, 'error', e.message ?? 'Request failed');
+  }
+}
