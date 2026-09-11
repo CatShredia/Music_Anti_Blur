@@ -53,10 +53,10 @@ Idempotency records хранятся в PostgreSQL (`idempotency_records`). Тр
 `POST /auth/register`:
 
 ```json
-{ "identifierType": "email", "identifier": "user@example.com", "password": "..." }
+{ "login": "user", "email": "user@example.com", "password": "..." }
 ```
 
-Принимается ровно `email|login`; тип по `@` не угадывается. Email = `lower(trim)`. Пароль 12–128 Unicode-символов, не нормализуется. Login registration → `201` + access/refresh. Email registration → `202` и письмо; обычные login/reset запрещены до verification.
+`login` и `email` обязательны. Тип по `@` не угадывается. Email = `lower(trim)`. Пароль 12–128 Unicode-символов, не нормализуется. Успех → `201` + access/refresh (вход по login сразу). `email_verified_at` пуст, пока не пройдёт `email/verify`; вход и reset по email до verification запрещены.
 
 - `POST /auth/email/verify { token }` → `204`, atomic consume.
 - `POST /auth/email/resend { email }` → всегда `202`; старые registration tokens инвалидируются.

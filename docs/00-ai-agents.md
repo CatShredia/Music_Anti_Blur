@@ -49,7 +49,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 Делай, только если это есть в product plan / database overview:
 
 - Flutter + ASP.NET Core + EF Core + PostgreSQL + Redis + Hangfire + SignalR + FFmpeg + Yandex Object Storage + Yandex CDN + SMTP.
-- Вход: явный `identifierType` `email` | `login`, без угадывания по `@`.
+- Регистрация: обязательны `login` и `email`. Вход: явный `identifierType` `email` | `login`, без угадывания по `@`.
 - Verified email, одноразовая refresh rotation и атомарный reset с отзывом сессий.
 - Несколько качеств (`aac_128`, `aac_256`, опционально `src`).
 - Подмена + presigned multipart private upload с immutable generation, ACL только владелец (чужому 404).

@@ -34,7 +34,14 @@ class MusicAntiBlurApp extends StatelessWidget {
           initialToken: state.uri.queryParameters['token'] ?? '',
           submitLabel: 'Confirm',
           onSubmit: (token, _) => api.verify(token),
-          onDone: (context) => context.go('/login'),
+          onDone: (context) {
+            api.hasSession().then((ok) {
+              if (!context.mounted) {
+                return;
+              }
+              context.go(ok ? '/home' : '/login');
+            });
+          },
         ),
       ),
       GoRoute(path: '/forgot', builder: (_, _) => ForgotScreen(api: api)),
@@ -94,6 +101,31 @@ void showApiError(BuildContext context, Object error) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 }
 
+AppBar buildAppBar(BuildContext context, String title, {List<Widget>? actions}) {
+  return AppBar(
+    title: Text(title),
+    automaticallyImplyLeading: false,
+    leading: context.canPop()
+        ? BackButton(
+            onPressed: () {
+              if (context.canPop()) {
+                context.pop();
+              }
+            },
+          )
+        : null,
+    actions: actions,
+  );
+}
+
+void popOrGo(BuildContext context, String location) {
+  if (context.canPop()) {
+    context.pop();
+  } else {
+    context.go(location);
+  }
+}
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key, required this.api});
   final ApiClient api;
@@ -121,7 +153,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Sign in')),
+      appBar: buildAppBar(context, 'Sign in'),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -163,9 +195,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   },
             child: const Text('Sign in'),
           ),
-          TextButton(onPressed: () => context.go('/register'), child: const Text('Create account')),
-          TextButton(onPressed: () => context.go('/forgot'), child: const Text('Forgot password')),
-          TextButton(onPressed: () => context.go('/verify'), child: const Text('I have a verification token')),
+          TextButton(onPressed: () => context.push('/register'), child: const Text('Create account')),
+          TextButton(onPressed: () => context.push('/forgot'), child: const Text('Forgot password')),
+          TextButton(onPressed: () => context.push('/verify'), child: const Text('I have a verification token')),
         ],
       ),
     );
@@ -181,23 +213,34 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  final _id = TextEditingController();
+  final _login = TextEditingController();
+  final _email = TextEditingController();
   final _password = TextEditingController();
-  String _type = 'email';
   bool _busy = false;
+
+  @override
+  void dispose() {
+    _login.dispose();
+    _email.dispose();
+    _password.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Register')),
+      appBar: buildAppBar(context, 'Register'),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          IdentifierTypeField(value: _type, onChanged: (v) => setState(() => _type = v)),
-          const SizedBox(height: 16),
           TextField(
-            controller: _id,
-            decoration: InputDecoration(labelText: _type == 'email' ? 'Email' : 'Login'),
+            controller: _login,
+            decoration: const InputDecoration(labelText: 'Login'),
+          ),
+          TextField(
+            controller: _email,
+            keyboardType: TextInputType.emailAddress,
+            decoration: const InputDecoration(labelText: 'Email'),
           ),
           TextField(
             controller: _password,
@@ -211,19 +254,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 : () async {
                     setState(() => _busy = true);
                     try {
-                      final session = await widget.api.register(
-                        identifierType: _type,
-                        identifier: _id.text,
+                      await widget.api.register(
+                        login: _login.text,
+                        email: _email.text,
                         password: _password.text,
                       );
                       if (!context.mounted) {
                         return;
                       }
-                      if (session == null) {
-                        context.go('/check-email?email=${Uri.encodeComponent(_id.text)}');
-                      } else {
-                        context.go('/home');
-                      }
+                      await context.push('/check-email?email=${Uri.encodeComponent(_email.text)}');
                     } catch (e) {
                       if (context.mounted) {
                         showApiError(context, e);
@@ -236,7 +275,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   },
             child: const Text('Register'),
           ),
-          TextButton(onPressed: () => context.go('/login'), child: const Text('Already have an account')),
+          TextButton(
+            onPressed: () => popOrGo(context, '/login'),
+            child: const Text('Already have an account'),
+          ),
         ],
       ),
     );
@@ -251,7 +293,7 @@ class CheckEmailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Check your email')),
+      appBar: buildAppBar(context, 'Check your email'),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -259,7 +301,7 @@ class CheckEmailScreen extends StatelessWidget {
           children: [
             Text('We sent a confirmation link to $email. Open MailHog at http://localhost:8025 locally.'),
             const SizedBox(height: 16),
-            FilledButton(onPressed: () => context.go('/verify'), child: const Text('Enter token')),
+            FilledButton(onPressed: () => context.push('/verify'), child: const Text('Enter token')),
             TextButton(
               onPressed: () async {
                 try {
@@ -277,7 +319,7 @@ class CheckEmailScreen extends StatelessWidget {
               },
               child: const Text('Resend'),
             ),
-            TextButton(onPressed: () => context.go('/login'), child: const Text('Back to sign in')),
+            TextButton(onPressed: () => popOrGo(context, '/login'), child: const Text('Back to sign in')),
           ],
         ),
       ),
@@ -300,7 +342,7 @@ class _ForgotScreenState extends State<ForgotScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Forgot password')),
+      appBar: buildAppBar(context, 'Forgot password'),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -317,7 +359,7 @@ class _ForgotScreenState extends State<ForgotScreen> {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text('If the email is registered, a message was sent.')),
                         );
-                        context.go('/reset');
+                        context.push('/reset');
                       }
                     } catch (e) {
                       if (context.mounted) {
@@ -375,7 +417,7 @@ class _TokenScreenState extends State<TokenScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.title)),
+      appBar: buildAppBar(context, widget.title),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -441,10 +483,11 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Home'),
+      appBar: buildAppBar(
+        context,
+        'Home',
         actions: [
-          IconButton(onPressed: () => context.go('/settings'), icon: const Icon(Icons.settings)),
+          IconButton(onPressed: () => context.push('/settings'), icon: const Icon(Icons.settings)),
         ],
       ),
       body: Padding(
@@ -486,7 +529,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: buildAppBar(context, 'Settings'),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

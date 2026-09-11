@@ -23,53 +23,47 @@ public sealed class AuthService(
     private static readonly User DummyUser = new() { Id = Guid.Empty };
     private static readonly string DummyHash = new PasswordHasher<User>().HashPassword(DummyUser, "dummy-password-not-used");
 
-    public async Task<SessionResponse?> RegisterAsync(RegisterRequest req, Guid deviceId, string ip, CancellationToken ct)
+    public async Task<SessionResponse> RegisterAsync(RegisterRequest req, Guid deviceId, string ip, CancellationToken ct)
     {
         await limiter.HitAsync($"rl:register:{ip}", 5, TimeSpan.FromHours(1), ct);
         PasswordRules.EnsurePassword(req.Password);
-        var type = ParseType(req.IdentifierType);
+        if (string.IsNullOrWhiteSpace(req.Login) || string.IsNullOrWhiteSpace(req.Email))
+        {
+            throw new ApiException(400, "validation_failed", "Login and email are required.",
+                new Dictionary<string, string[]>
+                {
+                    ["login"] = ["Login is required."],
+                    ["email"] = ["Email is required."]
+                });
+        }
+
+        PasswordRules.EnsureLogin(req.Login);
+        var email = PasswordRules.NormalizeEmail(req.Email);
+        if (await LoginTakenAsync(req.Login, ct) || await EmailTakenAsync(email, ct))
+        {
+            throw new ApiException(409, "identifier_taken", "Identifier is already taken.");
+        }
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var now = DateTimeOffset.UtcNow;
         var user = new User
         {
             Id = Guid.NewGuid(),
+            Login = req.Login,
+            Email = email,
             Role = "user",
             CreatedAt = now,
             UpdatedAt = now,
-            Settings = new UserSettings { PreferredQuality = "auto", UpdatedAt = now }
+            Settings = new UserSettings { PreferredQuality = "auto", UpdatedAt = now },
+            PasswordHash = ""
         };
-
-        if (type == "login")
-        {
-            PasswordRules.EnsureLogin(req.Identifier);
-            if (await LoginTakenAsync(req.Identifier, ct))
-            {
-                throw new ApiException(409, "identifier_taken", "Identifier is already taken.");
-            }
-
-            user.Login = req.Identifier;
-            user.PasswordHash = hasher.HashPassword(user, req.Password);
-            db.Users.Add(user);
-            await db.SaveChangesAsync(ct);
-            var session = await IssueSessionAsync(user, deviceId, now, ct);
-            await tx.CommitAsync(ct);
-            return session;
-        }
-
-        var email = PasswordRules.NormalizeEmail(req.Identifier);
-        if (await EmailTakenAsync(email, ct))
-        {
-            throw new ApiException(409, "identifier_taken", "Identifier is already taken.");
-        }
-
-        user.Email = email;
         user.PasswordHash = hasher.HashPassword(user, req.Password);
         db.Users.Add(user);
-        await CreateVerificationAsync(user.Id, email, "register", TimeSpan.FromHours(24), ct);
         await db.SaveChangesAsync(ct);
+        await CreateVerificationAsync(user.Id, email, "register", TimeSpan.FromHours(24), ct);
+        var session = await IssueSessionAsync(user, deviceId, now, ct);
         await tx.CommitAsync(ct);
-        return null;
+        return session;
     }
 
     public async Task<SessionResponse> LoginAsync(LoginRequest req, Guid deviceId, string ip, CancellationToken ct)
@@ -516,7 +510,7 @@ public sealed class AuthService(
         new(user.Id, user.Login, user.Email, user.Role, user.EmailVerifiedAt);
 }
 
-public sealed record RegisterRequest(string IdentifierType, string Identifier, string Password);
+public sealed record RegisterRequest(string Login, string Email, string Password);
 public sealed record LoginRequest(string IdentifierType, string Identifier, string Password);
 public sealed record TokenRequest(string Token);
 public sealed record RefreshRequest(string RefreshToken);

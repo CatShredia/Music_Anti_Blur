@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi;
 using MusicAntiBlur.Api.Auth;
 using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
@@ -119,7 +120,20 @@ builder.Services.AddHangfire(config => config
 builder.Services.AddHangfireServer(options => options.WorkerCount = 2);
 
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.AddSecurityDefinition("bearer", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        Description = "Paste accessToken from POST /api/v1/auth/login. Do not include the Bearer prefix."
+    });
+    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecuritySchemeReference("bearer", document)] = []
+    });
+});
 
 var app = builder.Build();
 
@@ -129,7 +143,7 @@ app.UseApiExceptionHandler();
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
-    app.UseSwaggerUI();
+    app.UseSwaggerUI(options => options.EnablePersistAuthorization());
 }
 
 app.UseAuthentication();

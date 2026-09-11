@@ -13,10 +13,7 @@ public static class AuthEndpoints
         var me = v1.MapGroup("/me").RequireAuthorization();
 
         auth.MapPost("/register", async (RegisterRequest req, AuthService svc, HttpContext http, CancellationToken ct) =>
-        {
-            var session = await svc.RegisterAsync(req, DeviceId(http), ClientIp(http), ct);
-            return session is null ? Results.StatusCode(StatusCodes.Status202Accepted) : Results.Json(session, statusCode: StatusCodes.Status201Created);
-        });
+            Results.Json(await svc.RegisterAsync(req, DeviceId(http), ClientIp(http), ct), statusCode: StatusCodes.Status201Created));
 
         auth.MapPost("/login", async (LoginRequest req, AuthService svc, HttpContext http, CancellationToken ct) =>
             Results.Ok(await svc.LoginAsync(req, DeviceId(http), ClientIp(http), ct)));

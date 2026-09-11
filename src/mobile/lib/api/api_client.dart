@@ -160,27 +160,24 @@ class ApiClient {
     }
   }
 
-  Future<Session?> register({
-    required String identifierType,
-    required String identifier,
+  Future<Session> register({
+    required String login,
+    required String email,
     required String password,
   }) async {
     final res = await _send(
       () => _dio.post(
         '/api/v1/auth/register',
         data: {
-          'identifierType': identifierType,
-          'identifier': identifier,
+          'login': login,
+          'email': email,
           'password': password,
         },
       ),
     );
-    if (res.statusCode == 201) {
-      final session = Session.fromJson(res.data as Map<String, dynamic>);
-      await saveSession(session);
-      return session;
-    }
-    return null;
+    final session = Session.fromJson(res.data as Map<String, dynamic>);
+    await saveSession(session);
+    return session;
   }
 
   Future<Session> login({
