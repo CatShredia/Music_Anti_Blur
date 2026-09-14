@@ -20,6 +20,7 @@ using MusicAntiBlur.Api.RateLimiting;
 using MusicAntiBlur.Api.Storage;
 using MusicAntiBlur.Api.Media;
 using MusicAntiBlur.Api.Uploads;
+using MusicAntiBlur.Api.Playback;
 using StackExchange.Redis;
 
 DotEnv.LoadFromAncestors(Directory.GetCurrentDirectory());
@@ -66,6 +67,8 @@ builder.Services.AddScoped<CatalogService>();
 builder.Services.AddScoped<AdminUploadService>();
 builder.Services.AddScoped<IdempotencyStore>();
 builder.Services.AddScoped<PlaybackUrlService>();
+builder.Services.AddSingleton<PlaybackSessionStore>();
+builder.Services.AddScoped<PlaybackStateService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -171,6 +174,7 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 app.MapAuthEndpoints();
 app.MapCatalogEndpoints();
 app.MapCatalogMediaEndpoints();
+app.MapPlaybackEndpoints();
 app.MapHub<PlaybackHub>("/hubs/playback");
 
 app.MapGet("/health", async (AppDbContext db, CancellationToken ct) =>

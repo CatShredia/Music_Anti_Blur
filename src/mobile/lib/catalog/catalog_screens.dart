@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../api/api_client.dart';
+import '../player/player_controller.dart';
 import '../theme.dart';
 import '../validation/catalog_rules.dart';
 import '../widgets.dart';
@@ -392,6 +393,7 @@ class TrackScreen extends StatefulWidget {
 class _TrackScreenState extends State<TrackScreen> {
   TrackDetail? _track;
   String? _error;
+  bool _busy = false;
 
   @override
   void initState() {
@@ -448,11 +450,33 @@ class _TrackScreenState extends State<TrackScreen> {
                         ],
                       ),
                     const SizedBox(height: 20),
-                    const VizePrimaryButton(label: 'Play', onPressed: null),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Воспроизведение в приложении — спринт 04. Сейчас URL проверяют curl / VLC.',
-                      style: TextStyle(color: VizeColors.accentMuted, fontSize: 14),
+                    VizePrimaryButton(
+                      label: 'Play',
+                      busy: _busy,
+                      onPressed: track.availableQualities.isEmpty ||
+                              PlayerScope.maybeOf(context) == null
+                          ? null
+                          : () async {
+                              final player = PlayerScope.maybeOf(context);
+                              if (player == null) {
+                                return;
+                              }
+                              setState(() => _busy = true);
+                              try {
+                                await player.playTrack(track.id);
+                                if (context.mounted) {
+                                  context.push('/player');
+                                }
+                              } catch (e) {
+                                if (context.mounted) {
+                                  showVizeError(context, e);
+                                }
+                              } finally {
+                                if (mounted) {
+                                  setState(() => _busy = false);
+                                }
+                              }
+                            },
                     ),
                   ],
                 ),

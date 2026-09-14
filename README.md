@@ -67,7 +67,9 @@ FFmpeg и ffprobe должны быть в PATH (Windows: winget/choco; Linux: �
 devops\upload-catalog-source.ps1 -Path C:\path\to\track.mp3
 ```
 
-Скрипт логинится как admin, грузит multipart в MinIO и ждёт транскод. `POST /api/v1/tracks/{id}/playback-url` отдаёт signed URL (локально MinIO GET, не тело аудио через API). Откройте URL в VLC — перемотка идёт через HTTP Range. API байты аудио не стримит.
+Скрипт логинится как admin, грузит multipart в MinIO и ждёт транскод. `POST /api/v1/tracks/{id}/playback-url` отдаёт signed URL (локально MinIO GET, не тело аудио через API). Play на карточке трека в приложении берёт этот URL через `just_audio`. API байты аудио не стримит.
+
+Host внутри подписи URL должен быть тем, куда ходит **плеер**, не API. Для эмулятора Android задайте `Storage__PresignEndpoint=http://10.0.2.2:9000` (API по-прежнему ходит в MinIO как `127.0.0.1:9000`). На Windows desktop Flutter оставьте пустым. Не подменяйте hostname у уже подписанного URL на клиенте — сломается SigV4.
 
 3. Flutter:
 

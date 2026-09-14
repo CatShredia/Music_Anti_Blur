@@ -98,6 +98,10 @@ public static class DbConstraintMapper
         {
             errors["durationMs"] = ["duration"];
         }
+        else if (name.Contains("ck_ps_", StringComparison.OrdinalIgnoreCase))
+        {
+            errors["queue"] = ["required"];
+        }
 
         return new ApiException(400, "validation_failed", "Validation failed.", errors.Count == 0 ? null : errors);
     }

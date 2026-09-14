@@ -11,6 +11,7 @@ public sealed class ObjectStorageClient : IDisposable
     private readonly StorageOptions _options;
     private readonly ILogger<ObjectStorageClient> _logger;
     private AmazonS3Client? _client;
+    private AmazonS3Client? _presignClient;
 
     public ObjectStorageClient(IOptions<StorageOptions> options, ILogger<ObjectStorageClient> logger)
     {
@@ -71,20 +72,20 @@ public sealed class ObjectStorageClient : IDisposable
             Expires = DateTime.UtcNow.Add(ttl),
             UploadId = uploadId,
             PartNumber = partNumber,
-            Protocol = PresignProtocol()
+            Protocol = PresignProtocol(_options.Endpoint)
         });
     }
 
     public string PresignGet(string key, TimeSpan ttl)
     {
         EnsureConfigured();
-        return Client().GetPreSignedURL(new GetPreSignedUrlRequest
+        return PresignClient().GetPreSignedURL(new GetPreSignedUrlRequest
         {
             BucketName = _options.Bucket,
             Key = key,
             Verb = HttpVerb.GET,
             Expires = DateTime.UtcNow.Add(ttl),
-            Protocol = PresignProtocol()
+            Protocol = PresignProtocol(PresignEndpoint())
         });
     }
 
@@ -199,7 +200,11 @@ public sealed class ObjectStorageClient : IDisposable
         }
     }
 
-    public void Dispose() => _client?.Dispose();
+    public void Dispose()
+    {
+        _client?.Dispose();
+        _presignClient?.Dispose();
+    }
 
     private AmazonS3Client Client()
     {
@@ -209,13 +214,31 @@ public sealed class ObjectStorageClient : IDisposable
             return _client;
         }
 
-        _client = new AmazonS3Client(_options.AccessKey, _options.SecretKey, CreateS3Config(_options));
+        _client = new AmazonS3Client(_options.AccessKey, _options.SecretKey, CreateS3Config(_options.Endpoint, _options));
         return _client;
     }
 
-    internal static AmazonS3Config CreateS3Config(StorageOptions options)
+    private AmazonS3Client PresignClient()
     {
-        var endpoint = options.Endpoint.Trim().TrimEnd('/');
+        EnsureConfigured();
+        if (_presignClient is not null)
+        {
+            return _presignClient;
+        }
+
+        _presignClient = new AmazonS3Client(
+            _options.AccessKey,
+            _options.SecretKey,
+            CreateS3Config(PresignEndpoint(), _options));
+        return _presignClient;
+    }
+
+    private string PresignEndpoint() =>
+        string.IsNullOrWhiteSpace(_options.PresignEndpoint) ? _options.Endpoint : _options.PresignEndpoint;
+
+    internal static AmazonS3Config CreateS3Config(string endpointRaw, StorageOptions options)
+    {
+        var endpoint = endpointRaw.Trim().TrimEnd('/');
         var useHttp = endpoint.StartsWith("http://", StringComparison.OrdinalIgnoreCase);
         return new AmazonS3Config
         {
@@ -228,8 +251,8 @@ public sealed class ObjectStorageClient : IDisposable
         };
     }
 
-    private Protocol PresignProtocol() =>
-        _options.Endpoint.TrimStart().StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+    private static Protocol PresignProtocol(string endpoint) =>
+        endpoint.TrimStart().StartsWith("http://", StringComparison.OrdinalIgnoreCase)
             ? Protocol.HTTP
             : Protocol.HTTPS;
 

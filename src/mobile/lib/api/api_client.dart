@@ -361,6 +361,25 @@ class ApiClient {
     return TrackDetail.fromJson(res.data as Map<String, dynamic>);
   }
 
+  Future<PlaybackUrl> playbackUrl({
+    required String trackId,
+    String sourcePreference = 'catalog',
+    required String qualityPreference,
+    bool localAvailable = false,
+  }) async {
+    final res = await _send(
+      () => _dio.post(
+        '/api/v1/tracks/$trackId/playback-url',
+        data: {
+          'sourcePreference': sourcePreference,
+          'qualityPreference': qualityPreference,
+          'localAvailable': localAvailable,
+        },
+      ),
+    );
+    return PlaybackUrl.fromJson(res.data as Map<String, dynamic>);
+  }
+
   Future<CatalogPage<SearchItem>> search(String q, {String? cursor, int limit = 20}) async {
     final res = await _send(
       () => _dio.get('/api/v1/search', queryParameters: {

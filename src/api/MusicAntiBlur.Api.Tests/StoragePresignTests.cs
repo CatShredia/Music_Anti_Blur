@@ -26,4 +26,24 @@ public sealed class StoragePresignTests
         Assert.StartsWith("http://127.0.0.1:9000/music-anti-blur/", url, StringComparison.Ordinal);
         Assert.DoesNotContain("https://", url, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void PresignGet_uses_public_presign_endpoint()
+    {
+        using var storage = new ObjectStorageClient(
+            Options.Create(new StorageOptions
+            {
+                Endpoint = "http://127.0.0.1:9000",
+                PresignEndpoint = "http://10.0.2.2:9000",
+                Region = "us-east-1",
+                Bucket = "music-anti-blur",
+                AccessKey = "minio",
+                SecretKey = "minio-local-only",
+                ForcePathStyle = true
+            }),
+            NullLogger<ObjectStorageClient>.Instance);
+
+        var url = storage.PresignGet("tracks/x/generations/y/aac_256.m4a", TimeSpan.FromMinutes(10));
+        Assert.StartsWith("http://10.0.2.2:9000/music-anti-blur/", url, StringComparison.Ordinal);
+    }
 }
