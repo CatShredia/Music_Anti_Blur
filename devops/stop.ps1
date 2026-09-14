@@ -1,10 +1,10 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  Останавливает API, Flutter и Docker Compose (Postgres, Redis, MailHog).
+  Останавливает API, Flutter и Docker Compose (Postgres, Redis, MailHog, MinIO).
 
 .PARAMETER Volumes
-  Также удалить volume Postgres (данные БД).
+  Также удалить volumes Postgres и MinIO.
 #>
 param(
     [switch]$Volumes
@@ -135,5 +135,5 @@ try {
 }
 Write-Info "Инфраструктура выключена."
 if (-not $Volumes) {
-    Write-Warn "Том Postgres на месте. Полная очистка: devops\stop.cmd -Volumes"
+    Write-Warn "Тома Postgres и MinIO на месте. Полная очистка: devops\stop.cmd -Volumes"
 }

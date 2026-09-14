@@ -10,7 +10,7 @@
 
 **Music Anti Blur** — стриминг с каталогом на сервере. Отличие: пользователь подменяет каталожный трек **своим** файлом (локально и/или приватной копией в Object Storage) и выбирает preference: `auto` | `catalog` | `local` | `private`.
 
-MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Аудиобайты API не принимает и не стримит: upload идёт presigned multipart прямо в Object Storage, playback — по Yandex CDN secure-token URL.
+MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Аудиобайты API не принимает и не стримит: upload идёт presigned multipart прямо в Object Storage. В продукте playback — **Yandex CDN secure-token URL**. Локальная разработка: бакет — MinIO в Compose, `Storage__UseCdn=false`, playback URL — S3 presigned GET (тот же JSON `playback-url`). MinIO не заменяет Yandex CDN в проде.
 
 Не выдумывай фичи из «типичного Spotify». Список вне MVP и out of scope — в [01-product-plan.md](01-product-plan.md) §5.
 
@@ -56,23 +56,23 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 ```
 .
 ├── README.md
-├── docker-compose.yml          PostgreSQL 16, Redis 7, MailHog
+├── docker-compose.yml          PostgreSQL 16, Redis 7, MailHog, MinIO
 ├── .env.example
 ├── .github/workflows/ci.yml    push/PR в develop: API build + Flutter analyze/test
 ├── docs/                       нормативные документы, см. §2
-├── devops/                     start/stop: Compose + окна API и Flutter (cmd / ps1 / sh)
+├── devops/                     start/stop + инструкция Object Storage/CDN
 ├── src/api/                    ASP.NET Core (.NET 10)
 └── src/mobile/                 Flutter
 ```
 
 | Путь | Зачем |
 |---|---|
-| [README.md](../README.md) | Compose, API, Flutter, MailHog, CI |
-| [docker-compose.yml](../docker-compose.yml) | Postgres, Redis, MailHog |
+| [README.md](../README.md) | Compose, API, Flutter, MailHog, MinIO, CI |
+| [docker-compose.yml](../docker-compose.yml) | Postgres, Redis, MailHog, MinIO |
 | [.env.example](../.env.example) | Имена переменных; значения только локально |
 | [.github/workflows/ci.yml](../.github/workflows/ci.yml) | CI на ветке `develop` |
 | [docs/](./) | Product / schema / API / operations |
-| [devops/](../devops/) | Скрипты start/stop: Compose + API и Flutter в отдельных окнах |
+| [devops/](../devops/) | Скрипты start/stop; [yandex-storage-cdn.md](../devops/yandex-storage-cdn.md) — локальный MinIO и (позже) Yandex |
 
 ### 3.1. API — `src/api/`
 
@@ -258,7 +258,7 @@ src/mobile/lib/
 
 ### 5.6. Object Storage upload, CDN secure token, Range
 
-Yandex Object Storage — S3-совместимый API, регион подписи обычно `ru-central1`, endpoint `https://storage.yandexcloud.net`.
+Продукт: Yandex Object Storage — S3-совместимый API, регион подписи обычно `ru-central1`, endpoint `https://storage.yandexcloud.net`. Локально тот же AWSSDK.S3 смотрит на MinIO (`http://127.0.0.1:9000`, `ForcePathStyle=true`, region `us-east-1`).
 
 | Тема | Ссылка |
 |---|---|
@@ -271,13 +271,14 @@ Yandex Object Storage — S3-совместимый API, регион подпи
 | CDN + bucket origin | https://yandex.cloud/ru/docs/cdn/quickstart/bucket |
 | CDN secure tokens | https://yandex.cloud/ru/docs/cdn/concepts/secure-tokens |
 | AWS SDK for .NET, S3 | https://docs.aws.amazon.com/sdk-for-net/v3/developer-guide/s3-apis-intro.html |
+| MinIO (локальный S3) | https://min.io/docs/minio/container/index.html |
 | HTTP Range | https://httpwg.org/specs/rfc9110.html#range.requests |
 
 Паттерн:
 
 - Бакет и origin приватные.
 - Upload: S3 SigV4 presigned multipart PUT, API bytes не проксирует.
-- Playback: **CDN secure token**, не S3 pre-signed GET с заменой hostname.
+- Playback в продукте: **CDN secure token**, не S3 pre-signed GET с заменой hostname. Локально (`Storage__UseCdn=false`): S3 presigned GET на MinIO; поле `delivery` остаётся `cdn` (ветка remote HTTP URL), JSON тот же.
 - Ответ discriminated по `delivery`: для CDN — `{ url, expiresAt, resolvedSource, resolvedQuality, generationId }`, для local — `url/expiresAt/generationId = null`. Плеер делает Range GET и re-resolve после expiry/первого 401/403.
 - Ключи включают immutable `generations/{generationId}`; original filename в key не использовать.
 
@@ -342,8 +343,10 @@ Yandex Object Storage — S3-совместимый API, регион подпи
 | Docker Compose | https://docs.docker.com/compose/ |
 | PostgreSQL Docker | https://hub.docker.com/_/postgres |
 | Redis Docker | https://hub.docker.com/_/redis |
+| MinIO | https://min.io/docs/minio/container/index.html |
+| pgsty/minio (локальный образ) | https://hub.docker.com/r/pgsty/minio |
 
-Ожидаемый compose: Postgres 16 + Redis + MailHog. FFmpeg pin в API image. Production probes, backup, graceful deploy и restore drill — `04-operations.md`.
+Ожидаемый compose: Postgres 16 + Redis + MailHog + MinIO (локальный S3). API на хосте ходит в MinIO как `http://127.0.0.1:9000`, не `http://minio:9000`. FFmpeg pin в API image. Production probes, backup, graceful deploy и restore drill — `04-operations.md`. Yandex — когда подключаем облако, не вместо MinIO в локальном `start`.
 
 ---
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Останавливает API, Flutter и Docker Compose (Postgres, Redis, MailHog).
-# --volumes | -v  — также удалить volume Postgres.
+# Останавливает API, Flutter и Docker Compose (Postgres, Redis, MailHog, MinIO).
+# --volumes | -v  — также удалить volumes Postgres и MinIO.
 set -euo pipefail
 
 DEVOPS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -125,5 +125,5 @@ stop_flutter || warn "Остановка Flutter прошла с ошибкой,
 stop_infra
 info "Инфраструктура выключена."
 if [[ "$REMOVE_VOLUMES" -eq 0 ]]; then
-  warn "Том Postgres на месте. Полная очистка: bash devops/stop.sh --volumes"
+  warn "Тома Postgres и MinIO на месте. Полная очистка: bash devops/stop.sh --volumes"
 fi

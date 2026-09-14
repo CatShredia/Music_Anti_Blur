@@ -2,7 +2,7 @@
 
 Перед работой агентам: [docs/00-ai-agents.md](docs/00-ai-agents.md).
 
-Sprint 01: каркас API + Flutter auth. FFmpeg, Object Storage и CDN появятся в спринте 03.
+Sprint 01: каркас API + Flutter auth. Локальный бакет — MinIO в Compose. Yandex Object Storage / CDN — позже, когда подключаем облако: [devops/yandex-storage-cdn.md](devops/yandex-storage-cdn.md).
 
 ## Локальный запуск
 
@@ -13,14 +13,14 @@ Sprint 01: каркас API + Flutter auth. FFmpeg, Object Storage и CDN поя
 
 В консоли меню: **1** локальная разработка (Enter по умолчанию), **2** развертывание. Без меню: `devops\start.cmd -Mode local` или `bash devops/start.sh deploy`.
 
-Скрипт поднимает Docker Compose (Postgres, Redis, MailHog), затем API и `flutter run` **в отдельных окнах**. Стартовый скрипт после этого завершается. Нужны Docker Desktop / daemon, .NET 10 SDK и Flutter. Устройство для Flutter: переменная `FLUTTER_DEVICE` или интерактивный выбор `flutter run`.
+Скрипт поднимает Docker Compose (Postgres, Redis, MailHog, MinIO), затем API и `flutter run` **в отдельных окнах**. Стартовый скрипт после этого завершается. Нужны Docker Desktop / daemon, .NET 10 SDK и Flutter. Устройство для Flutter: переменная `FLUTTER_DEVICE` или интерактивный выбор `flutter run`.
 
-Остановка (API + Flutter + Compose, том Postgres сохраняется):
+Остановка (API + Flutter + Compose, тома Postgres и MinIO сохраняются):
 
 - Windows: `devops\stop.cmd`
 - Linux / macOS: `bash devops/stop.sh`
 
-Стереть данные БД: `devops\stop.cmd -Volumes` или `bash devops/stop.sh --volumes`.
+Стереть данные БД и бакет MinIO: `devops\stop.cmd -Volumes` или `bash devops/stop.sh --volumes`.
 
 Развертывание сейчас — это Release/Production API на этой же машине плюс Flutter в режиме разработки. Отдельного Kubernetes/образа API ещё нет.
 
@@ -32,7 +32,7 @@ Sprint 01: каркас API + Flutter auth. FFmpeg, Object Storage и CDN поя
 docker compose up -d
 ```
 
-Сервисы: PostgreSQL `localhost:5432`, Redis `6379`, MailHog SMTP `1025`, UI http://localhost:8025.
+Сервисы: PostgreSQL `localhost:5432`, Redis `6379`, MailHog SMTP `1025` / UI http://localhost:8025, MinIO S3 `9000` / консоль http://localhost:9001 (`minio` / `minio-local-only`). Бакет `music-anti-blur` создаётся автоматически, анонимного чтения нет.
 
 Учётные данные Postgres задаются в `.env`: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`. Их же нужно продублировать в `ConnectionStrings__Postgres` / `ConnectionStrings__Hangfire`. Образ читает пароль только при первом создании volume; смена пароля — новый volume (`docker compose down -v`).
 
@@ -71,7 +71,7 @@ flutter run
 
 Письма verification/reset содержат 6-значный код для ввода в приложении. Смотреть в MailHog.
 
-Переменные окружения: см. `.env.example`.
+Переменные окружения: см. `.env.example`. Локальный S3 и (позже) Yandex: [devops/yandex-storage-cdn.md](devops/yandex-storage-cdn.md).
 
 ## CI
 

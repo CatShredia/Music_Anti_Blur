@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Поднимает Postgres/Redis/MailHog, API и Flutter (hot reload).
+# Поднимает Postgres/Redis/MailHog/MinIO, API и Flutter (hot reload).
 # Аргумент (необязательно): local | deploy | 1 | 2
 set -euo pipefail
 
@@ -67,24 +67,25 @@ choose_mode() {
 }
 
 start_infra() {
-  info "Docker Compose: Postgres, Redis, MailHog..."
+  info "Docker Compose: Postgres, Redis, MailHog, MinIO..."
   if ! docker info >/dev/null 2>&1; then
     err "Docker не запущен."
     exit 1
   fi
   docker compose --env-file .env up -d
 
-  info "Ждём healthy у Postgres и Redis..."
-  local i pg rd
+  info "Ждём healthy у Postgres, Redis и MinIO..."
+  local i pg rd mn
   for i in $(seq 1 45); do
     pg="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$(docker compose ps -q postgres)")"
     rd="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$(docker compose ps -q redis)")"
-    if [[ "$pg" == "healthy" && "$rd" == "healthy" ]]; then
+    mn="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$(docker compose ps -q minio)")"
+    if [[ "$pg" == "healthy" && "$rd" == "healthy" && "$mn" == "healthy" ]]; then
       return 0
     fi
     sleep 2
   done
-  err "Postgres/Redis не стали healthy за 90 с. docker compose ps"
+  err "Postgres/Redis/MinIO не стали healthy за 90 с. docker compose ps"
   exit 1
 }
 
@@ -216,5 +217,7 @@ echo
 echo "HTTP API     http://127.0.0.1:5080"
 echo "Swagger      http://127.0.0.1:5080/swagger  (только Development)"
 echo "MailHog      http://127.0.0.1:8025"
+echo "MinIO S3     http://127.0.0.1:9000"
+echo "MinIO UI     http://127.0.0.1:9001  (minio / minio-local-only)"
 echo "Hangfire     http://127.0.0.1:5080/hangfire"
 info "API и Flutter запущены отдельно. Остановка: bash devops/stop.sh"
