@@ -52,3 +52,11 @@ flutter run
 Письма verification/reset содержат 6-значный код для ввода в приложении. Смотреть в MailHog.
 
 Переменные окружения: см. `.env.example`.
+
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) на ветке `develop`: push и pull request.
+
+- API: `dotnet restore` и `dotnet build -c Release` проекта `src/api/MusicAntiBlur.Api`
+- Flutter: `flutter pub get`, `flutter analyze --fatal-infos`, `flutter test` в `src/mobile`
+

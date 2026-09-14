@@ -1,6 +1,6 @@
 # Руководство для ИИ-агентов
 
-Перед кодом, миграциями и советами по архитектуре прочитай этот файл, затем документы из §2. Если внутренний документ и внешняя статья расходятся — **побеждает `docs/` этого репозитория**.
+Перед кодом, миграциями и советами по архитектуре прочитай этот файл (карта репозитория — [§3](#3-структура-репозитория)), затем документы из [§2](#2-документы-репозитория-docs). Если внутренний документ и внешняя статья расходятся — **побеждает `docs/` этого репозитория**.
 
 Рабочий язык репозитория: русский (продукт, комменты к доменам). Идентификаторы кода, таблиц и HTTP — английский, как в [02-database-overview.md](02-database-overview.md).
 
@@ -22,7 +22,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 
 | Документ | Зачем агенту |
 |---|---|
-| [00-ai-agents.md](00-ai-agents.md) | Этот файл: приоритет источников, стек, внешние паттерны |
+| [00-ai-agents.md](00-ai-agents.md) | Этот файл: приоритет источников, [структура репозитория §3](#3-структура-репозитория), стек, внешние паттерны |
 | [01-product-plan.md](01-product-plan.md) | Скоуп MVP, стек, auth, качества, подмена, SignalR, критерии готовности |
 | [02-database-overview.md](02-database-overview.md) | Целевая схема Postgres: таблицы, CHECK, индексы, каскады, ключи S3, чего не создавать |
 | [03-api-contract.md](03-api-contract.md) | Нормативные HTTP/SignalR routes, DTO, ошибки, idempotency и rate limits |
@@ -30,6 +30,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 
 Якоря, которые чаще всего нужны:
 
+- Где лежит код: [§3 этого файла](#3-структура-репозитория)
 - Стек и схема компонентов: [01-product-plan.md §2](01-product-plan.md)
 - Ограничения разработчика (нет дизайна, нет веба, нет reco): [01-product-plan.md §3](01-product-plan.md)
 - Регистрация email **или** login, reset по почте: [01-product-plan.md §4.1](01-product-plan.md)
@@ -42,9 +43,93 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 
 Спринты разработки лежат в `no_commit/sprints/` (каталог в `.gitignore`). Это рабочие заметки для людей. Если `docs/` и спринт противоречат — правь код и схему по **`docs/`**, спринт не расширяет скоуп.
 
+Ожидаемая раскладка в [01-product-plan.md §10](01-product-plan.md) — черновик. Актуальная карта файлов — [§3](#3-структура-репозитория).
+
 ---
 
-## 3. Жёсткие правила скоупа
+## 3. Структура репозитория
+
+Один монолитный репозиторий: API, Flutter-клиент, compose для локалки, `docs/` как источник правды. Новый код клади в существующие папки, не заводи параллельные деревья (`backend/`, `app/`, второй API).
+
+Локальный запуск — [README.md](../README.md). Секреты — [.env.example](../.env.example) (сам `.env` в git не коммитить).
+
+```
+.
+├── README.md
+├── docker-compose.yml          PostgreSQL 16, Redis 7, MailHog
+├── .env.example
+├── .github/workflows/ci.yml    push/PR в develop: API build + Flutter analyze/test
+├── docs/                       нормативные документы, см. §2
+├── src/api/                    ASP.NET Core (.NET 10)
+└── src/mobile/                 Flutter
+```
+
+| Путь | Зачем |
+|---|---|
+| [README.md](../README.md) | Compose, API, Flutter, MailHog, CI |
+| [docker-compose.yml](../docker-compose.yml) | Postgres, Redis, MailHog |
+| [.env.example](../.env.example) | Имена переменных; значения только локально |
+| [.github/workflows/ci.yml](../.github/workflows/ci.yml) | CI на ветке `develop` |
+| [docs/](./) | Product / schema / API / operations |
+
+### 3.1. API — `src/api/`
+
+Собирать **csproj**, не solution: [MusicAntiBlur.slnx](../src/api/MusicAntiBlur.slnx) сейчас пустой.
+
+Точка входа: [Program.cs](../src/api/MusicAntiBlur.Api/Program.cs). Проект: [MusicAntiBlur.Api.csproj](../src/api/MusicAntiBlur.Api/MusicAntiBlur.Api.csproj).
+
+```
+src/api/MusicAntiBlur.Api/
+├── Program.cs
+├── Auth/           register, login, refresh, reset, bind, JWT
+├── Data/           DbContext, сущности, миграции EF
+├── Hubs/           PlaybackHub (JWT + Redis backplane)
+├── Jobs/           Hangfire: письма, ping, cleanup
+├── Mail/           SMTP (MailKit)
+├── Http/           problem+json, request id
+├── RateLimiting/   Redis, fail closed
+└── Config/         загрузка корневого .env
+```
+
+| Задача | Файлы |
+|---|---|
+| HTTP auth | [AuthEndpoints.cs](../src/api/MusicAntiBlur.Api/Auth/AuthEndpoints.cs), [AuthService.cs](../src/api/MusicAntiBlur.Api/Auth/AuthService.cs) |
+| Пароль / login / email | [PasswordRules.cs](../src/api/MusicAntiBlur.Api/Auth/PasswordRules.cs), [TokenHasher.cs](../src/api/MusicAntiBlur.Api/Auth/TokenHasher.cs) |
+| JWT | [JwtTokenService.cs](../src/api/MusicAntiBlur.Api/Auth/JwtTokenService.cs) |
+| Схема БД | [AppDbContext.cs](../src/api/MusicAntiBlur.Api/Data/AppDbContext.cs), [Data/Entities/](../src/api/MusicAntiBlur.Api/Data/Entities/), [Data/Migrations/](../src/api/MusicAntiBlur.Api/Data/Migrations/) — только EF-миграции |
+| SignalR | [PlaybackHub.cs](../src/api/MusicAntiBlur.Api/Hubs/PlaybackHub.cs) |
+| Письма / Hangfire | [EmailJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/EmailJobs.cs), [SmtpEmailSender.cs](../src/api/MusicAntiBlur.Api/Mail/SmtpEmailSender.cs), [HangfireDashboardAuth.cs](../src/api/MusicAntiBlur.Api/Jobs/HangfireDashboardAuth.cs) |
+| Rate limit | [RedisRateLimiter.cs](../src/api/MusicAntiBlur.Api/RateLimiting/RedisRateLimiter.cs) |
+| Seed admin (Development) | [AdminSeeder.cs](../src/api/MusicAntiBlur.Api/Auth/AdminSeeder.cs) |
+
+Сущности сейчас: `User`, `UserSettings`, `RefreshToken`, `PasswordResetToken`, `EmailVerificationToken`. Новые таблицы — только если они есть в [02-database-overview.md](02-database-overview.md).
+
+### 3.2. Flutter — `src/mobile/`
+
+Пакеты: [pubspec.yaml](../src/mobile/pubspec.yaml). Анализ: [analysis_options.yaml](../src/mobile/analysis_options.yaml). Смоук: [test/widget_test.dart](../src/mobile/test/widget_test.dart).
+
+```
+src/mobile/lib/
+├── main.dart              экраны auth / home / settings, go_router
+└── api/api_client.dart    dio, JWT, refresh, X-Device-Id
+```
+
+| Задача | Файл |
+|---|---|
+| Экраны и роуты | [main.dart](../src/mobile/lib/main.dart) |
+| HTTP + secure storage | [api_client.dart](../src/mobile/lib/api/api_client.dart) |
+
+Платформенные обёртки (`android/`, `ios/`, …) — стандартный Flutter; бизнес-логику туда не класть.
+
+### 3.3. Куда не класть
+
+- Секреты, `.env`, `no_commit/` — не в git.
+- Hangfire-таблицы и S3-байты — не в EF `DbContext`.
+- Каталог / плеер / FFmpeg / Object Storage — ещё нет в `src/`; появятся по [01-product-plan.md](01-product-plan.md), не invent-ahead.
+
+---
+
+## 4. Жёсткие правила скоупа
 
 Делай, только если это есть в product plan / database overview:
 
@@ -73,11 +158,11 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 
 ---
 
-## 4. Стек → официальная документация
+## 5. Стек → официальная документация
 
-Версии в коде фиксируй по `csproj` / `pubspec.yaml`, когда они появятся. Ниже — канонические источники, не блоги как истина.
+Версии в коде фиксируй по [MusicAntiBlur.Api.csproj](../src/api/MusicAntiBlur.Api/MusicAntiBlur.Api.csproj) и [pubspec.yaml](../src/mobile/pubspec.yaml). Ниже — канонические источники, не блоги как истина.
 
-### 4.1. ASP.NET Core, C#, API
+### 5.1. ASP.NET Core, C#, API
 
 | Тема | Ссылка |
 |---|---|
@@ -105,7 +190,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 
 Для MVP достаточно: тонкие endpoints → сервисы приложения → EF `DbContext`. Не внедрять MediatR/CQRS/Clean Architecture «слои ради слоёв», пока нет боли.
 
-### 4.2. EF Core + PostgreSQL + Npgsql
+### 5.2. EF Core + PostgreSQL + Npgsql
 
 | Тема | Ссылка |
 |---|---|
@@ -122,7 +207,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 
 Паттерн: **миграции EF — единственный способ менять схему** ([01-product-plan.md §7](01-product-plan.md)). Целевой DDL в overview — ориентир, не копипаста в обход EF.
 
-### 4.3. Redis
+### 5.3. Redis
 
 | Тема | Ссылка |
 |---|---|
@@ -133,7 +218,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 
 В Postgres не дублировать rate limit и presence. CDN URL cache key включает owner/rendition/generation; ACL проверять до lookup, TTL кэша короче подписи. При отказе Redis auth/upload/private URL и playback writer mutation fail closed по `03-api-contract.md`; GET snapshot может работать degraded.
 
-### 4.4. SignalR
+### 5.4. SignalR
 
 | Тема | Ссылка |
 |---|---|
@@ -146,7 +231,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 
 Паттерн: сервер **не играет аудио**. Хаб = versioned snapshot `playback_states` + broadcast после DB commit. Порядок задаёт монотонная `revision`, stale event клиент игнорирует; `updated_at` не используется для конкуренции. Не сериализовать `IHubContext` в Hangfire — job резолвит хаб через DI.
 
-### 4.5. Hangfire
+### 5.5. Hangfire
 
 | Тема | Ссылка |
 |---|---|
@@ -158,7 +243,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 
 Паттерн: transcode job всегда получает `generationId`, использует lease + CAS и пишет только generation-aware keys. `DisableConcurrentExecution` не заменяет идемпотентность. Удаление S3 — только через `object_deletions`; recovery и лимиты — в `04-operations.md`. Схема `hangfire` не в EF.
 
-### 4.6. Object Storage upload, CDN secure token, Range
+### 5.6. Object Storage upload, CDN secure token, Range
 
 Yandex Object Storage — S3-совместимый API, регион подписи обычно `ru-central1`, endpoint `https://storage.yandexcloud.net`.
 
@@ -183,7 +268,7 @@ Yandex Object Storage — S3-совместимый API, регион подпи
 - Ответ discriminated по `delivery`: для CDN — `{ url, expiresAt, resolvedSource, resolvedQuality, generationId }`, для local — `url/expiresAt/generationId = null`. Плеер делает Range GET и re-resolve после expiry/первого 401/403.
 - Ключи включают immutable `generations/{generationId}`; original filename в key не использовать.
 
-### 4.7. FFmpeg
+### 5.7. FFmpeg
 
 | Тема | Ссылка |
 |---|---|
@@ -194,7 +279,7 @@ Yandex Object Storage — S3-совместимый API, регион подпи
 
 Профили продукта: `aac_128`, `aac_256` (см. план). Не включать HLS. Не запускать транскод в HTTP-request; только Hangfire. Вход недоверенный: HEAD/size, full-file SHA-256 при чтении, ffprobe, allowlist, sandbox, timeout и resource limits из `04-operations.md`.
 
-### 4.8. Почта
+### 5.8. Почта
 
 | Тема | Ссылка |
 |---|---|
@@ -204,7 +289,7 @@ Yandex Object Storage — S3-совместимый API, регион подпи
 
 Паттерн: `forgot-password` всегда 200. Токен в БД только хеш. Письмо простое текстовое. Токены и пароли не логировать.
 
-### 4.9. Flutter (единственный клиент MVP)
+### 5.9. Flutter (единственный клиент MVP)
 
 | Тема | Ссылка |
 |---|---|
@@ -226,7 +311,7 @@ Yandex Object Storage — S3-совместимый API, регион подпи
 
 Паттерн плеера: один `AudioHandler`. Queue item имеет `itemId` + `trackId`, snapshot — `currentItemId` + `revision`. URL резолвить в момент play и обновлять по expiry. Позиции в API/DB — **миллисекунды**; при смене файла clamp к duration. Локальный URI в API не отправлять.
 
-### 4.10. Auth, пароли, JWT (безопасность)
+### 5.10. Auth, пароли, JWT (безопасность)
 
 | Тема | Ссылка |
 |---|---|
@@ -237,7 +322,7 @@ Yandex Object Storage — S3-совместимый API, регион подпи
 
 Паттерн продукта: email verification + recent re-auth для bind; refresh hash с family/rotation/reuse detection; reset атомарно отзывает все sessions; одинаковое сообщение на неверный login/password. Полная rate-limit matrix — `03-api-contract.md`.
 
-### 4.11. Инфра локально
+### 5.11. Инфра локально
 
 | Тема | Ссылка |
 |---|---|
@@ -249,31 +334,33 @@ Yandex Object Storage — S3-совместимый API, регион подпи
 
 ---
 
-## 5. Как агенту принимать решения
+## 6. Как агенту принимать решения
 
 1. Задача меняет скоуп продукта? Сначала [01-product-plan.md](01-product-plan.md), не «как в Spotify».
 2. Задача про таблицы, индексы, FK? Только [02-database-overview.md](02-database-overview.md).
 3. Задача про route/DTO/status/SignalR event? Только [03-api-contract.md](03-api-contract.md).
 4. Задача про FFmpeg/CDN/jobs/deploy/backup? [04-operations.md](04-operations.md).
-5. Задача про «как это принято в .NET / Flutter / S3»? Таблица §4, затем официальный doc.
+5. Задача про «как это принято в .NET / Flutter / S3»? Таблица [§5](#5-стек--официальная-документация), затем официальный doc.
 6. Не уверен, в MVP ли фича — **не делать**. Список «вне MVP» в плане.
 7. Дизайн экранов не изобретать: Material 3, стабильные имена роутов.
 8. Не коммить `no_commit/` и секреты.
+9. Новый файл — в папки из [§3](#3-структура-репозитория), не плодить параллельные деревья.
 
-Когда добавляешь новую технологию в стек — сначала правка product plan, потом код, и добавь строку в §4 этого файла.
+Когда добавляешь новую технологию в стек — сначала правка product plan, потом код, и добавь строку в [§5](#5-стек--официальная-документация) этого файла. Когда добавляешь папку или входной файл — обнови [§3](#3-структура-репозитория).
 
 ---
 
-## 6. Карта «фича → где правда»
+## 7. Карта «фича → где правда»
 
-| Фича | Документ |
+| Фича | Документ / код |
 |---|---|
-| Регистрация / login type / reset | [01-product-plan.md §4.1](01-product-plan.md), таблицы `users`, `*_tokens` в overview |
+| Где лежит файл | [§3 этого файла](#3-структура-репозитория) |
+| Регистрация / login type / reset | [01-product-plan.md §4.1](01-product-plan.md), таблицы `users`, `*_tokens` в overview, код [Auth/](../src/api/MusicAntiBlur.Api/Auth/) |
 | Каталог, поиск | план §4.2, `artists` / `albums` / `tracks` |
 | Качества, transcode | план §4.4, `track_renditions` |
 | Плеер, очередь | план §4.3, `playback_states` |
 | Local + private | план §4.5, upload/rendition tables, API §5 |
-| SignalR | план §4.6, API §6 |
-| HTTP errors / rate limits | API contract |
-| Cleanup / backup / deploy | operations |
+| SignalR | план §4.6, API §6, [PlaybackHub.cs](../src/api/MusicAntiBlur.Api/Hubs/PlaybackHub.cs) |
+| HTTP errors / rate limits | [03-api-contract.md](03-api-contract.md), [Http/](../src/api/MusicAntiBlur.Api/Http/), [RedisRateLimiter.cs](../src/api/MusicAntiBlur.Api/RateLimiting/RedisRateLimiter.cs) |
+| Cleanup / backup / deploy | [04-operations.md](04-operations.md); jobs сейчас в [EmailJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/EmailJobs.cs) |
 | Что не создавать в БД | overview §14 |
