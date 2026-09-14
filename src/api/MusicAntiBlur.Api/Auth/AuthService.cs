@@ -26,22 +26,26 @@ public sealed class AuthService(
     public async Task<SessionResponse> RegisterAsync(RegisterRequest req, Guid deviceId, string ip, CancellationToken ct)
     {
         await limiter.HitAsync($"rl:register:{ip}", 30, TimeSpan.FromHours(1), ct);
-        PasswordRules.EnsurePassword(req.Password);
-        if (string.IsNullOrWhiteSpace(req.Login) || string.IsNullOrWhiteSpace(req.Email))
+        var errors = AuthValidation.NewErrors();
+        var login = AuthValidation.AddLogin(errors, "login", req.Login);
+        var email = AuthValidation.AddEmail(errors, "email", req.Email);
+        AuthValidation.AddPassword(errors, "password", req.Password);
+        AuthValidation.ThrowIfAny(errors);
+
+        var taken = AuthValidation.NewErrors();
+        if (login is not null && await LoginTakenAsync(login, ct))
         {
-            throw new ApiException(400, "validation_failed", "Login and email are required.",
-                new Dictionary<string, string[]>
-                {
-                    ["login"] = ["Login is required."],
-                    ["email"] = ["Email is required."]
-                });
+            AuthValidation.Add(taken, "login", AuthValidation.IdentifierTaken);
         }
 
-        PasswordRules.EnsureLogin(req.Login);
-        var email = PasswordRules.NormalizeEmail(req.Email);
-        if (await LoginTakenAsync(req.Login, ct) || await EmailTakenAsync(email, ct))
+        if (email is not null && await EmailReservedAsync(email, excludeUserId: null, ct))
         {
-            throw new ApiException(409, "identifier_taken", "Identifier is already taken.");
+            AuthValidation.Add(taken, "email", AuthValidation.IdentifierTaken);
+        }
+
+        if (taken.Count > 0)
+        {
+            throw new ApiException(409, "identifier_taken", "Identifier is already taken.", taken);
         }
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -49,7 +53,7 @@ public sealed class AuthService(
         var user = new User
         {
             Id = Guid.NewGuid(),
-            Login = req.Login,
+            Login = login,
             Email = email,
             Role = "user",
             CreatedAt = now,
@@ -57,10 +61,10 @@ public sealed class AuthService(
             Settings = new UserSettings { PreferredQuality = "auto", UpdatedAt = now },
             PasswordHash = ""
         };
-        user.PasswordHash = hasher.HashPassword(user, req.Password);
+        user.PasswordHash = hasher.HashPassword(user, req.Password!);
         db.Users.Add(user);
         await db.SaveChangesAsync(ct);
-        await CreateVerificationAsync(user.Id, email, "register", TimeSpan.FromHours(24), ct);
+        await CreateVerificationAsync(user.Id, email!, "register", TimeSpan.FromHours(24), ct);
         var session = await IssueSessionAsync(user, deviceId, now, ct);
         await tx.CommitAsync(ct);
         return session;
@@ -68,11 +72,21 @@ public sealed class AuthService(
 
     public async Task<SessionResponse> LoginAsync(LoginRequest req, Guid deviceId, string ip, CancellationToken ct)
     {
-        var type = ParseType(req.IdentifierType);
-        var identKey = type == "email"
-            ? PasswordRules.NormalizeEmail(req.Identifier)
-            : req.Identifier;
-        await limiter.HitAsync($"rl:login:{ip}:{TokenHasher.Hash(identKey.ToLowerInvariant())}", 10, TimeSpan.FromMinutes(5), ct);
+        var errors = AuthValidation.NewErrors();
+        var type = AuthValidation.AddIdentifierType(errors, req.IdentifierType);
+        string? identKey = null;
+        if (type == "email")
+        {
+            identKey = AuthValidation.AddEmail(errors, "identifier", req.Identifier);
+        }
+        else if (type == "login")
+        {
+            identKey = AuthValidation.AddLogin(errors, "identifier", req.Identifier);
+        }
+
+        AuthValidation.ThrowIfAny(errors);
+
+        await limiter.HitAsync($"rl:login:{ip}:{TokenHasher.Hash(identKey!.ToLowerInvariant())}", 10, TimeSpan.FromMinutes(5), ct);
 
         User? user;
         if (type == "email")
@@ -81,13 +95,12 @@ public sealed class AuthService(
         }
         else
         {
-            PasswordRules.EnsureLogin(req.Identifier);
-            var lowered = req.Identifier.ToLowerInvariant();
+            var lowered = identKey.ToLowerInvariant();
             user = await db.Users.FirstOrDefaultAsync(u => u.Login != null && u.Login.ToLower() == lowered, ct);
         }
 
         var hash = user?.PasswordHash ?? DummyHash;
-        var verify = hasher.VerifyHashedPassword(user ?? DummyUser, hash, req.Password);
+        var verify = hasher.VerifyHashedPassword(user ?? DummyUser, hash, req.Password ?? "");
         if (user is null || verify == PasswordVerificationResult.Failed)
         {
             throw new ApiException(401, "invalid_credentials", "Invalid credentials.");
@@ -101,8 +114,14 @@ public sealed class AuthService(
         return await IssueSessionAsync(user, deviceId, DateTimeOffset.UtcNow, ct);
     }
 
-    public async Task<SessionResponse> RefreshAsync(string refreshToken, Guid deviceId, string ip, CancellationToken ct)
+    public async Task<SessionResponse> RefreshAsync(string? refreshToken, Guid deviceId, string ip, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(refreshToken))
+        {
+            throw new ApiException(400, "validation_failed", "Validation failed.",
+                new Dictionary<string, string[]> { ["refreshToken"] = [AuthValidation.Required] });
+        }
+
         var hash = TokenHasher.Hash(refreshToken);
         var row = await db.RefreshTokens.FirstOrDefaultAsync(t => t.TokenHash == hash, ct);
         if (row is null)
@@ -170,14 +189,9 @@ public sealed class AuthService(
                 .SetProperty(t => t.RevokeReason, "logout_all"), ct);
     }
 
-    public async Task ForgotPasswordAsync(string emailRaw, string ip, CancellationToken ct)
+    public async Task ForgotPasswordAsync(string? emailRaw, string ip, CancellationToken ct)
     {
-        string email;
-        try
-        {
-            email = PasswordRules.NormalizeEmail(emailRaw);
-        }
-        catch (ApiException)
+        if (!AuthValidation.TryNormalizeEmail(emailRaw ?? "", out var email))
         {
             await limiter.HitAsync($"rl:forgot:{ip}:invalid", 3, TimeSpan.FromHours(1), ct);
             return;
@@ -216,11 +230,14 @@ public sealed class AuthService(
         }
     }
 
-    public async Task ResetPasswordAsync(string code, string newPassword, string ip, CancellationToken ct)
+    public async Task ResetPasswordAsync(string? code, string? newPassword, string ip, CancellationToken ct)
     {
         await limiter.HitAsync($"rl:reset:{ip}", 10, TimeSpan.FromMinutes(15), ct);
-        TokenHasher.EnsureNumericCode(code);
-        PasswordRules.EnsurePassword(newPassword);
+        var errors = AuthValidation.NewErrors();
+        AuthValidation.AddCode(errors, "code", code);
+        AuthValidation.AddPassword(errors, "newPassword", newPassword);
+        AuthValidation.ThrowIfAny(errors);
+        code = code!.Trim();
         var hash = TokenHasher.Hash(code);
         var now = DateTimeOffset.UtcNow;
 
@@ -230,12 +247,13 @@ public sealed class AuthService(
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.UsedAt, now), ct);
         if (affected != 1)
         {
-            throw new ApiException(400, "invalid_token", "Invalid code.");
+            throw new ApiException(400, "invalid_token", "Invalid code.",
+                new Dictionary<string, string[]> { ["code"] = ["invalid_token"] });
         }
 
         var row = await db.PasswordResetTokens.FirstAsync(t => t.TokenHash == hash, ct);
         var user = await db.Users.FirstAsync(u => u.Id == row.UserId, ct);
-        user.PasswordHash = hasher.HashPassword(user, newPassword);
+        user.PasswordHash = hasher.HashPassword(user, newPassword!);
         user.UpdatedAt = now;
         await db.PasswordResetTokens
             .Where(t => t.UserId == user.Id && t.Id != row.Id && t.UsedAt == null && t.InvalidatedAt == null)
@@ -249,21 +267,16 @@ public sealed class AuthService(
         await tx.CommitAsync(ct);
     }
 
-    public async Task VerifyEmailAsync(string code, string ip, CancellationToken ct)
+    public async Task VerifyEmailAsync(string? code, string ip, CancellationToken ct)
     {
         await limiter.HitAsync($"rl:verify:{ip}", 10, TimeSpan.FromMinutes(15), ct);
-        TokenHasher.EnsureNumericCode(code);
-        await ConsumeVerificationAsync(code, ct);
+        AuthValidation.EnsureCode(code);
+        await ConsumeVerificationAsync(code!.Trim(), ct);
     }
 
-    public async Task ResendVerificationAsync(string emailRaw, string ip, CancellationToken ct)
+    public async Task ResendVerificationAsync(string? emailRaw, string ip, CancellationToken ct)
     {
-        string email;
-        try
-        {
-            email = PasswordRules.NormalizeEmail(emailRaw);
-        }
-        catch (ApiException)
+        if (!AuthValidation.TryNormalizeEmail(emailRaw ?? "", out var email))
         {
             await limiter.HitAsync($"rl:resend:{ip}:invalid", 3, TimeSpan.FromHours(1), ct);
             return;
@@ -303,30 +316,47 @@ public sealed class AuthService(
         }
     }
 
-    public async Task BindEmailAsync(Guid userId, string emailRaw, string currentPassword, string ip, CancellationToken ct)
+    public async Task BindEmailAsync(Guid userId, string? emailRaw, string? currentPassword, string ip, CancellationToken ct)
     {
         await limiter.HitAsync($"rl:bind:{userId:D}", 5, TimeSpan.FromHours(1), ct);
-        var email = PasswordRules.NormalizeEmail(emailRaw);
-        var user = await db.Users.FirstAsync(u => u.Id == userId, ct);
-        EnsurePasswordMatches(user, currentPassword);
-        if (await EmailTakenAsync(email, ct) && !string.Equals(user.Email, email, StringComparison.Ordinal))
+        var errors = AuthValidation.NewErrors();
+        var email = AuthValidation.AddEmail(errors, "email", emailRaw);
+        if (string.IsNullOrEmpty(currentPassword))
         {
-            throw new ApiException(409, "identifier_taken", "Identifier is already taken.");
+            AuthValidation.Add(errors, "currentPassword", AuthValidation.Required);
         }
 
-        await CreateVerificationAsync(user.Id, email, "bind", TimeSpan.FromHours(24), ct);
+        AuthValidation.ThrowIfAny(errors);
+        var user = await db.Users.FirstAsync(u => u.Id == userId, ct);
+        EnsurePasswordMatches(user, currentPassword!);
+        if (await EmailReservedAsync(email!, user.Id, ct) &&
+            !string.Equals(user.Email, email, StringComparison.Ordinal))
+        {
+            throw new ApiException(409, "identifier_taken", "Identifier is already taken.",
+                new Dictionary<string, string[]> { ["email"] = [AuthValidation.IdentifierTaken] });
+        }
+
+        await CreateVerificationAsync(user.Id, email!, "bind", TimeSpan.FromHours(24), ct);
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task BindLoginAsync(Guid userId, string login, string currentPassword, CancellationToken ct)
+    public async Task BindLoginAsync(Guid userId, string? loginRaw, string? currentPassword, CancellationToken ct)
     {
         await limiter.HitAsync($"rl:bind:{userId:D}", 5, TimeSpan.FromHours(1), ct);
-        PasswordRules.EnsureLogin(login);
-        var user = await db.Users.FirstAsync(u => u.Id == userId, ct);
-        EnsurePasswordMatches(user, currentPassword);
-        if (await LoginTakenAsync(login, ct) && !string.Equals(user.Login, login, StringComparison.OrdinalIgnoreCase))
+        var errors = AuthValidation.NewErrors();
+        var login = AuthValidation.AddLogin(errors, "login", loginRaw);
+        if (string.IsNullOrEmpty(currentPassword))
         {
-            throw new ApiException(409, "identifier_taken", "Identifier is already taken.");
+            AuthValidation.Add(errors, "currentPassword", AuthValidation.Required);
+        }
+
+        AuthValidation.ThrowIfAny(errors);
+        var user = await db.Users.FirstAsync(u => u.Id == userId, ct);
+        EnsurePasswordMatches(user, currentPassword!);
+        if (await LoginTakenAsync(login!, ct) && !string.Equals(user.Login, login, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ApiException(409, "identifier_taken", "Identifier is already taken.",
+                new Dictionary<string, string[]> { ["login"] = [AuthValidation.IdentifierTaken] });
         }
 
         user.Login = login;
@@ -346,17 +376,14 @@ public sealed class AuthService(
         return new SettingsDto(settings.PreferredQuality);
     }
 
-    public async Task<SettingsDto> UpdateSettingsAsync(Guid userId, string preferredQuality, CancellationToken ct)
+    public async Task<SettingsDto> UpdateSettingsAsync(Guid userId, string? preferredQuality, CancellationToken ct)
     {
-        var allowed = new[] { "auto", "aac_128", "aac_256", "src" };
-        if (!allowed.Contains(preferredQuality))
-        {
-            throw new ApiException(400, "validation_failed", "preferredQuality is invalid.",
-                new Dictionary<string, string[]> { ["preferredQuality"] = ["Must be auto, aac_128, aac_256, or src."] });
-        }
+        var errors = AuthValidation.NewErrors();
+        AuthValidation.AddPreferredQuality(errors, preferredQuality);
+        AuthValidation.ThrowIfAny(errors);
 
         var settings = await db.UserSettings.FirstAsync(s => s.UserId == userId, ct);
-        settings.PreferredQuality = preferredQuality;
+        settings.PreferredQuality = preferredQuality!;
         settings.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
         return new SettingsDto(settings.PreferredQuality);
@@ -381,16 +408,18 @@ public sealed class AuthService(
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.UsedAt, now), ct);
         if (affected != 1)
         {
-            throw new ApiException(400, "invalid_token", "Invalid code.");
+            throw new ApiException(400, "invalid_token", "Invalid code.",
+                new Dictionary<string, string[]> { ["code"] = ["invalid_token"] });
         }
 
         var row = await db.EmailVerificationTokens.FirstAsync(t => t.TokenHash == hash, ct);
         var user = await db.Users.FirstAsync(u => u.Id == row.UserId, ct);
         if (row.Purpose == "bind")
         {
-            if (await db.Users.AnyAsync(u => u.Id != user.Id && u.Email == row.PendingEmail, ct))
+            if (await EmailReservedAsync(row.PendingEmail, user.Id, ct))
             {
-                throw new ApiException(409, "identifier_taken", "Identifier is already taken.");
+                throw new ApiException(409, "identifier_taken", "Identifier is already taken.",
+                    new Dictionary<string, string[]> { ["email"] = [AuthValidation.IdentifierTaken] });
             }
 
             user.Email = row.PendingEmail;
@@ -488,8 +517,20 @@ public sealed class AuthService(
                 .SetProperty(t => t.RevokeReason, reason), ct);
     }
 
-    private Task<bool> EmailTakenAsync(string email, CancellationToken ct) =>
-        db.Users.AnyAsync(u => u.Email == email, ct);
+    private async Task<bool> EmailReservedAsync(string email, Guid? excludeUserId, CancellationToken ct)
+    {
+        if (await db.Users.AnyAsync(u => u.Email == email && (excludeUserId == null || u.Id != excludeUserId), ct))
+        {
+            return true;
+        }
+
+        return await db.EmailVerificationTokens.AnyAsync(
+            t => t.PendingEmail == email
+                 && t.UsedAt == null
+                 && t.InvalidatedAt == null
+                 && (excludeUserId == null || t.UserId != excludeUserId),
+            ct);
+    }
 
     private Task<bool> LoginTakenAsync(string login, CancellationToken ct)
     {
@@ -514,32 +555,21 @@ public sealed class AuthService(
         throw new ApiException(503, "dependency_unavailable", "Could not allocate a confirmation code.");
     }
 
-    private static string ParseType(string? type)
-    {
-        if (type is "email" or "login")
-        {
-            return type;
-        }
-
-        throw new ApiException(400, "validation_failed", "identifierType must be email or login.",
-            new Dictionary<string, string[]> { ["identifierType"] = ["Must be email or login."] });
-    }
-
     private static UserDto ToDto(User user) =>
         new(user.Id, user.Login, user.Email, user.Role, user.EmailVerifiedAt);
 }
 
-public sealed record RegisterRequest(string Login, string Email, string Password);
-public sealed record LoginRequest(string IdentifierType, string Identifier, string Password);
-public sealed record CodeRequest(string Code);
-public sealed record RefreshRequest(string RefreshToken);
+public sealed record RegisterRequest(string? Login, string? Email, string? Password);
+public sealed record LoginRequest(string? IdentifierType, string? Identifier, string? Password);
+public sealed record CodeRequest(string? Code);
+public sealed record RefreshRequest(string? RefreshToken);
 public sealed record LogoutRequest(string? RefreshToken);
-public sealed record ForgotRequest(string Email);
-public sealed record ResetRequest(string Code, string NewPassword);
-public sealed record EmailOnlyRequest(string Email);
-public sealed record BindEmailRequest(string Email, string CurrentPassword);
-public sealed record BindLoginRequest(string Login, string CurrentPassword);
-public sealed record UpdateSettingsRequest(string PreferredQuality);
+public sealed record ForgotRequest(string? Email);
+public sealed record ResetRequest(string? Code, string? NewPassword);
+public sealed record EmailOnlyRequest(string? Email);
+public sealed record BindEmailRequest(string? Email, string? CurrentPassword);
+public sealed record BindLoginRequest(string? Login, string? CurrentPassword);
+public sealed record UpdateSettingsRequest(string? PreferredQuality);
 public sealed record UserDto(Guid Id, string? Login, string? Email, string Role, DateTimeOffset? EmailVerifiedAt);
 public sealed record SessionResponse(
     string AccessToken,

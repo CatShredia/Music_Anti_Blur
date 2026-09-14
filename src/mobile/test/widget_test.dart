@@ -8,4 +8,11 @@ void main() {
     expect(find.text('Вход'), findsOneWidget);
     expect(find.text('Vize'), findsOneWidget);
   });
+
+  testWidgets('login screen validates empty fields', (tester) async {
+    await tester.pumpWidget(MusicAntiBlurApp(api: ApiClient()));
+    await tester.tap(find.text('Войти'));
+    await tester.pump();
+    expect(find.text('Обязательное поле'), findsWidgets);
+  });
 }

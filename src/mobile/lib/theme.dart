@@ -121,6 +121,11 @@ class VizeTheme {
           borderRadius: BorderRadius.circular(VizeRadii.field),
           borderSide: const BorderSide(color: VizeColors.danger),
         ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(VizeRadii.field),
+          borderSide: const BorderSide(color: VizeColors.danger, width: 1.4),
+        ),
+        errorStyle: const TextStyle(color: VizeColors.danger, fontSize: 12, height: 1.3),
       ),
       progressIndicatorTheme: const ProgressIndicatorThemeData(color: VizeColors.accent),
       dividerColor: VizeColors.stroke,

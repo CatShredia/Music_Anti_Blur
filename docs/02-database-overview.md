@@ -421,7 +421,7 @@ flowchart TB
 
 ### 7.1. `users`
 
-Одна строка — один аккаунт. Use-case регистрации принимает ровно один `login` / `email`; DB-инвариант — **минимум один**. После подтверждённой привязки оба могут быть NOT NULL. Email участвует во входе/reset только при `email_verified_at IS NOT NULL`.
+Одна строка — один аккаунт. Регистрация MVP сразу пишет и `login`, и `email`. DB-инвариант — **минимум один** идентификатор. Email участвует во входе/reset только при `email_verified_at IS NOT NULL`. Смена login/email после регистрации в продукт MVP не входит.
 
 | Колонка | Тип | Null | Описание |
 |---|---|---|---|
@@ -442,7 +442,9 @@ CHECK (login IS NOT NULL OR email IS NOT NULL)
 CHECK (role IN ('user', 'admin'))
 CHECK (login IS NULL OR login ~ '^[a-zA-Z0-9_.-]{3,32}$')
 CHECK (email IS NULL OR email = lower(btrim(email)))
+CHECK (email IS NULL OR char_length(email) BETWEEN 3 AND 254)
 CHECK (email_verified_at IS NULL OR email IS NOT NULL)
+CHECK (char_length(password_hash) > 0)
 UNIQUE INDEX ux_users_email_lower ON users (lower(email)) WHERE email IS NOT NULL
 UNIQUE INDEX ux_users_login_lower ON users (lower(login)) WHERE login IS NOT NULL
 ```
@@ -500,7 +502,7 @@ Hangfire только отправляет письмо; состояние — 
 
 ### 7.3a. `email_verification_tokens`
 
-Одноразовое подтверждение email для регистрации или привязки. Pending email хранится здесь и становится `users.email` только после успешного consume. Для email-регистрации адрес уже резервируется в `users`, но вход/reset запрещены до verification.
+Одноразовое подтверждение email при регистрации. Pending email хранится здесь; для регистрации адрес уже резервируется в `users`, но вход/reset запрещены до verification. `purpose = 'bind'` зарезервирован схемой, в MVP не используется.
 
 | Колонка | Тип | Null | Описание |
 |---|---|---|---|
@@ -514,7 +516,7 @@ Hangfire только отправляет письмо; состояние — 
 | `invalidated_at` | `timestamptz` | да | resend/смена pending email |
 | `created_at` | `timestamptz` | нет | |
 
-CHECK: normalized email, допустимый purpose, временной порядок, used/invalidated mutually exclusive. Индексы: `(user_id)`, `(expires_at)`. Повторная отправка ставит `invalidated_at` активным tokens того же purpose; bind требует recent re-auth. Cleanup удаляет неподтверждённые email-only аккаунты после 24 часов.
+CHECK: normalized email, допустимый purpose, временной порядок, used/invalidated mutually exclusive. Индексы: `(user_id)`, `(expires_at)`, уникальный активный bind `pending_email` (`used_at IS NULL AND invalidated_at IS NULL AND purpose = 'bind'`). Повторная отправка ставит `invalidated_at` активным tokens того же purpose. `purpose = 'bind'` в схеме есть на будущее: смена/привязка login и email после регистрации в MVP не делается. Cleanup удаляет неподтверждённые email-only аккаунты после 24 часов.
 
 ---
 
@@ -1055,7 +1057,11 @@ CREATE TABLE users (
     ),
     CONSTRAINT ck_users_login_format CHECK (
         login IS NULL OR login ~ '^[a-zA-Z0-9_.-]{3,32}$'
-    )
+    ),
+    CONSTRAINT ck_users_email_length CHECK (
+        email IS NULL OR char_length(email) BETWEEN 3 AND 254
+    ),
+    CONSTRAINT ck_users_password_hash CHECK (char_length(password_hash) > 0)
 );
 CREATE UNIQUE INDEX ux_users_email_lower ON users (lower(email)) WHERE email IS NOT NULL;
 CREATE UNIQUE INDEX ux_users_login_lower ON users (lower(login)) WHERE login IS NOT NULL;
@@ -1125,6 +1131,9 @@ CREATE TABLE email_verification_tokens (
 );
 CREATE INDEX ix_email_verification_user ON email_verification_tokens (user_id);
 CREATE INDEX ix_email_verification_expiry ON email_verification_tokens (expires_at);
+CREATE UNIQUE INDEX ux_evt_pending_email_active
+    ON email_verification_tokens (pending_email)
+    WHERE used_at IS NULL AND invalidated_at IS NULL AND purpose = 'bind';
 
 CREATE TABLE user_settings (
     user_id                    uuid PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,

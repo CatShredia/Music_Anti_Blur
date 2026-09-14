@@ -4,14 +4,113 @@ import 'package:go_router/go_router.dart';
 
 import 'api/api_client.dart';
 import 'theme.dart';
+import 'validation/auth_rules.dart';
+
+class FormFeedback {
+  const FormFeedback({this.fields = const {}, this.banner});
+
+  final Map<String, String> fields;
+  final String? banner;
+
+  static const empty = FormFeedback();
+
+  String? operator [](String field) => fields[field];
+
+  String? of(List<String> keys) {
+    for (final key in keys) {
+      final value = fields[key];
+      if (value != null) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  factory FormFeedback.client(Map<String, String> codes) =>
+      FormFeedback(fields: AuthMessages.localizeFields(codes));
+
+  factory FormFeedback.fromError(Object error) {
+    if (error is ApiException) {
+      return FormFeedback(
+        fields: error.localizedFields,
+        banner: error.useBanner ? error.localizedMessage : null,
+      );
+    }
+    return FormFeedback(banner: '$error');
+  }
+}
 
 void showVizeError(BuildContext context, Object error) {
-  final text = error is ApiException ? '${error.code}: ${error.title}' : '$error';
+  final text = error is ApiException ? error.localizedMessage : '$error';
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 }
 
 void showVizeMessage(BuildContext context, String text) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+}
+
+class VizeFormBanner extends StatelessWidget {
+  const VizeFormBanner({super.key, required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: VizeColors.dangerBg,
+        borderRadius: BorderRadius.circular(VizeRadii.field),
+        border: Border.all(color: VizeColors.danger.withValues(alpha: 0.4)),
+      ),
+      child: Text(message, style: const TextStyle(color: VizeColors.danger, fontSize: 14, height: 1.35)),
+    );
+  }
+}
+
+class VizeTextField extends StatelessWidget {
+  const VizeTextField({
+    super.key,
+    required this.controller,
+    required this.label,
+    this.errorText,
+    this.maxLength,
+    this.keyboardType,
+    this.inputFormatters,
+    this.textInputAction,
+    this.autofillHints,
+    this.onChanged,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final String? errorText;
+  final int? maxLength;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
+  final TextInputAction? textInputAction;
+  final Iterable<String>? autofillHints;
+  final ValueChanged<String>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      maxLength: maxLength,
+      inputFormatters: inputFormatters,
+      textInputAction: textInputAction,
+      autofillHints: autofillHints,
+      onChanged: onChanged,
+      decoration: InputDecoration(
+        labelText: label,
+        errorText: errorText,
+        counterText: '',
+      ),
+    );
+  }
 }
 
 void popOrGo(BuildContext context, String location) {
@@ -281,10 +380,14 @@ class VizePasswordField extends StatefulWidget {
     super.key,
     required this.controller,
     required this.label,
+    this.errorText,
+    this.onChanged,
   });
 
   final TextEditingController controller;
   final String label;
+  final String? errorText;
+  final ValueChanged<String>? onChanged;
 
   @override
   State<VizePasswordField> createState() => _VizePasswordFieldState();
@@ -298,8 +401,12 @@ class _VizePasswordFieldState extends State<VizePasswordField> {
     return TextField(
       controller: widget.controller,
       obscureText: _obscure,
+      maxLength: AuthRules.passwordMax,
+      onChanged: widget.onChanged,
       decoration: InputDecoration(
         labelText: widget.label,
+        errorText: widget.errorText,
+        counterText: '',
         suffixIcon: IconButton(
           tooltip: _obscure ? 'Показать пароль' : 'Скрыть пароль',
           onPressed: () => setState(() => _obscure = !_obscure),
@@ -311,19 +418,23 @@ class _VizePasswordFieldState extends State<VizePasswordField> {
 }
 
 class VizeCodeField extends StatelessWidget {
-  const VizeCodeField({super.key, required this.controller});
+  const VizeCodeField({super.key, required this.controller, this.errorText, this.onChanged});
 
   final TextEditingController controller;
+  final String? errorText;
+  final ValueChanged<String>? onChanged;
 
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
       keyboardType: TextInputType.number,
-      maxLength: 6,
+      maxLength: AuthRules.codeLength,
       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-      decoration: const InputDecoration(
+      onChanged: onChanged,
+      decoration: InputDecoration(
         labelText: 'Код из письма',
+        errorText: errorText,
         counterText: '',
       ),
     );

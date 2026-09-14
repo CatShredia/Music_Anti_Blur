@@ -5,13 +5,52 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
+import '../validation/auth_rules.dart';
+
 class ApiException implements Exception {
-  ApiException(this.status, this.code, this.title);
+  ApiException(
+    this.status,
+    this.code,
+    this.title, {
+    this.errors = const {},
+    this.retryAfterSeconds,
+  });
+
   final int status;
   final String code;
   final String title;
+  final Map<String, List<String>> errors;
+  final int? retryAfterSeconds;
+
+  Map<String, String> get fieldCodes {
+    final out = <String, String>{};
+    for (final entry in errors.entries) {
+      if (entry.value.isNotEmpty) {
+        out[entry.key] = entry.value.first;
+      }
+    }
+    if (code == 'identifier_taken' &&
+        !out.containsKey('login') &&
+        !out.containsKey('email') &&
+        !out.containsKey('identifier')) {
+      out['login'] = AuthRules.identifierTaken;
+      out['email'] = AuthRules.identifierTaken;
+    }
+    return out;
+  }
+
+  Map<String, String> get localizedFields => AuthMessages.localizeFields(fieldCodes);
+
+  bool get hasFieldErrors => fieldCodes.isNotEmpty;
+
+  bool get useBanner =>
+      code != 'validation_failed' && !(code == 'invalid_token' && hasFieldErrors);
+
+  String get localizedMessage =>
+      AuthMessages.problem(code, retryAfterSeconds: retryAfterSeconds);
+
   @override
-  String toString() => title;
+  String toString() => localizedMessage;
 }
 
 class Session {
@@ -281,30 +320,6 @@ class ApiClient {
     return SettingsDto.fromJson(res.data as Map<String, dynamic>);
   }
 
-  Future<void> bindEmail(String email, String currentPassword) async {
-    await _send(
-      () => _dio.post(
-        '/api/v1/me/identifiers/email',
-        data: {'email': email, 'currentPassword': currentPassword},
-      ),
-    );
-  }
-
-  Future<void> confirmEmail(String code) async {
-    await _send(
-      () => _dio.post('/api/v1/me/identifiers/email/confirm', data: {'code': code}),
-    );
-  }
-
-  Future<void> bindLogin(String login, String currentPassword) async {
-    await _send(
-      () => _dio.post(
-        '/api/v1/me/identifiers/login',
-        data: {'login': login, 'currentPassword': currentPassword},
-      ),
-    );
-  }
-
   Future<Response<dynamic>> _send(Future<Response<dynamic>> Function() run) async {
     try {
       return await run();
@@ -322,12 +337,15 @@ class ApiClient {
         'Cannot reach API at ${_dio.options.baseUrl}',
       );
     }
+    final retryAfter = _retryAfter(e.response);
     final data = e.response?.data;
     if (data is Map) {
       return ApiException(
         e.response?.statusCode ?? 0,
         data['code'] as String? ?? 'error',
         data['title'] as String? ?? e.message ?? 'Request failed',
+        errors: _parseErrors(data['errors']),
+        retryAfterSeconds: retryAfter,
       );
     }
     if (data is String) {
@@ -337,9 +355,38 @@ class ApiClient {
           e.response?.statusCode ?? 0,
           map['code'] as String? ?? 'error',
           map['title'] as String? ?? 'Request failed',
+          errors: _parseErrors(map['errors']),
+          retryAfterSeconds: retryAfter,
         );
       } catch (_) {}
     }
-    return ApiException(e.response?.statusCode ?? 0, 'error', e.message ?? 'Request failed');
+    return ApiException(
+      e.response?.statusCode ?? 0,
+      'error',
+      e.message ?? 'Request failed',
+      retryAfterSeconds: retryAfter,
+    );
+  }
+
+  static Map<String, List<String>> _parseErrors(Object? raw) {
+    if (raw is! Map) {
+      return const {};
+    }
+    final out = <String, List<String>>{};
+    for (final entry in raw.entries) {
+      final key = entry.key.toString();
+      final value = entry.value;
+      if (value is List) {
+        out[key] = value.map((e) => '$e').where((e) => e.isNotEmpty).toList();
+      } else if (value is String && value.isNotEmpty) {
+        out[key] = [value];
+      }
+    }
+    return out;
+  }
+
+  static int? _retryAfter(Response<dynamic>? response) {
+    final header = response?.headers.value('retry-after');
+    return header == null ? null : int.tryParse(header);
   }
 }

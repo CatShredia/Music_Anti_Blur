@@ -131,6 +131,12 @@ public static class ExceptionHandling
                 var result = ProblemResults.Problem(context, ex.Status, ex.Code, ex.Title, ex.Errors);
                 await result.ExecuteAsync(context);
             }
+            catch (Microsoft.EntityFrameworkCore.DbUpdateException ex)
+            {
+                var mapped = DbConstraintMapper.ToApiException(ex);
+                var result = ProblemResults.Problem(context, mapped.Status, mapped.Code, mapped.Title, mapped.Errors);
+                await result.ExecuteAsync(context);
+            }
         });
     }
 }

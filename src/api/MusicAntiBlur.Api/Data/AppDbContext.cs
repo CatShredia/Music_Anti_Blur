@@ -25,6 +25,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 t.HasCheckConstraint("ck_users_email_normalized", "email IS NULL OR email = lower(btrim(email))");
                 t.HasCheckConstraint("ck_users_verified_email", "email_verified_at IS NULL OR email IS NOT NULL");
                 t.HasCheckConstraint("ck_users_login_format", "login IS NULL OR login ~ '^[a-zA-Z0-9_.-]{3,32}$'");
+                t.HasCheckConstraint("ck_users_email_length", "email IS NULL OR (char_length(email) BETWEEN 3 AND 254)");
+                t.HasCheckConstraint("ck_users_password_hash", "char_length(password_hash) > 0");
             });
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
@@ -101,6 +103,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasIndex(x => x.TokenHash).IsUnique().HasDatabaseName("ux_email_verification_hash");
             e.HasIndex(x => x.UserId).HasDatabaseName("ix_email_verification_user");
             e.HasIndex(x => x.ExpiresAt).HasDatabaseName("ix_email_verification_expiry");
+            e.HasIndex(x => x.PendingEmail).HasDatabaseName("ux_evt_pending_email_active").IsUnique()
+                .HasFilter("used_at IS NULL AND invalidated_at IS NULL AND purpose = 'bind'");
             e.HasOne(x => x.User).WithMany(x => x.EmailVerificationTokens).HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
         });

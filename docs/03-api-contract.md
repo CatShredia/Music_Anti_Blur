@@ -19,16 +19,27 @@
 
 Ошибки — `application/problem+json` RFC 9457:
 
+`errors` — карта поле → массив **машинных кодов** (клиент переводит их на язык UI):
+
 ```json
 {
-  "type": "https://music-anti-blur/errors/revision-conflict",
-  "title": "Playback revision conflict",
-  "status": 409,
-  "code": "revision_conflict",
+  "type": "https://music-anti-blur/errors/validation-failed",
+  "title": "Validation failed",
+  "status": 400,
+  "code": "validation_failed",
   "requestId": "uuid",
-  "errors": {}
+  "errors": {
+    "login": ["login_format"],
+    "password": ["password_length"]
+  }
 }
 ```
+
+Поля: `login`, `email`, `identifier`, `identifierType`, `password`, `newPassword`, `currentPassword`, `code`, `preferredQuality`, `refreshToken`.
+
+Коды в `errors`: `required`, `login_format`, `email_format`, `password_length`, `password_common`, `code_format`, `identifier_type`, `preferred_quality`, `identifier_taken`. Для неверного/истёкшего кода подтверждения: HTTP `400` `invalid_token` и `errors.code = ["invalid_token"]`.
+
+Слои одной и той же политики: Flutter (до запроса), API (до записи), Postgres CHECK/UNIQUE (гонка и обход клиента). Unique violation → `409 identifier_taken` с полем `login` или `email`. CHECK violation → `400 validation_failed`.
 
 | HTTP | Коды |
 |---|---|
@@ -60,10 +71,8 @@ Idempotency records хранятся в PostgreSQL (`idempotency_records`). Тр
 
 - `POST /auth/email/verify { code }` → `204`, atomic consume. `code` — 6 цифр из письма.
 - `POST /auth/email/resend { email }` → всегда `202`; старые registration codes инвалидируются.
-- `POST /me/identifiers/email { email, currentPassword }` → `202`; email активируется только через `/me/identifiers/email/confirm { code }`.
-- `POST /me/identifiers/login { login, currentPassword }` → `204`.
 
-Bind требует recent re-auth не старше 10 минут. Занятый identifier → `409 identifier_taken`.
+Смена и привязка login/email после регистрации (`POST /me/identifiers/*`) — вне MVP, см. [01-product-plan.md §5.2](01-product-plan.md).
 
 ### 2.2. Сессии и reset
 
@@ -228,7 +237,6 @@ Admin catalog использует идентичные routes/DTO под рол
 | verification resend, forgot | 3/час/email hash+IP |
 | reset, verify | 10/15 мин/IP |
 | refresh | 30/5 мин/family+IP |
-| bind identifier | 5/час/user |
 | playback URL | 60/мин/user |
 | upload initiate | 10/час/user |
 | part URL | 120/мин/user |

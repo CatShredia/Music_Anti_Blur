@@ -83,7 +83,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 ```
 src/api/MusicAntiBlur.Api/
 ├── Program.cs
-├── Auth/           register, login, refresh, reset, bind, JWT
+├── Auth/           register, login, refresh, reset, JWT
 ├── Data/           DbContext, сущности, миграции EF
 ├── Hubs/           PlaybackHub (JWT + Redis backplane)
 ├── Jobs/           Hangfire: письма, ping, cleanup
@@ -96,7 +96,7 @@ src/api/MusicAntiBlur.Api/
 | Задача | Файлы |
 |---|---|
 | HTTP auth | [AuthEndpoints.cs](../src/api/MusicAntiBlur.Api/Auth/AuthEndpoints.cs), [AuthService.cs](../src/api/MusicAntiBlur.Api/Auth/AuthService.cs) |
-| Пароль / login / email | [PasswordRules.cs](../src/api/MusicAntiBlur.Api/Auth/PasswordRules.cs), [TokenHasher.cs](../src/api/MusicAntiBlur.Api/Auth/TokenHasher.cs) |
+| Пароль / login / email | [AuthValidation.cs](../src/api/MusicAntiBlur.Api/Auth/AuthValidation.cs), [TokenHasher.cs](../src/api/MusicAntiBlur.Api/Auth/TokenHasher.cs) |
 | JWT | [JwtTokenService.cs](../src/api/MusicAntiBlur.Api/Auth/JwtTokenService.cs) |
 | Схема БД | [AppDbContext.cs](../src/api/MusicAntiBlur.Api/Data/AppDbContext.cs), [Data/Entities/](../src/api/MusicAntiBlur.Api/Data/Entities/), [Data/Migrations/](../src/api/MusicAntiBlur.Api/Data/Migrations/) — только EF-миграции |
 | SignalR | [PlaybackHub.cs](../src/api/MusicAntiBlur.Api/Hubs/PlaybackHub.cs) |
@@ -114,8 +114,9 @@ src/api/MusicAntiBlur.Api/
 src/mobile/lib/
 ├── main.dart              экраны auth / home / settings, go_router
 ├── theme.dart             тёмная тема Vize (токены макета)
-├── widgets.dart           шапка, чипы, поля, таббар
-└── api/api_client.dart    dio, JWT, refresh, X-Device-Id
+├── widgets.dart           шапка, чипы, поля, таббар, ошибки формы
+├── validation/auth_rules.dart  те же правила, что API/CHECK; тексты ошибок
+└── api/api_client.dart    dio, JWT, refresh, X-Device-Id, problem+json
 ```
 
 | Задача | Файл |
@@ -124,6 +125,7 @@ src/mobile/lib/
 | Тема / токены | [theme.dart](../src/mobile/lib/theme.dart) |
 | Общие виджеты | [widgets.dart](../src/mobile/lib/widgets.dart) |
 | HTTP + secure storage | [api_client.dart](../src/mobile/lib/api/api_client.dart) |
+| Валидация полей | [auth_rules.dart](../src/mobile/lib/validation/auth_rules.dart) |
 
 Платформенные обёртки (`android/`, `ios/`, …) — стандартный Flutter; бизнес-логику туда не класть.
 
@@ -141,6 +143,7 @@ src/mobile/lib/
 
 - Flutter + ASP.NET Core + EF Core + PostgreSQL + Redis + Hangfire + SignalR + FFmpeg + Yandex Object Storage + Yandex CDN + SMTP.
 - Регистрация: обязательны `login` и `email`. Вход: явный `identifierType` `email` | `login`, без угадывания по `@`.
+- Валидация одних правил на трёх слоях: Flutter, API (`validation_failed` + `errors` с кодами полей), Postgres CHECK/UNIQUE.
 - Verified email, одноразовая refresh rotation и атомарный reset с отзывом сессий.
 - Несколько качеств (`aac_128`, `aac_256`, опционально `src`).
 - Подмена + presigned multipart private upload с immutable generation, ACL только владелец (чужому 404).
@@ -155,6 +158,7 @@ src/mobile/lib/
 - импорт Spotify / Яндекс Музыки / Apple Music
 - микросервисы, Kubernetes, HLS/DASH
 - публичный шаринг пользовательских файлов
+- смена / привязка login и email в профиле после регистрации
 - хранение аудиобайтов в PostgreSQL
 - стриминг аудио телом HTTP-ответа API
 
@@ -326,7 +330,7 @@ Yandex Object Storage — S3-совместимый API, регион подпи
 | OWASP Authentication | https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html |
 | OWASP Forgot Password | https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html |
 
-Паттерн продукта: email verification + recent re-auth для bind; refresh hash с family/rotation/reuse detection; reset атомарно отзывает все sessions; одинаковое сообщение на неверный login/password. Полная rate-limit matrix — `03-api-contract.md`.
+Паттерн продукта: email verification при регистрации; refresh hash с family/rotation/reuse detection; reset атомарно отзывает все sessions; одинаковое сообщение на неверный login/password. Смена login/email после регистрации — вне MVP. Полная rate-limit matrix — `03-api-contract.md`.
 
 ### 5.11. Инфра локально
 

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:signalr_netcore/signalr_client.dart';
 
 import 'api/api_client.dart';
 import 'theme.dart';
+import 'validation/auth_rules.dart';
 import 'widgets.dart';
 
 void main() {
@@ -86,6 +86,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _password = TextEditingController();
   String _type = 'login';
   bool _busy = false;
+  FormFeedback _feedback = FormFeedback.empty;
 
   @override
   void initState() {
@@ -111,33 +112,61 @@ class _LoginScreenState extends State<LoginScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
         children: [
-          IdentifierTypeField(value: _type, onChanged: (v) => setState(() => _type = v)),
+          if (_feedback.banner != null) VizeFormBanner(message: _feedback.banner!),
+          IdentifierTypeField(
+            value: _type,
+            onChanged: (v) => setState(() {
+              _type = v;
+              _feedback = FormFeedback.empty;
+            }),
+          ),
           const SizedBox(height: 16),
-          TextField(
+          VizeTextField(
             controller: _id,
+            label: _type == 'email' ? 'Email' : 'Логин',
             keyboardType: _type == 'email' ? TextInputType.emailAddress : TextInputType.text,
-            decoration: InputDecoration(labelText: _type == 'email' ? 'Email' : 'Логин'),
+            maxLength: _type == 'email' ? AuthRules.emailMax : AuthRules.loginMax,
+            errorText: _feedback.of(['identifier', 'login', 'email']),
+            autofillHints: _type == 'email' ? const [AutofillHints.email] : const [AutofillHints.username],
+            onChanged: (_) => setState(() => _feedback = FormFeedback.empty),
           ),
           const SizedBox(height: 12),
-          VizePasswordField(controller: _password, label: 'Пароль'),
+          VizePasswordField(
+            controller: _password,
+            label: 'Пароль',
+            errorText: _feedback['password'],
+            onChanged: (_) => setState(() => _feedback = FormFeedback.empty),
+          ),
           const SizedBox(height: 20),
           VizePrimaryButton(
             label: 'Войти',
             busy: _busy,
             onPressed: () async {
-              setState(() => _busy = true);
+              final codes = AuthRules.login(
+                identifierType: _type,
+                identifier: _id.text,
+                password: _password.text,
+              );
+              if (codes.isNotEmpty) {
+                setState(() => _feedback = FormFeedback.client(codes));
+                return;
+              }
+              setState(() {
+                _busy = true;
+                _feedback = FormFeedback.empty;
+              });
               try {
                 await widget.api.login(
                   identifierType: _type,
-                  identifier: _id.text,
+                  identifier: _id.text.trim(),
                   password: _password.text,
                 );
                 if (context.mounted) {
                   context.go('/home');
                 }
               } catch (e) {
-                if (context.mounted) {
-                  showVizeError(context, e);
+                if (mounted) {
+                  setState(() => _feedback = FormFeedback.fromError(e));
                 }
               } finally {
                 if (mounted) {
@@ -168,6 +197,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   bool _busy = false;
+  FormFeedback _feedback = FormFeedback.empty;
 
   @override
   void dispose() {
@@ -184,34 +214,63 @@ class _RegisterScreenState extends State<RegisterScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
         children: [
-          TextField(controller: _login, decoration: const InputDecoration(labelText: 'Логин')),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _email,
-            keyboardType: TextInputType.emailAddress,
-            decoration: const InputDecoration(labelText: 'Email'),
+          if (_feedback.banner != null) VizeFormBanner(message: _feedback.banner!),
+          VizeTextField(
+            controller: _login,
+            label: 'Логин',
+            maxLength: AuthRules.loginMax,
+            errorText: _feedback['login'],
+            autofillHints: const [AutofillHints.username],
+            onChanged: (_) => setState(() => _feedback = FormFeedback.empty),
           ),
           const SizedBox(height: 12),
-          VizePasswordField(controller: _password, label: 'Пароль (от 12 символов)'),
+          VizeTextField(
+            controller: _email,
+            label: 'Email',
+            keyboardType: TextInputType.emailAddress,
+            maxLength: AuthRules.emailMax,
+            errorText: _feedback['email'],
+            autofillHints: const [AutofillHints.email],
+            onChanged: (_) => setState(() => _feedback = FormFeedback.empty),
+          ),
+          const SizedBox(height: 12),
+          VizePasswordField(
+            controller: _password,
+            label: 'Пароль (12–128 символов)',
+            errorText: _feedback['password'],
+            onChanged: (_) => setState(() => _feedback = FormFeedback.empty),
+          ),
           const SizedBox(height: 20),
           VizePrimaryButton(
             label: 'Зарегистрироваться',
             busy: _busy,
             onPressed: () async {
-              setState(() => _busy = true);
+              final codes = AuthRules.register(
+                login: _login.text,
+                email: _email.text,
+                password: _password.text,
+              );
+              if (codes.isNotEmpty) {
+                setState(() => _feedback = FormFeedback.client(codes));
+                return;
+              }
+              setState(() {
+                _busy = true;
+                _feedback = FormFeedback.empty;
+              });
               try {
                 await widget.api.register(
-                  login: _login.text,
-                  email: _email.text,
+                  login: _login.text.trim(),
+                  email: _email.text.trim(),
                   password: _password.text,
                 );
                 if (!context.mounted) {
                   return;
                 }
-                await context.push('/check-email?email=${Uri.encodeComponent(_email.text)}');
+                await context.push('/check-email?email=${Uri.encodeComponent(_email.text.trim())}');
               } catch (e) {
-                if (context.mounted) {
-                  showVizeError(context, e);
+                if (mounted) {
+                  setState(() => _feedback = FormFeedback.fromError(e));
                 }
               } finally {
                 if (mounted) {
@@ -242,6 +301,7 @@ class CheckEmailScreen extends StatefulWidget {
 class _CheckEmailScreenState extends State<CheckEmailScreen> {
   final _code = TextEditingController();
   bool _busy = false;
+  FormFeedback _feedback = FormFeedback.empty;
 
   @override
   void dispose() {
@@ -261,13 +321,26 @@ class _CheckEmailScreenState extends State<CheckEmailScreen> {
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 16),
-          VizeCodeField(controller: _code),
+          if (_feedback.banner != null) VizeFormBanner(message: _feedback.banner!),
+          VizeCodeField(
+            controller: _code,
+            errorText: _feedback['code'],
+            onChanged: (_) => setState(() => _feedback = FormFeedback.empty),
+          ),
           const SizedBox(height: 20),
           VizePrimaryButton(
             label: 'Подтвердить',
             busy: _busy,
             onPressed: () async {
-              setState(() => _busy = true);
+              final codes = AuthRules.verify(_code.text);
+              if (codes.isNotEmpty) {
+                setState(() => _feedback = FormFeedback.client(codes));
+                return;
+              }
+              setState(() {
+                _busy = true;
+                _feedback = FormFeedback.empty;
+              });
               try {
                 await widget.api.verify(_code.text.trim());
                 if (!context.mounted) {
@@ -275,8 +348,8 @@ class _CheckEmailScreenState extends State<CheckEmailScreen> {
                 }
                 context.go('/home');
               } catch (e) {
-                if (context.mounted) {
-                  showVizeError(context, e);
+                if (mounted) {
+                  setState(() => _feedback = FormFeedback.fromError(e));
                 }
               } finally {
                 if (mounted) {
@@ -293,8 +366,8 @@ class _CheckEmailScreenState extends State<CheckEmailScreen> {
                   showVizeMessage(context, 'Если аккаунт есть, письмо отправлено ещё раз.');
                 }
               } catch (e) {
-                if (context.mounted) {
-                  showVizeError(context, e);
+                if (mounted) {
+                  setState(() => _feedback = FormFeedback.fromError(e));
                 }
               }
             },
@@ -318,6 +391,7 @@ class ForgotScreen extends StatefulWidget {
 class _ForgotScreenState extends State<ForgotScreen> {
   final _email = TextEditingController();
   bool _busy = false;
+  FormFeedback _feedback = FormFeedback.empty;
 
   @override
   void dispose() {
@@ -332,26 +406,39 @@ class _ForgotScreenState extends State<ForgotScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
         children: [
-          TextField(
+          if (_feedback.banner != null) VizeFormBanner(message: _feedback.banner!),
+          VizeTextField(
             controller: _email,
+            label: 'Email',
             keyboardType: TextInputType.emailAddress,
-            decoration: const InputDecoration(labelText: 'Email'),
+            maxLength: AuthRules.emailMax,
+            errorText: _feedback['email'],
+            autofillHints: const [AutofillHints.email],
+            onChanged: (_) => setState(() => _feedback = FormFeedback.empty),
           ),
           const SizedBox(height: 20),
           VizePrimaryButton(
             label: 'Отправить код',
             busy: _busy,
             onPressed: () async {
-              setState(() => _busy = true);
+              final codes = AuthRules.forgot(_email.text);
+              if (codes.isNotEmpty) {
+                setState(() => _feedback = FormFeedback.client(codes));
+                return;
+              }
+              setState(() {
+                _busy = true;
+                _feedback = FormFeedback.empty;
+              });
               try {
-                await widget.api.forgot(_email.text);
+                await widget.api.forgot(_email.text.trim());
                 if (context.mounted) {
                   showVizeMessage(context, 'Если email подтверждён, мы отправили код.');
                   context.push('/reset');
                 }
               } catch (e) {
-                if (context.mounted) {
-                  showVizeError(context, e);
+                if (mounted) {
+                  setState(() => _feedback = FormFeedback.fromError(e));
                 }
               } finally {
                 if (mounted) {
@@ -392,6 +479,7 @@ class _CodeScreenState extends State<CodeScreen> {
   final _code = TextEditingController();
   final _password = TextEditingController();
   bool _busy = false;
+  FormFeedback _feedback = FormFeedback.empty;
 
   @override
   void dispose() {
@@ -407,17 +495,37 @@ class _CodeScreenState extends State<CodeScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
         children: [
-          VizeCodeField(controller: _code),
+          if (_feedback.banner != null) VizeFormBanner(message: _feedback.banner!),
+          VizeCodeField(
+            controller: _code,
+            errorText: _feedback['code'],
+            onChanged: (_) => setState(() => _feedback = FormFeedback.empty),
+          ),
           if (widget.requirePassword) ...[
             const SizedBox(height: 12),
-            VizePasswordField(controller: _password, label: 'Новый пароль'),
+            VizePasswordField(
+              controller: _password,
+              label: 'Новый пароль (12–128 символов)',
+              errorText: _feedback.of(['newPassword', 'password']),
+              onChanged: (_) => setState(() => _feedback = FormFeedback.empty),
+            ),
           ],
           const SizedBox(height: 20),
           VizePrimaryButton(
             label: widget.submitLabel,
             busy: _busy,
             onPressed: () async {
-              setState(() => _busy = true);
+              final codes = widget.requirePassword
+                  ? AuthRules.reset(code: _code.text, newPassword: _password.text)
+                  : AuthRules.verify(_code.text);
+              if (codes.isNotEmpty) {
+                setState(() => _feedback = FormFeedback.client(codes));
+                return;
+              }
+              setState(() {
+                _busy = true;
+                _feedback = FormFeedback.empty;
+              });
               try {
                 await widget.onSubmit(
                   _code.text.trim(),
@@ -427,8 +535,8 @@ class _CodeScreenState extends State<CodeScreen> {
                   widget.onDone(context);
                 }
               } catch (e) {
-                if (context.mounted) {
-                  showVizeError(context, e);
+                if (mounted) {
+                  setState(() => _feedback = FormFeedback.fromError(e));
                 }
               } finally {
                 if (mounted) {
@@ -459,7 +567,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     widget.api.me().then((u) => setState(() => _user = u)).catchError((e) {
-      setState(() => _error = e.toString());
+      setState(() => _error = e is ApiException ? e.localizedMessage : e.toString());
     });
   }
 
@@ -550,13 +658,9 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _email = TextEditingController();
-  final _login = TextEditingController();
-  final _password = TextEditingController();
-  final _code = TextEditingController();
   String _quality = 'auto';
-  String? _hubStatus;
   bool _loaded = false;
+  FormFeedback _feedback = FormFeedback.empty;
 
   static const _qualities = ['auto', 'aac_128', 'aac_256', 'src'];
 
@@ -583,15 +687,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() => _loaded = true);
       }
     });
-  }
-
-  @override
-  void dispose() {
-    _email.dispose();
-    _login.dispose();
-    _password.dispose();
-    _code.dispose();
-    super.dispose();
   }
 
   Future<void> _pickQuality() async {
@@ -631,7 +726,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     } catch (e) {
       if (mounted) {
-        showVizeError(context, e);
+        setState(() => _feedback = FormFeedback.fromError(e));
       }
     }
   }
@@ -650,98 +745,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _loaded ? _qualityLabel(_quality) : '…',
             onTap: _pickQuality,
           ),
-          const SizedBox(height: 20),
-          Text('Идентификаторы', style: Theme.of(context).textTheme.headlineMedium),
-          const SizedBox(height: 8),
-          Text(
-            'Чтобы привязать email или логин, введите значение и текущий пароль.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 12),
-          TextField(controller: _email, decoration: const InputDecoration(labelText: 'Email')),
-          const SizedBox(height: 12),
-          TextField(controller: _login, decoration: const InputDecoration(labelText: 'Логин')),
-          const SizedBox(height: 12),
-          VizePasswordField(controller: _password, label: 'Текущий пароль'),
-          const SizedBox(height: 12),
-          VizePrimaryButton(
-            label: 'Привязать email',
-            onPressed: () async {
-              try {
-                await widget.api.bindEmail(_email.text, _password.text);
-                if (context.mounted) {
-                  showVizeMessage(context, 'Проверьте почту: придёт 6-значный код.');
-                }
-              } catch (e) {
-                if (context.mounted) {
-                  showVizeError(context, e);
-                }
-              }
-            },
-          ),
-          const SizedBox(height: 8),
-          VizeCodeField(controller: _code),
-          const SizedBox(height: 8),
-          OutlinedButton(
-            onPressed: () async {
-              try {
-                await widget.api.confirmEmail(_code.text.trim());
-                if (context.mounted) {
-                  showVizeMessage(context, 'Email подтверждён.');
-                }
-              } catch (e) {
-                if (context.mounted) {
-                  showVizeError(context, e);
-                }
-              }
-            },
-            child: const Text('Подтвердить код email'),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton(
-            onPressed: () async {
-              try {
-                await widget.api.bindLogin(_login.text, _password.text);
-                if (context.mounted) {
-                  showVizeMessage(context, 'Логин привязан.');
-                }
-              } catch (e) {
-                if (context.mounted) {
-                  showVizeError(context, e);
-                }
-              }
-            },
-            child: const Text('Привязать логин'),
-          ),
-          const SizedBox(height: 20),
-          VizeSettingRow(
-            icon: Icons.wifi_tethering,
-            label: 'Проверить хаб',
-            value: _hubStatus,
-            onTap: () async {
-              final token = await widget.api.accessToken();
-              if (token == null) {
-                setState(() => _hubStatus = 'нет токена');
-                return;
-              }
-              final hub = HubConnectionBuilder()
-                  .withUrl(
-                    widget.api.hubUrl,
-                    options: HttpConnectionOptions(
-                      accessTokenFactory: () async => token,
-                      requestTimeout: 15000,
-                    ),
-                  )
-                  .build();
-              try {
-                await hub.start();
-                setState(() => _hubStatus = 'ок');
-                await hub.stop();
-              } catch (e) {
-                setState(() => _hubStatus = 'ошибка');
-              }
-            },
-          ),
+          if (_feedback.banner != null) ...[
+            const SizedBox(height: 16),
+            VizeFormBanner(message: _feedback.banner!),
+          ],
           const SizedBox(height: 24),
           OutlinedButton(
             onPressed: () async {
