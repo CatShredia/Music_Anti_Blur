@@ -17,12 +17,13 @@ public sealed class AdminUploadService(
     RedisRateLimiter limiter,
     IdempotencyStore idempotency,
     IOptions<StorageOptions> storageOptions,
+    IHostEnvironment env,
     ILogger<AdminUploadService> logger)
 {
     public async Task<InitiateUploadResponse> InitiateAsync(
         Guid userId, Guid trackId, InitiateUploadRequest req, string? idempotencyKey, CancellationToken ct)
     {
-        await limiter.HitAsync($"rl:admin-import:{userId:D}", 10, TimeSpan.FromHours(1), ct);
+        await HitAdminImportAsync(userId, ct);
         storage.EnsureConfigured();
         if (!await db.Tracks.AnyAsync(t => t.Id == trackId, ct))
         {
@@ -102,7 +103,7 @@ public sealed class AdminUploadService(
     public async Task<UploadAcceptedResponse> CompleteAsync(
         Guid userId, Guid trackId, Guid generationId, CompleteUploadRequest req, string? idempotencyKey, CancellationToken ct)
     {
-        await limiter.HitAsync($"rl:admin-import:{userId:D}", 10, TimeSpan.FromHours(1), ct);
+        await HitAdminImportAsync(userId, ct);
         storage.EnsureConfigured();
         var key = UploadValidation.RequireIdempotencyKey(idempotencyKey);
         var parts = req.Parts ?? [];
@@ -267,6 +268,16 @@ public sealed class AdminUploadService(
         }
 
         return upload;
+    }
+
+    private Task HitAdminImportAsync(Guid userId, CancellationToken ct)
+    {
+        if (env.IsDevelopment())
+        {
+            return Task.CompletedTask;
+        }
+
+        return limiter.HitAsync($"rl:admin-import:{userId:D}", 10, TimeSpan.FromHours(1), ct);
     }
 
     private void EnqueueDeletion(string bucketKey, Guid? ownerUserId)

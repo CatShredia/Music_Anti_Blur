@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import 'api/api_client.dart';
+import 'player/mini_player.dart';
 import 'theme.dart';
 import 'validation/auth_rules.dart';
 
@@ -200,11 +201,13 @@ class VizeScaffold extends StatelessWidget {
     required this.body,
     this.header,
     this.tabIndex,
+    this.showMiniPlayer = true,
   });
 
   final Widget body;
   final Widget? header;
   final int? tabIndex;
+  final bool showMiniPlayer;
 
   @override
   Widget build(BuildContext context) {
@@ -217,6 +220,7 @@ class VizeScaffold extends StatelessWidget {
             children: [
               ?header,
               Expanded(child: body),
+              if (showMiniPlayer) const MiniPlayerBar(),
               if (tabIndex != null) VizeTabBar(index: tabIndex!),
             ],
           ),

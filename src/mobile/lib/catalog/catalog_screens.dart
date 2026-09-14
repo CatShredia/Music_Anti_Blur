@@ -28,6 +28,12 @@ class _HomeScreenState extends State<HomeScreen> {
     _load();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    PlayerScope.maybeOf(context)?.restoreIfNeeded();
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -328,6 +334,7 @@ class AlbumScreen extends StatefulWidget {
 class _AlbumScreenState extends State<AlbumScreen> {
   AlbumDetail? _album;
   String? _error;
+  bool _busy = false;
 
   @override
   void initState() {
@@ -363,6 +370,34 @@ class _AlbumScreenState extends State<AlbumScreen> {
                     Text(album.artist.name, style: Theme.of(context).textTheme.titleMedium),
                     if (album.year != null)
                       Text('${album.year}', style: Theme.of(context).textTheme.bodySmall),
+                    const SizedBox(height: 20),
+                    VizePrimaryButton(
+                      label: 'Играть альбом',
+                      busy: _busy,
+                      onPressed: album.tracks.isEmpty || PlayerScope.maybeOf(context) == null
+                          ? null
+                          : () async {
+                              final player = PlayerScope.maybeOf(context);
+                              if (player == null) {
+                                return;
+                              }
+                              setState(() => _busy = true);
+                              try {
+                                await player.playAlbum(album);
+                                if (context.mounted) {
+                                  context.push('/player');
+                                }
+                              } catch (e) {
+                                if (context.mounted) {
+                                  showVizeError(context, e);
+                                }
+                              } finally {
+                                if (mounted) {
+                                  setState(() => _busy = false);
+                                }
+                              }
+                            },
+                    ),
                     const SizedBox(height: 20),
                     ...album.tracks.map(
                       (track) => Padding(

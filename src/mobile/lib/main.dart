@@ -3,6 +3,8 @@ import 'package:go_router/go_router.dart';
 
 import 'api/api_client.dart';
 import 'catalog/catalog_screens.dart';
+import 'player/audio_handler.dart';
+import 'player/mini_player.dart';
 import 'player/player_controller.dart';
 import 'player/player_screen.dart';
 import 'theme.dart';
@@ -12,7 +14,8 @@ import 'widgets.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final api = ApiClient();
-  final player = PlayerController(api);
+  final handler = await createMusicAudioHandler();
+  final player = PlayerController(api, handler: handler);
   try {
     await player.prepare();
   } catch (e) {
@@ -26,6 +29,7 @@ class MusicAntiBlurApp extends StatelessWidget {
 
   final ApiClient api;
   final PlayerController? player;
+  final _messengerKey = GlobalKey<ScaffoldMessengerState>();
 
   late final GoRouter _router = GoRouter(
     initialLocation: '/login',
@@ -95,12 +99,16 @@ class MusicAntiBlurApp extends StatelessWidget {
       title: 'Music Anti Blur',
       theme: VizeTheme.data(),
       routerConfig: _router,
+      scaffoldMessengerKey: _messengerKey,
     );
     final current = player;
     if (current == null) {
       return app;
     }
-    return PlayerScope(notifier: current, child: app);
+    return PlayerScope(
+      notifier: current,
+      child: PlayerNoticeHost(player: current, messengerKey: _messengerKey, child: app),
+    );
   }
 }
 
@@ -685,7 +693,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
           OutlinedButton(
             onPressed: () async {
-              await PlayerScope.maybeOf(context)?.stop();
+              await PlayerScope.maybeOf(context)?.resetLocal();
               await widget.api.logout();
               if (context.mounted) {
                 context.go('/login');

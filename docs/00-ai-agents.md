@@ -60,7 +60,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 ├── .env.example
 ├── .github/workflows/ci.yml    push/PR в develop: API build + Flutter analyze/test
 ├── docs/                       нормативные документы, см. §2
-├── devops/                     start/stop + инструкция Object Storage/CDN
+├── devops/                     start/stop, seed-local-music, upload-catalog-source; Object Storage/CDN
 ├── src/api/                    ASP.NET Core (.NET 10)
 └── src/mobile/                 Flutter
 ```
@@ -72,7 +72,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 | [.env.example](../.env.example) | Имена переменных; значения только локально |
 | [.github/workflows/ci.yml](../.github/workflows/ci.yml) | CI на ветке `develop` |
 | [docs/](./) | Product / schema / API / operations |
-| [devops/](../devops/) | Скрипты start/stop; [yandex-storage-cdn.md](../devops/yandex-storage-cdn.md) — локальный MinIO и (позже) Yandex |
+| [devops/](../devops/) | Скрипты start/stop, [seed-local-music.ps1](../devops/seed-local-music.ps1) / [seed-local-music.sh](../devops/seed-local-music.sh) (импорт `no_commit/music` после healthy API), [upload-catalog-source.ps1](../devops/upload-catalog-source.ps1); [yandex-storage-cdn.md](../devops/yandex-storage-cdn.md) — локальный MinIO и (позже) Yandex |
 
 ### 3.1. API — `src/api/`
 
@@ -110,7 +110,7 @@ src/api/MusicAntiBlur.Api/
 | SignalR | [PlaybackHub.cs](../src/api/MusicAntiBlur.Api/Hubs/PlaybackHub.cs) |
 | Письма / Hangfire | [EmailJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/EmailJobs.cs), [TranscodeCatalogJob.cs](../src/api/MusicAntiBlur.Api/Jobs/TranscodeCatalogJob.cs), [SmtpEmailSender.cs](../src/api/MusicAntiBlur.Api/Mail/SmtpEmailSender.cs), [HangfireDashboardAuth.cs](../src/api/MusicAntiBlur.Api/Jobs/HangfireDashboardAuth.cs) |
 | Rate limit | [RedisRateLimiter.cs](../src/api/MusicAntiBlur.Api/RateLimiting/RedisRateLimiter.cs) |
-| Seed Development | [AdminSeeder.cs](../src/api/MusicAntiBlur.Api/Auth/AdminSeeder.cs), [CatalogSeeder.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogSeeder.cs) |
+| Seed Development | [AdminSeeder.cs](../src/api/MusicAntiBlur.Api/Auth/AdminSeeder.cs), [CatalogSeeder.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogSeeder.cs) — только `IsDevelopment()`, имена каталога с префиксом `[SEED DATA]`. Аудио из `no_commit/music` сидер не трогает: это [seed-local-music.ps1](../devops/seed-local-music.ps1) после старта API. В Development `admin-import` rate limit не применяется. |
 
 Сущности: `User`, `UserSettings`, `RefreshToken`, `PasswordResetToken`, `EmailVerificationToken`, `Artist`, `Album`, `Track`, `CatalogUpload`, `TrackRendition`, `ObjectDeletion`, `IdempotencyRecord`, `PlaybackState`. Новые таблицы — только если они есть в [02-database-overview.md](02-database-overview.md). Private/override ещё не в `src/`.
 
@@ -122,7 +122,7 @@ src/api/MusicAntiBlur.Api/
 src/mobile/lib/
 ├── main.dart              экраны auth / settings, go_router
 ├── catalog/               дом, поиск, карточки artist/album/track
-├── player/                AudioHandler, playTrack, экран плеера
+├── player/                AudioHandler, playTrack, очередь, мини-плеер, persist snapshot
 ├── theme.dart             тёмная тема Vize (токены макета)
 ├── widgets.dart           шапка, чипы, поля, таббар, ошибки формы
 ├── validation/            auth + search; те же коды, что API/CHECK

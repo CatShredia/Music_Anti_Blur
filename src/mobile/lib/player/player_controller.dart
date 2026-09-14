@@ -1,11 +1,14 @@
 import 'dart:async';
 
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/widgets.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../api/api_client.dart';
 import '../catalog/catalog_models.dart';
 import 'audio_handler.dart';
+import 'playback_models.dart';
+import 'player_queue.dart';
 
 class PlayerScope extends InheritedNotifier<PlayerController> {
   const PlayerScope({
@@ -19,12 +22,12 @@ class PlayerScope extends InheritedNotifier<PlayerController> {
 }
 
 class PlayerController extends ChangeNotifier {
-  PlayerController(this.api, {MusicAudioHandler? handler})
-      : handler = handler ?? MusicAudioHandler();
+  PlayerController(this.api, {required this.handler});
 
   final ApiClient api;
   final MusicAudioHandler handler;
 
+  PlayerQueue queue = PlayerQueue.empty;
   TrackDetail? track;
   String? requestedQuality;
   String? resolvedQuality;
@@ -39,17 +42,28 @@ class PlayerController extends ChangeNotifier {
   DateTime? _expiresAt;
   bool _refreshUsed = false;
   bool _refreshing = false;
+  bool _completing = false;
+  bool _restored = false;
+  String? _sessionId;
+  int _revision = 0;
   int _playGen = 0;
+  Timer? _progressTimer;
+  Future<void> _writes = Future.value();
+  DateTime? _lastStateWrite;
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration?>? _durationSub;
   StreamSubscription<PlayerState>? _stateSub;
   StreamSubscription<PlaybackEvent>? _eventSub;
 
   Future<void> prepare() async {
-    await handler.prepare();
+    await handler.configureSession();
+    handler.onSkipNext = () => unawaited(next());
+    handler.onSkipPrevious = () => unawaited(previous());
+    handler.onCompleted = () => unawaited(_onCompleted());
     _positionSub = handler.positionStream.listen((value) {
       position = value;
       unawaited(_maybeRefreshNearExpiry());
+      _scheduleProgress();
       notifyListeners();
     });
     _durationSub = handler.durationStream.listen((value) {
@@ -69,69 +83,84 @@ class PlayerController extends ChangeNotifier {
     });
   }
 
+  Future<void> restoreIfNeeded() async {
+    if (_restored || !await api.hasSession()) {
+      return;
+    }
+    _restored = true;
+    try {
+      final snapshot = await api.playbackState();
+      await _applySnapshot(snapshot, autoplay: false);
+    } catch (e) {
+      debugPrint('playback restore failed: $e');
+    }
+  }
+
   Future<void> playTrack(
     String trackId, {
     String source = 'catalog',
     String? quality,
   }) async {
-    final previousId = track?.id;
-    final resume = previousId == trackId ? handler.position : Duration.zero;
     requestedQuality = quality;
-    loading = true;
-    qualityFallbackFrom = null;
-    notifyListeners();
-    final gen = ++_playGen;
+    queue = PlayerQueue.single(trackId, source: source).copyWith(repeat: queue.repeat);
     try {
-      final preference = quality ?? (await api.settings()).preferredQuality;
-      final detail = await api.track(trackId);
-      final url = await api.playbackUrl(
-        trackId: trackId,
-        sourcePreference: source,
-        qualityPreference: preference,
-      );
-      if (gen != _playGen) {
-        return;
-      }
-      track = detail;
-      resolvedQuality = url.resolvedQuality;
-      qualityFallbackFrom = url.qualityFallbackFrom;
-      _expiresAt = url.expiresAt.toUtc();
-      _refreshUsed = false;
-      if (url.durationMs > 0) {
-        duration = Duration(milliseconds: url.durationMs);
-      }
-      await handler.setUrl(url.url);
-      if (resume > Duration.zero) {
-        await _seekPreservingSeconds(resume);
-      }
-      await handler.play();
-      if (url.qualityFallbackFrom != null) {
-        _emitNotice('Включено ${url.resolvedQuality}');
-      }
-    } finally {
-      if (gen == _playGen) {
-        loading = false;
-        notifyListeners();
-      }
+      await _playCurrent(resumeIfSame: true, autoplay: true);
+      await _persistCommand(playing: true);
+    } catch (_) {
+      await _persistCommand(playing: false);
+      rethrow;
     }
   }
 
-  Future<void> setQuality(String quality) {
-    final id = track?.id;
-    if (id == null) {
-      return Future.value();
+  Future<void> playAlbum(
+    AlbumDetail album, {
+    String? startTrackId,
+    String? quality,
+  }) async {
+    requestedQuality = quality;
+    final ordered = [...album.tracks]..sort((a, b) => a.trackNumber.compareTo(b.trackNumber));
+    queue = PlayerQueue.album(
+      ordered.map((item) => item.id),
+      startTrackId: startTrackId,
+    ).copyWith(repeat: queue.repeat);
+    try {
+      await _playCurrent(resumeIfSame: false, autoplay: true);
+      await _persistCommand(playing: true);
+    } catch (_) {
+      await _persistCommand(playing: false);
+      rethrow;
     }
-    return playTrack(id, quality: quality);
+  }
+
+  Future<void> setQuality(String quality) async {
+    if (queue.current == null) {
+      return;
+    }
+    requestedQuality = quality;
+    try {
+      await _playCurrent(resumeIfSame: true, autoplay: true);
+      await _persistCommand(playing: true);
+    } catch (_) {
+      await _persistCommand(playing: false);
+      rethrow;
+    }
   }
 
   Future<void> togglePlay() async {
+    if (track == null && queue.current != null) {
+      await _playCurrent(resumeIfSame: false, autoplay: true, seekTo: position);
+      await _persistCommand(playing: true);
+      return;
+    }
     if (track == null) {
       return;
     }
     if (handler.playing) {
       await handler.pause();
+      await _persistCommand(playing: false);
     } else {
       await handler.play();
+      await _persistCommand(playing: true);
     }
   }
 
@@ -147,16 +176,87 @@ class PlayerController extends ChangeNotifier {
     await handler.seek(target);
     position = target;
     notifyListeners();
+    await _persistProgress();
+  }
+
+  Future<void> next() async {
+    final before = queue.currentItemId;
+    final nextQueue = queue.skipNext();
+    if (nextQueue.currentItemId == before) {
+      return;
+    }
+    queue = nextQueue;
+    notifyListeners();
+    try {
+      await _playCurrent(resumeIfSame: false, autoplay: true);
+      await _persistCommand(playing: true);
+    } catch (_) {
+      await _persistCommand(playing: false);
+      rethrow;
+    }
+  }
+
+  Future<void> previous() async {
+    if (position > const Duration(seconds: 3)) {
+      await seek(Duration.zero);
+      return;
+    }
+    final before = queue.currentItemId;
+    final prev = queue.skipPrevious();
+    if (prev.currentItemId == before) {
+      await seek(Duration.zero);
+      return;
+    }
+    queue = prev;
+    notifyListeners();
+    try {
+      await _playCurrent(resumeIfSame: false, autoplay: true);
+      await _persistCommand(playing: true);
+    } catch (_) {
+      await _persistCommand(playing: false);
+      rethrow;
+    }
+  }
+
+  Future<void> cycleRepeat() async {
+    queue = queue.cycleRepeat();
+    notifyListeners();
+    await _persistCommand(playing: playing);
+  }
+
+  Future<void> toggleShuffle() async {
+    queue = queue.withShuffle(
+      !queue.shuffle,
+      shuffleItems: (items) {
+        final copy = [...items]..shuffle();
+        return copy;
+      },
+    );
+    notifyListeners();
+    await _persistCommand(playing: playing);
   }
 
   Future<void> stop() async {
     _playGen++;
+    _progressTimer?.cancel();
     await handler.stop();
     playing = false;
     notifyListeners();
   }
 
+  Future<void> resetLocal() async {
+    _sessionId = null;
+    _revision = 0;
+    _restored = false;
+    _progressTimer?.cancel();
+    queue = PlayerQueue.empty;
+    track = null;
+    await stop();
+  }
+
   bool get followsSettings => requestedQuality == null || requestedQuality == 'auto';
+
+  bool get hasQueue => queue.current != null;
 
   static String qualityLabel(String code) => switch (code) {
         'auto' => 'Авто',
@@ -165,6 +265,268 @@ class PlayerController extends ChangeNotifier {
         'src' => 'Исходник',
         _ => code,
       };
+
+  Future<void> _playCurrent({
+    required bool resumeIfSame,
+    required bool autoplay,
+    Duration? seekTo,
+  }) async {
+    final item = queue.current;
+    if (item == null) {
+      return;
+    }
+    final previousId = track?.id;
+    final resume = seekTo ??
+        (resumeIfSame && previousId == item.trackId ? handler.position : Duration.zero);
+    loading = true;
+    qualityFallbackFrom = null;
+    notifyListeners();
+    final gen = ++_playGen;
+    try {
+      final preference = requestedQuality ?? (await api.settings()).preferredQuality;
+      final detail = await api.track(item.trackId);
+      final url = await api.playbackUrl(
+        trackId: item.trackId,
+        sourcePreference: item.sourcePreference,
+        qualityPreference: preference,
+      );
+      if (gen != _playGen) {
+        return;
+      }
+      track = detail;
+      resolvedQuality = url.resolvedQuality;
+      qualityFallbackFrom = url.qualityFallbackFrom;
+      _expiresAt = url.expiresAt.toUtc();
+      _refreshUsed = false;
+      if (url.durationMs > 0) {
+        duration = Duration(milliseconds: url.durationMs);
+      }
+      await handler.setUrl(
+        url.url,
+        item: MediaItem(
+          id: detail.id,
+          title: detail.title,
+          album: detail.album.title,
+          artist: detail.artist.name,
+          duration: duration,
+        ),
+      );
+      if (resume > Duration.zero) {
+        await _seekPreservingSeconds(resume);
+      }
+      if (autoplay) {
+        await handler.play();
+      }
+      if (url.qualityFallbackFrom != null) {
+        _emitNotice('Включено ${url.resolvedQuality}');
+      }
+    } on ApiException catch (e) {
+      if (e.code == 'source_unavailable' || e.code == 'quality_unavailable') {
+        _emitNotice(e.localizedMessage);
+      }
+      rethrow;
+    } finally {
+      if (gen == _playGen) {
+        loading = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _onCompleted() async {
+    if (_completing) {
+      return;
+    }
+    _completing = true;
+    try {
+      final nextQueue = queue.afterCompleted();
+      if (nextQueue == null) {
+        await handler.seek(Duration.zero);
+        position = Duration.zero;
+        await _persistCommand(playing: false);
+        return;
+      }
+      if (nextQueue.currentItemId == queue.currentItemId && queue.repeat == 'one') {
+        await handler.seek(Duration.zero);
+        await handler.play();
+        return;
+      }
+      queue = nextQueue;
+      notifyListeners();
+      try {
+        await _playCurrent(resumeIfSame: false, autoplay: true);
+        await _persistCommand(playing: true);
+      } on ApiException catch (e) {
+        _emitNotice(e.localizedMessage);
+      }
+    } finally {
+      _completing = false;
+    }
+  }
+
+  Future<void> _applySnapshot(PlaybackSnapshot snapshot, {required bool autoplay}) async {
+    _revision = snapshot.revision;
+    queue = snapshot.queue;
+    requestedQuality = snapshot.qualityCode;
+    position = Duration(milliseconds: snapshot.positionMs);
+    if (snapshot.trackId == null || queue.current == null) {
+      track = null;
+      notifyListeners();
+      return;
+    }
+    notifyListeners();
+    try {
+      await _playCurrent(
+        resumeIfSame: false,
+        autoplay: autoplay,
+        seekTo: Duration(milliseconds: snapshot.positionMs),
+      );
+    } on ApiException catch (e) {
+      debugPrint('playback restore track failed: $e');
+    }
+  }
+
+  Future<void> _ensureWriter() async {
+    if (_sessionId != null) {
+      return;
+    }
+    final created = await api.createPlaybackSession(deviceId: await api.deviceId());
+    _sessionId = created.writerSessionId;
+    _revision = created.snapshot.revision;
+    try {
+      await _paceStateWrite();
+      final claimed = await api.claimPlaybackSession(_sessionId!, expectedRevision: _revision);
+      _revision = claimed.revision;
+    } on ApiException catch (e) {
+      final snapshot = e.snapshot;
+      if (snapshot != null) {
+        _revision = snapshot.revision;
+      }
+      if (e.code == 'revision_conflict' && _sessionId != null) {
+        await _paceStateWrite();
+        final claimed = await api.claimPlaybackSession(_sessionId!, expectedRevision: _revision);
+        _revision = claimed.revision;
+        return;
+      }
+      if (e.code == 'not_writer') {
+        _sessionId = null;
+        rethrow;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _persistCommand({required bool playing}) async {
+    _progressTimer?.cancel();
+    await _enqueueWrite(() async {
+      if (!await api.hasSession() || queue.isEmpty && track == null) {
+        return;
+      }
+      await _putState(
+        kind: 'command',
+        state: {
+          'trackId': queue.current?.trackId ?? track?.id,
+          'positionMs': position.inMilliseconds,
+          'isPlaying': playing,
+          'qualityCode': requestedQuality ?? resolvedQuality ?? 'auto',
+          'source': queue.current?.sourcePreference ?? 'catalog',
+          'queue': queue.toJson(),
+        },
+      );
+    });
+  }
+
+  Future<void> _persistProgress() async {
+    await _enqueueWrite(() async {
+      if (!await api.hasSession() || _sessionId == null || queue.current == null) {
+        return;
+      }
+      await _putState(
+        kind: 'progress',
+        state: {
+          'positionMs': position.inMilliseconds,
+          'currentItemId': queue.currentItemId,
+        },
+      );
+    });
+  }
+
+  void _scheduleProgress() {
+    if (_sessionId == null || !playing) {
+      return;
+    }
+    _progressTimer?.cancel();
+    _progressTimer = Timer(const Duration(seconds: 8), () {
+      unawaited(_persistProgress());
+    });
+  }
+
+  Future<void> _putState({required String kind, required Map<String, dynamic> state}) async {
+    try {
+      await _ensureWriter();
+      final sessionId = _sessionId;
+      if (sessionId == null) {
+        return;
+      }
+      await _paceStateWrite();
+      final snapshot = await api.putPlaybackState(
+        expectedRevision: _revision,
+        writerSessionId: sessionId,
+        kind: kind,
+        state: state,
+      );
+      _revision = snapshot.revision;
+    } on ApiException catch (e) {
+      if (e.code == 'revision_conflict' || e.code == 'not_writer') {
+        _sessionId = null;
+        if (e.snapshot != null) {
+          _revision = e.snapshot!.revision;
+        }
+        if (kind == 'command') {
+          try {
+            await _ensureWriter();
+            final sessionId = _sessionId;
+            if (sessionId == null) {
+              return;
+            }
+            await _paceStateWrite();
+            final snapshot = await api.putPlaybackState(
+              expectedRevision: _revision,
+              writerSessionId: sessionId,
+              kind: kind,
+              state: state,
+            );
+            _revision = snapshot.revision;
+          } catch (retryError) {
+            debugPrint('playback persist retry failed: $retryError');
+          }
+        }
+        return;
+      }
+      if (e.code != 'dependency_unavailable' && e.code != 'rate_limited') {
+        debugPrint('playback persist failed: $e');
+      }
+    }
+  }
+
+  Future<void> _paceStateWrite() async {
+    final last = _lastStateWrite;
+    if (last != null) {
+      final elapsed = DateTime.now().difference(last);
+      const minInterval = Duration(milliseconds: 550);
+      if (elapsed < minInterval) {
+        await Future<void>.delayed(minInterval - elapsed);
+      }
+    }
+    _lastStateWrite = DateTime.now();
+  }
+
+  Future<void> _enqueueWrite(Future<void> Function() op) {
+    _writes = _writes.then((_) => op()).catchError((Object e) {
+      debugPrint('playback write failed: $e');
+    });
+    return _writes;
+  }
 
   Future<void> _maybeRefreshNearExpiry() async {
     final expires = _expiresAt;
@@ -200,7 +562,7 @@ class PlayerController extends ChangeNotifier {
     try {
       final url = await api.playbackUrl(
         trackId: current.id,
-        sourcePreference: 'catalog',
+        sourcePreference: queue.current?.sourcePreference ?? 'catalog',
         qualityPreference: quality,
       );
       if (gen != _playGen) {
@@ -248,11 +610,12 @@ class PlayerController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _progressTimer?.cancel();
     unawaited(_positionSub?.cancel());
     unawaited(_durationSub?.cancel());
     unawaited(_stateSub?.cancel());
     unawaited(_eventSub?.cancel());
-    unawaited(handler.dispose());
+    unawaited(handler.release());
     super.dispose();
   }
 }

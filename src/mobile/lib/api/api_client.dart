@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
 import '../catalog/catalog_models.dart';
+import '../player/playback_models.dart';
 import '../validation/auth_rules.dart';
 
 class ApiException implements Exception {
@@ -15,6 +16,7 @@ class ApiException implements Exception {
     this.title, {
     this.errors = const {},
     this.retryAfterSeconds,
+    this.snapshot,
   });
 
   final int status;
@@ -22,6 +24,7 @@ class ApiException implements Exception {
   final String title;
   final Map<String, List<String>> errors;
   final int? retryAfterSeconds;
+  final PlaybackSnapshot? snapshot;
 
   Map<String, String> get fieldCodes {
     final out = <String, String>{};
@@ -380,6 +383,51 @@ class ApiClient {
     return PlaybackUrl.fromJson(res.data as Map<String, dynamic>);
   }
 
+  Future<PlaybackSnapshot> playbackState() async {
+    final res = await _send(() => _dio.get('/api/v1/playback-state'));
+    return PlaybackSnapshot.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<CreatePlaybackSession> createPlaybackSession({required String deviceId}) async {
+    final res = await _send(
+      () => _dio.post('/api/v1/playback-sessions', data: {'deviceId': deviceId}),
+    );
+    return CreatePlaybackSession.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<PlaybackSnapshot> claimPlaybackSession(
+    String sessionId, {
+    required int expectedRevision,
+  }) async {
+    final res = await _send(
+      () => _dio.post(
+        '/api/v1/playback-sessions/$sessionId/claim',
+        data: {'expectedRevision': expectedRevision},
+      ),
+    );
+    return PlaybackSnapshot.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<PlaybackSnapshot> putPlaybackState({
+    required int expectedRevision,
+    required String writerSessionId,
+    required String kind,
+    required Map<String, dynamic> state,
+  }) async {
+    final res = await _send(
+      () => _dio.put(
+        '/api/v1/playback-state',
+        data: {
+          'expectedRevision': expectedRevision,
+          'writerSessionId': writerSessionId,
+          'kind': kind,
+          'state': state,
+        },
+      ),
+    );
+    return PlaybackSnapshot.fromJson(res.data as Map<String, dynamic>);
+  }
+
   Future<CatalogPage<SearchItem>> search(String q, {String? cursor, int limit = 20}) async {
     final res = await _send(
       () => _dio.get('/api/v1/search', queryParameters: {
@@ -417,6 +465,7 @@ class ApiClient {
         data['title'] as String? ?? e.message ?? 'Request failed',
         errors: _parseErrors(data['errors']),
         retryAfterSeconds: retryAfter,
+        snapshot: _parseSnapshot(data['snapshot']),
       );
     }
     if (data is String) {
@@ -428,6 +477,7 @@ class ApiClient {
           map['title'] as String? ?? 'Request failed',
           errors: _parseErrors(map['errors']),
           retryAfterSeconds: retryAfter,
+          snapshot: _parseSnapshot(map['snapshot']),
         );
       } catch (_) {}
     }
@@ -437,6 +487,16 @@ class ApiClient {
       e.message ?? 'Request failed',
       retryAfterSeconds: retryAfter,
     );
+  }
+
+  static PlaybackSnapshot? _parseSnapshot(Object? raw) {
+    if (raw is Map<String, dynamic>) {
+      return PlaybackSnapshot.fromJson(raw);
+    }
+    if (raw is Map) {
+      return PlaybackSnapshot.fromJson(Map<String, dynamic>.from(raw));
+    }
+    return null;
   }
 
   static Map<String, List<String>> _parseErrors(Object? raw) {

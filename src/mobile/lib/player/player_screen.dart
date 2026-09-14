@@ -15,7 +15,6 @@ class PlayerScreen extends StatefulWidget {
 }
 
 class _PlayerScreenState extends State<PlayerScreen> {
-  int _seenNotice = 0;
   bool _dragging = false;
   double _dragMs = 0;
 
@@ -34,11 +33,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onPlayer() {
-    if (!mounted) {
-      return;
+    if (mounted) {
+      setState(() {});
     }
-    setState(() {});
-    _showNotice();
   }
 
   Future<void> _setQuality(String quality) async {
@@ -51,17 +48,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  void _showNotice() {
-    if (player.noticeEpoch == _seenNotice || player.notice == null) {
-      return;
-    }
-    _seenNotice = player.noticeEpoch;
-    final text = player.notice!;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+  Future<void> _run(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (e) {
       if (mounted) {
-        showVizeMessage(context, text);
+        showVizeError(context, e);
       }
-    });
+    }
   }
 
   @override
@@ -74,6 +68,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final qualities = track?.availableQualities ?? const [];
 
     return VizeScaffold(
+      showMiniPlayer: false,
       header: VizeHeader(title: track?.title ?? 'Плеер'),
       body: track == null
           ? const Center(
@@ -124,13 +119,47 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ],
                 ),
                 const SizedBox(height: 16),
-                Center(
-                  child: IconButton(
-                    iconSize: 56,
-                    color: VizeColors.accent,
-                    onPressed: player.loading ? null : player.togglePlay,
-                    icon: Icon(player.playing ? Icons.pause_circle_filled : Icons.play_circle_filled),
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      tooltip: 'Предыдущий',
+                      onPressed: player.loading ? null : () => _run(player.previous),
+                      icon: const Icon(Icons.skip_previous, color: VizeColors.accent, size: 36),
+                    ),
+                    IconButton(
+                      iconSize: 56,
+                      color: VizeColors.accent,
+                      onPressed: player.loading ? null : () => _run(player.togglePlay),
+                      icon: Icon(player.playing ? Icons.pause_circle_filled : Icons.play_circle_filled),
+                    ),
+                    IconButton(
+                      tooltip: 'Следующий',
+                      onPressed: player.loading ? null : () => _run(player.next),
+                      icon: const Icon(Icons.skip_next, color: VizeColors.accent, size: 36),
+                    ),
+                  ],
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      tooltip: 'Повтор',
+                      onPressed: () => player.cycleRepeat(),
+                      icon: Icon(
+                        player.queue.repeat == 'one' ? Icons.repeat_one : Icons.repeat,
+                        color: player.queue.repeat == 'off' ? VizeColors.accentMuted : VizeColors.accent,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Перемешать',
+                      onPressed: () => player.toggleShuffle(),
+                      icon: Icon(
+                        Icons.shuffle,
+                        color: player.queue.shuffle ? VizeColors.accent : VizeColors.accentMuted,
+                      ),
+                    ),
+                  ],
                 ),
                 if (player.loading) ...[
                   const SizedBox(height: 12),

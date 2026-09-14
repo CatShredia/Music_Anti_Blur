@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Поднимает Postgres/Redis/MailHog/MinIO, API и Flutter (hot reload).
+# В режиме local после healthy API импортирует no_commit/music (если папка есть).
 # Аргумент (необязательно): local | deploy | 1 | 2
 set -euo pipefail
 
@@ -211,6 +212,16 @@ else
 fi
 
 wait_api
+
+if [[ "$selected" == "local" ]]; then
+  info "После API: импорт no_commit/music (минимум 4 трека из каждой папки)..."
+  if bash "$DEVOPS_ROOT/seed-local-music.sh"; then
+    :
+  else
+    warn "Импорт no_commit/music завершился с ошибкой. Flutter всё равно запускаем."
+  fi
+fi
+
 start_flutter_dev
 
 echo
