@@ -84,11 +84,14 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 src/api/MusicAntiBlur.Api/
 ├── Program.cs
 ├── Auth/           register, login, refresh, reset, JWT
-├── Catalog/        чтение каталога, поиск, admin write метаданных
+├── Catalog/        чтение каталога, поиск, admin metadata, playback-url
 ├── Data/           DbContext, сущности, миграции EF
 ├── Hubs/           PlaybackHub (JWT + Redis backplane)
-├── Jobs/           Hangfire: письма, ping, cleanup
+├── Jobs/           Hangfire: письма, ping, cleanup, transcode, S3 outbox
 ├── Mail/           SMTP (MailKit)
+├── Media/          профили FFmpeg, ffprobe, process runner
+├── Storage/        S3 (MinIO/Yandex), CDN/presign signer
+├── Uploads/        admin multipart + idempotency
 ├── Http/           problem+json, request id
 ├── RateLimiting/   Redis, fail closed
 └── Config/         загрузка корневого .env
@@ -99,14 +102,15 @@ src/api/MusicAntiBlur.Api/
 | HTTP auth | [AuthEndpoints.cs](../src/api/MusicAntiBlur.Api/Auth/AuthEndpoints.cs), [AuthService.cs](../src/api/MusicAntiBlur.Api/Auth/AuthService.cs) |
 | Пароль / login / email | [AuthValidation.cs](../src/api/MusicAntiBlur.Api/Auth/AuthValidation.cs), [TokenHasher.cs](../src/api/MusicAntiBlur.Api/Auth/TokenHasher.cs) |
 | JWT | [JwtTokenService.cs](../src/api/MusicAntiBlur.Api/Auth/JwtTokenService.cs) |
-| Каталог / поиск | [CatalogEndpoints.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogEndpoints.cs), [CatalogService.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogService.cs), [CatalogValidation.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogValidation.cs) |
+| Каталог / поиск | [CatalogEndpoints.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogEndpoints.cs), [CatalogService.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogService.cs), [CatalogValidation.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogValidation.cs), [PlaybackUrlService.cs](../src/api/MusicAntiBlur.Api/Catalog/PlaybackUrlService.cs) |
+| Загрузка / S3 | [Uploads/](../src/api/MusicAntiBlur.Api/Uploads/), [Storage/](../src/api/MusicAntiBlur.Api/Storage/), [Media/](../src/api/MusicAntiBlur.Api/Media/) |
 | Схема БД | [AppDbContext.cs](../src/api/MusicAntiBlur.Api/Data/AppDbContext.cs), [Data/Entities/](../src/api/MusicAntiBlur.Api/Data/Entities/), [Data/Migrations/](../src/api/MusicAntiBlur.Api/Data/Migrations/) — только EF-миграции |
 | SignalR | [PlaybackHub.cs](../src/api/MusicAntiBlur.Api/Hubs/PlaybackHub.cs) |
-| Письма / Hangfire | [EmailJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/EmailJobs.cs), [SmtpEmailSender.cs](../src/api/MusicAntiBlur.Api/Mail/SmtpEmailSender.cs), [HangfireDashboardAuth.cs](../src/api/MusicAntiBlur.Api/Jobs/HangfireDashboardAuth.cs) |
+| Письма / Hangfire | [EmailJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/EmailJobs.cs), [TranscodeCatalogJob.cs](../src/api/MusicAntiBlur.Api/Jobs/TranscodeCatalogJob.cs), [SmtpEmailSender.cs](../src/api/MusicAntiBlur.Api/Mail/SmtpEmailSender.cs), [HangfireDashboardAuth.cs](../src/api/MusicAntiBlur.Api/Jobs/HangfireDashboardAuth.cs) |
 | Rate limit | [RedisRateLimiter.cs](../src/api/MusicAntiBlur.Api/RateLimiting/RedisRateLimiter.cs) |
 | Seed Development | [AdminSeeder.cs](../src/api/MusicAntiBlur.Api/Auth/AdminSeeder.cs), [CatalogSeeder.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogSeeder.cs) |
 
-Сущности: `User`, `UserSettings`, `RefreshToken`, `PasswordResetToken`, `EmailVerificationToken`, `Artist`, `Album`, `Track`. Новые таблицы — только если они есть в [02-database-overview.md](02-database-overview.md). `catalog_uploads` / `track_renditions` — спринт 03.
+Сущности: `User`, `UserSettings`, `RefreshToken`, `PasswordResetToken`, `EmailVerificationToken`, `Artist`, `Album`, `Track`, `CatalogUpload`, `TrackRendition`, `ObjectDeletion`, `IdempotencyRecord`. Новые таблицы — только если они есть в [02-database-overview.md](02-database-overview.md). Private/override/`playback_states` — ещё не в `src/`.
 
 ### 3.2. Flutter — `src/mobile/`
 
@@ -136,7 +140,7 @@ src/mobile/lib/
 
 - Секреты, `.env`, `no_commit/` — не в git.
 - Hangfire-таблицы и S3-байты — не в EF `DbContext`.
-- Плеер / FFmpeg / Object Storage / `catalog_uploads` — ещё нет в `src/`; появятся по [01-product-plan.md](01-product-plan.md), не invent-ahead.
+- Плеер Flutter и private upload — ещё нет в `src/`; не invent-ahead.
 
 ---
 

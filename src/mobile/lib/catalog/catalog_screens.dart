@@ -433,10 +433,25 @@ class _TrackScreenState extends State<TrackScreen> {
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 20),
+                    if (track.availableQualities.isEmpty)
+                      const Text(
+                        'Файл ещё не загружен. После обработки admin здесь появятся качества.',
+                        style: TextStyle(color: VizeColors.accentMuted, fontSize: 14),
+                      )
+                    else
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final quality in track.availableQualities)
+                            VizeChip(label: quality.label, selected: true, onTap: () {}),
+                        ],
+                      ),
+                    const SizedBox(height: 20),
                     const VizePrimaryButton(label: 'Play', onPressed: null),
                     const SizedBox(height: 12),
                     const Text(
-                      'Файл появится в спринте 04. Сейчас доступны только метаданные.',
+                      'Воспроизведение в приложении — спринт 04. Сейчас URL проверяют curl / VLC.',
                       style: TextStyle(color: VizeColors.accentMuted, fontSize: 14),
                     ),
                   ],

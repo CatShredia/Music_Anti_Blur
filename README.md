@@ -59,6 +59,16 @@ dotnet run --project src/api/MusicAntiBlur.Api
 
 Sandbox admin (Development): login `admin`, password `AdminPassword123`.
 
+FFmpeg и ffprobe должны быть в PATH (Windows: winget/choco; Linux: пакет `ffmpeg`). Если бинаря нет, джоба пишет `ffmpeg not found` в статус generation.
+
+Залить исходник на seed-трек Neon Pulse (после `dotnet run` и healthy MinIO):
+
+```powershell
+devops\upload-catalog-source.ps1 -Path C:\path\to\track.mp3
+```
+
+Скрипт логинится как admin, грузит multipart в MinIO и ждёт транскод. `POST /api/v1/tracks/{id}/playback-url` отдаёт signed URL (локально MinIO GET, не тело аудио через API). Откройте URL в VLC — перемотка идёт через HTTP Range. API байты аудио не стримит.
+
 3. Flutter:
 
 ```bash
@@ -77,6 +87,6 @@ flutter run
 
 GitHub Actions (`.github/workflows/ci.yml`) на ветке `develop`: push и pull request.
 
-- API: `dotnet restore` и `dotnet build -c Release` проекта `src/api/MusicAntiBlur.Api`
+- API: `dotnet restore`, `dotnet build -c Release` и `dotnet test` проекта `src/api/MusicAntiBlur.Api.Tests`
 - Flutter: `flutter pub get`, `flutter analyze --fatal-infos`, `flutter test` в `src/mobile`
 

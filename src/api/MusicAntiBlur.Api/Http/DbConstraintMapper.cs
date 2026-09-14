@@ -54,6 +54,18 @@ public static class DbConstraintMapper
             return Taken("trackNumber");
         }
 
+        if (name.Contains("idempotency", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ApiException(409, "idempotency_conflict", "Idempotency key was reused with a different body.");
+        }
+
+        if (name.Contains("catalog_upload_active", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("track_renditions", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("object_deletions_pending", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ApiException(409, "invalid_state", "Conflicting storage state.");
+        }
+
         return new ApiException(409, "identifier_taken", "Identifier is already taken.");
     }
 

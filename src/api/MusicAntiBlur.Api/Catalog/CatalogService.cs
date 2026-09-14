@@ -176,6 +176,12 @@ public sealed class CatalogService(AppDbContext db)
             throw NotFound();
         }
 
+        var qualities = await db.TrackRenditions.AsNoTracking()
+            .Where(r => r.TrackId == id && r.Status == "ready" && r.Upload.IsActive && r.BitrateKbps != null)
+            .OrderByDescending(r => r.BitrateKbps)
+            .Select(r => new QualityDto(r.ProfileCode, r.BitrateKbps!.Value))
+            .ToListAsync(ct);
+
         return new TrackDetailDto(
             track.Id,
             track.Title,
@@ -184,7 +190,7 @@ public sealed class CatalogService(AppDbContext db)
             track.Isrc,
             new ArtistRefDto(track.ArtistId, track.ArtistName),
             new AlbumRefDto(track.AlbumId, track.AlbumTitle),
-            []);
+            qualities);
     }
 
     public async Task<PageDto<SearchItemDto>> SearchAsync(string? q, string? cursor, int? limit, CancellationToken ct)

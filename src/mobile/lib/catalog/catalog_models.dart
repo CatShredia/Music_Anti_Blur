@@ -141,6 +141,20 @@ class AlbumDetail {
       );
 }
 
+class TrackQuality {
+  TrackQuality({required this.code, required this.bitrateKbps});
+
+  final String code;
+  final int bitrateKbps;
+
+  factory TrackQuality.fromJson(Map<String, dynamic> json) => TrackQuality(
+        code: json['code'] as String,
+        bitrateKbps: json['bitrateKbps'] as int,
+      );
+
+  String get label => '$code · $bitrateKbps kbps';
+}
+
 class TrackDetail {
   TrackDetail({
     required this.id,
@@ -160,7 +174,7 @@ class TrackDetail {
   final String? isrc;
   final ArtistRef artist;
   final AlbumRef album;
-  final List<String> availableQualities;
+  final List<TrackQuality> availableQualities;
 
   factory TrackDetail.fromJson(Map<String, dynamic> json) => TrackDetail(
         id: json['id'] as String,
@@ -171,7 +185,8 @@ class TrackDetail {
         artist: ArtistRef.fromJson(json['artist'] as Map<String, dynamic>),
         album: AlbumRef.fromJson(json['album'] as Map<String, dynamic>),
         availableQualities: (json['availableQualities'] as List<dynamic>? ?? const [])
-            .map((e) => '$e')
+            .whereType<Map<String, dynamic>>()
+            .map(TrackQuality.fromJson)
             .toList(),
       );
 }

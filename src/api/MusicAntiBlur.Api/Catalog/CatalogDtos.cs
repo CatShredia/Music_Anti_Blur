@@ -35,7 +35,9 @@ public sealed record TrackDetailDto(
     string? Isrc,
     ArtistRefDto Artist,
     AlbumRefDto Album,
-    IReadOnlyList<string> AvailableQualities);
+    IReadOnlyList<QualityDto> AvailableQualities);
+
+public sealed record QualityDto(string Code, int BitrateKbps);
 
 public sealed record SearchItemDto(string Type, Guid Id, string Title, string? Subtitle, double Rank);
 
