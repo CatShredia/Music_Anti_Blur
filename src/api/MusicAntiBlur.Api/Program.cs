@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using MusicAntiBlur.Api.Auth;
+using MusicAntiBlur.Api.Catalog;
 using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Http;
@@ -52,6 +53,7 @@ builder.Services.AddSingleton<PasswordHasher<User>>();
 builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddSingleton<SmtpEmailSender>();
 builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<CatalogService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -155,6 +157,7 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 });
 
 app.MapAuthEndpoints();
+app.MapCatalogEndpoints();
 app.MapHub<PlaybackHub>("/hubs/playback");
 
 app.MapGet("/health", async (AppDbContext db, CancellationToken ct) =>
@@ -213,6 +216,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 await AdminSeeder.SeedAsync(app);
+await CatalogSeeder.SeedAsync(app);
 RecurringJobSetup.Register();
 
 app.Run();

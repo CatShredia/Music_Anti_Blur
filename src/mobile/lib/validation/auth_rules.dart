@@ -171,6 +171,16 @@ class AuthMessages {
         AuthRules.preferredQuality => 'Недопустимое качество',
         AuthRules.identifierTaken => 'Уже занято',
         'invalid_token' => 'Код недействителен или истёк',
+        'search_query' => 'Введите от 2 до 100 символов',
+        'year_range' => 'Год: 1000–9999',
+        'track_number' => 'Номер трека должен быть ≥ 1',
+        'duration' => 'Длительность должна быть больше нуля',
+        'name_length' => 'Имя: 1–200 символов',
+        'title_length' => 'Название: 1–200 символов',
+        'cover_object_key' => 'Слишком длинный ключ обложки',
+        'isrc_format' => 'ISRC: до 32 латинских букв и цифр',
+        'limit_range' => 'Некорректный размер страницы',
+        'not_found' => 'Ничего не найдено',
         _ => 'Проверьте поле',
       };
 
@@ -186,6 +196,7 @@ class AuthMessages {
         'connection_failed' => 'Нет связи с сервером',
         'dependency_unavailable' => 'Сервис временно недоступен. Попробуйте позже.',
         'admin_required' => 'Недостаточно прав',
+        'not_found' => 'Не найдено',
         _ => 'Не удалось выполнить запрос',
       };
 

@@ -10,6 +10,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
     public DbSet<EmailVerificationToken> EmailVerificationTokens => Set<EmailVerificationToken>();
+    public DbSet<Artist> Artists => Set<Artist>();
+    public DbSet<Album> Albums => Set<Album>();
+    public DbSet<Track> Tracks => Set<Track>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -107,6 +110,57 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .HasFilter("used_at IS NULL AND invalidated_at IS NULL AND purpose = 'bind'");
             e.HasOne(x => x.User).WithMany(x => x.EmailVerificationTokens).HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Artist>(e =>
+        {
+            e.ToTable("artists");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(x => x.Name).IsRequired();
+            e.Property(x => x.SortName).IsRequired();
+            e.HasIndex(x => x.SortName).HasDatabaseName("ix_artists_sort_name");
+            e.HasIndex(x => x.Name).HasDatabaseName("gin_artists_name").HasMethod("gin")
+                .HasOperators("gin_trgm_ops");
+        });
+
+        modelBuilder.Entity<Album>(e =>
+        {
+            e.ToTable("albums", t =>
+            {
+                t.HasCheckConstraint("ck_albums_year", "year IS NULL OR year BETWEEN 1000 AND 9999");
+            });
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(x => x.Title).IsRequired();
+            e.HasIndex(x => x.ArtistId).HasDatabaseName("ix_albums_artist");
+            e.HasIndex(x => x.Title).HasDatabaseName("gin_albums_title").HasMethod("gin")
+                .HasOperators("gin_trgm_ops");
+            e.HasOne(x => x.Artist).WithMany(x => x.Albums).HasForeignKey(x => x.ArtistId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Track>(e =>
+        {
+            e.ToTable("tracks", t =>
+            {
+                t.HasCheckConstraint("ck_tracks_number", "track_number >= 1");
+                t.HasCheckConstraint("ck_tracks_duration", "duration_ms IS NULL OR duration_ms > 0");
+            });
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(x => x.Title).IsRequired();
+            e.HasIndex(x => new { x.AlbumId, x.TrackNumber }).IsUnique()
+                .HasDatabaseName("ux_tracks_album_number");
+            e.HasIndex(x => x.Isrc).IsUnique().HasDatabaseName("ux_tracks_isrc")
+                .HasFilter("isrc IS NOT NULL");
+            e.HasIndex(x => x.ArtistId).HasDatabaseName("ix_tracks_artist");
+            e.HasIndex(x => x.Title).HasDatabaseName("gin_tracks_title").HasMethod("gin")
+                .HasOperators("gin_trgm_ops");
+            e.HasOne(x => x.Album).WithMany(x => x.Tracks).HasForeignKey(x => x.AlbumId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Artist).WithMany(x => x.Tracks).HasForeignKey(x => x.ArtistId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

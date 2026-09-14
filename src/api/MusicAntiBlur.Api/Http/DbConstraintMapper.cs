@@ -44,6 +44,16 @@ public static class DbConstraintMapper
             return new ApiException(503, "dependency_unavailable", "Could not allocate a unique token.");
         }
 
+        if (name.Contains("isrc", StringComparison.OrdinalIgnoreCase))
+        {
+            return Taken("isrc");
+        }
+
+        if (name.Contains("album_number", StringComparison.OrdinalIgnoreCase))
+        {
+            return Taken("trackNumber");
+        }
+
         return new ApiException(409, "identifier_taken", "Identifier is already taken.");
     }
 
@@ -62,6 +72,19 @@ public static class DbConstraintMapper
         else if (name.Contains("quality", StringComparison.OrdinalIgnoreCase))
         {
             errors["preferredQuality"] = ["preferred_quality"];
+        }
+        else if (name.Contains("albums_year", StringComparison.OrdinalIgnoreCase) ||
+                 name.Contains("ck_albums_year", StringComparison.OrdinalIgnoreCase))
+        {
+            errors["year"] = ["year_range"];
+        }
+        else if (name.Contains("tracks_number", StringComparison.OrdinalIgnoreCase))
+        {
+            errors["trackNumber"] = ["track_number"];
+        }
+        else if (name.Contains("tracks_duration", StringComparison.OrdinalIgnoreCase))
+        {
+            errors["durationMs"] = ["duration"];
         }
 
         return new ApiException(400, "validation_failed", "Validation failed.", errors.Count == 0 ? null : errors);

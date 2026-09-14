@@ -84,6 +84,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 src/api/MusicAntiBlur.Api/
 ├── Program.cs
 ├── Auth/           register, login, refresh, reset, JWT
+├── Catalog/        чтение каталога, поиск, admin write метаданных
 ├── Data/           DbContext, сущности, миграции EF
 ├── Hubs/           PlaybackHub (JWT + Redis backplane)
 ├── Jobs/           Hangfire: письма, ping, cleanup
@@ -98,13 +99,14 @@ src/api/MusicAntiBlur.Api/
 | HTTP auth | [AuthEndpoints.cs](../src/api/MusicAntiBlur.Api/Auth/AuthEndpoints.cs), [AuthService.cs](../src/api/MusicAntiBlur.Api/Auth/AuthService.cs) |
 | Пароль / login / email | [AuthValidation.cs](../src/api/MusicAntiBlur.Api/Auth/AuthValidation.cs), [TokenHasher.cs](../src/api/MusicAntiBlur.Api/Auth/TokenHasher.cs) |
 | JWT | [JwtTokenService.cs](../src/api/MusicAntiBlur.Api/Auth/JwtTokenService.cs) |
+| Каталог / поиск | [CatalogEndpoints.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogEndpoints.cs), [CatalogService.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogService.cs), [CatalogValidation.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogValidation.cs) |
 | Схема БД | [AppDbContext.cs](../src/api/MusicAntiBlur.Api/Data/AppDbContext.cs), [Data/Entities/](../src/api/MusicAntiBlur.Api/Data/Entities/), [Data/Migrations/](../src/api/MusicAntiBlur.Api/Data/Migrations/) — только EF-миграции |
 | SignalR | [PlaybackHub.cs](../src/api/MusicAntiBlur.Api/Hubs/PlaybackHub.cs) |
 | Письма / Hangfire | [EmailJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/EmailJobs.cs), [SmtpEmailSender.cs](../src/api/MusicAntiBlur.Api/Mail/SmtpEmailSender.cs), [HangfireDashboardAuth.cs](../src/api/MusicAntiBlur.Api/Jobs/HangfireDashboardAuth.cs) |
 | Rate limit | [RedisRateLimiter.cs](../src/api/MusicAntiBlur.Api/RateLimiting/RedisRateLimiter.cs) |
-| Seed admin (Development) | [AdminSeeder.cs](../src/api/MusicAntiBlur.Api/Auth/AdminSeeder.cs) |
+| Seed Development | [AdminSeeder.cs](../src/api/MusicAntiBlur.Api/Auth/AdminSeeder.cs), [CatalogSeeder.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogSeeder.cs) |
 
-Сущности сейчас: `User`, `UserSettings`, `RefreshToken`, `PasswordResetToken`, `EmailVerificationToken`. Новые таблицы — только если они есть в [02-database-overview.md](02-database-overview.md).
+Сущности: `User`, `UserSettings`, `RefreshToken`, `PasswordResetToken`, `EmailVerificationToken`, `Artist`, `Album`, `Track`. Новые таблицы — только если они есть в [02-database-overview.md](02-database-overview.md). `catalog_uploads` / `track_renditions` — спринт 03.
 
 ### 3.2. Flutter — `src/mobile/`
 
@@ -112,20 +114,21 @@ src/api/MusicAntiBlur.Api/
 
 ```
 src/mobile/lib/
-├── main.dart              экраны auth / home / settings, go_router
+├── main.dart              экраны auth / settings, go_router
+├── catalog/               дом, поиск, карточки artist/album/track
 ├── theme.dart             тёмная тема Vize (токены макета)
 ├── widgets.dart           шапка, чипы, поля, таббар, ошибки формы
-├── validation/auth_rules.dart  те же правила, что API/CHECK; тексты ошибок
+├── validation/            auth + search; те же коды, что API/CHECK
 └── api/api_client.dart    dio, JWT, refresh, X-Device-Id, problem+json
 ```
 
 | Задача | Файл |
 |---|---|
-| Экраны и роуты | [main.dart](../src/mobile/lib/main.dart) |
+| Экраны и роуты | [main.dart](../src/mobile/lib/main.dart), [catalog/catalog_screens.dart](../src/mobile/lib/catalog/catalog_screens.dart) |
 | Тема / токены | [theme.dart](../src/mobile/lib/theme.dart) |
 | Общие виджеты | [widgets.dart](../src/mobile/lib/widgets.dart) |
 | HTTP + secure storage | [api_client.dart](../src/mobile/lib/api/api_client.dart) |
-| Валидация полей | [auth_rules.dart](../src/mobile/lib/validation/auth_rules.dart) |
+| Валидация полей | [auth_rules.dart](../src/mobile/lib/validation/auth_rules.dart), [catalog_rules.dart](../src/mobile/lib/validation/catalog_rules.dart) |
 
 Платформенные обёртки (`android/`, `ios/`, …) — стандартный Flutter; бизнес-логику туда не класть.
 
@@ -133,7 +136,7 @@ src/mobile/lib/
 
 - Секреты, `.env`, `no_commit/` — не в git.
 - Hangfire-таблицы и S3-байты — не в EF `DbContext`.
-- Каталог / плеер / FFmpeg / Object Storage — ещё нет в `src/`; появятся по [01-product-plan.md](01-product-plan.md), не invent-ahead.
+- Плеер / FFmpeg / Object Storage / `catalog_uploads` — ещё нет в `src/`; появятся по [01-product-plan.md](01-product-plan.md), не invent-ahead.
 
 ---
 

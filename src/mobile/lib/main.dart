@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'api/api_client.dart';
+import 'catalog/catalog_screens.dart';
 import 'theme.dart';
 import 'validation/auth_rules.dart';
 import 'widgets.dart';
@@ -59,6 +60,19 @@ class MusicAntiBlurApp extends StatelessWidget {
         ),
       ),
       GoRoute(path: '/home', builder: (_, _) => HomeScreen(api: api)),
+      GoRoute(path: '/search', builder: (_, _) => SearchScreen(api: api)),
+      GoRoute(
+        path: '/artist/:id',
+        builder: (_, state) => ArtistScreen(api: api, id: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/album/:id',
+        builder: (_, state) => AlbumScreen(api: api, id: state.pathParameters['id']!),
+      ),
+      GoRoute(
+        path: '/track/:id',
+        builder: (_, state) => TrackScreen(api: api, id: state.pathParameters['id']!),
+      ),
       GoRoute(path: '/settings', builder: (_, _) => SettingsScreen(api: api)),
     ],
   );
@@ -551,104 +565,6 @@ class _CodeScreenState extends State<CodeScreen> {
   }
 }
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.api});
-  final ApiClient api;
-
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends State<HomeScreen> {
-  UserDto? _user;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    widget.api.me().then((u) => setState(() => _user = u)).catchError((e) {
-      setState(() => _error = e is ApiException ? e.localizedMessage : e.toString());
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return VizeScaffold(
-      tabIndex: 0,
-      header: VizeHeader(
-        showLogo: true,
-        trailing: IconButton(
-          tooltip: 'Профиль',
-          onPressed: () => context.go('/settings'),
-          icon: const Icon(Icons.person_outline, color: VizeColors.accentMuted),
-        ),
-      ),
-      body: _error != null
-          ? Padding(
-              padding: const EdgeInsets.all(20),
-              child: Text(_error!, style: const TextStyle(color: VizeColors.danger)),
-            )
-          : _user == null
-              ? const Center(child: CircularProgressIndicator())
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                  children: [
-                    VizeCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('КАТАЛОГ', style: Theme.of(context).textTheme.labelSmall),
-                          const SizedBox(height: 8),
-                          Text('Скоро здесь', style: Theme.of(context).textTheme.headlineMedium),
-                          const SizedBox(height: 6),
-                          const Text(
-                            'Поиск и треки появятся в следующем спринте. Сейчас можно войти, подтвердить почту и настроить аккаунт.',
-                            style: TextStyle(color: VizeColors.accentMuted, fontSize: 14),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Text('Аккаунт', style: Theme.of(context).textTheme.headlineMedium),
-                    const SizedBox(height: 12),
-                    VizeCard(
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 56,
-                            height: 56,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(color: VizeColors.accent),
-                            ),
-                            child: const Icon(Icons.person_outline, color: VizeColors.accentMuted),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(_user!.login ?? _user!.email ?? 'Пользователь',
-                                    style: Theme.of(context).textTheme.titleMedium),
-                                const SizedBox(height: 4),
-                                Text(_user!.email ?? 'Email не привязан',
-                                    style: Theme.of(context).textTheme.bodySmall),
-                                Text(
-                                  _user!.emailVerifiedAt == null ? 'Почта не подтверждена' : 'Почта подтверждена',
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-    );
-  }
-}
-
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, required this.api});
   final ApiClient api;
@@ -734,7 +650,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return VizeScaffold(
-      tabIndex: 1,
+      tabIndex: 2,
       header: const VizeHeader(title: 'Настройки'),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),

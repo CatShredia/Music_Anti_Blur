@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
+import '../catalog/catalog_models.dart';
 import '../validation/auth_rules.dart';
 
 class ApiException implements Exception {
@@ -318,6 +319,57 @@ class ApiClient {
       () => _dio.patch('/api/v1/me/settings', data: {'preferredQuality': preferredQuality}),
     );
     return SettingsDto.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<CatalogPage<ArtistListItem>> listArtists({String? cursor, int limit = 20}) async {
+    final res = await _send(
+      () => _dio.get('/api/v1/artists', queryParameters: {
+        'cursor': ?cursor,
+        'limit': limit,
+      }),
+    );
+    return CatalogPage.fromJson(res.data as Map<String, dynamic>, ArtistListItem.fromJson);
+  }
+
+  Future<ArtistDetail> artist(String id) async {
+    final res = await _send(() => _dio.get('/api/v1/artists/$id'));
+    return ArtistDetail.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<CatalogPage<AlbumListItem>> listAlbums({
+    required String artistId,
+    String? cursor,
+    int limit = 20,
+  }) async {
+    final res = await _send(
+      () => _dio.get('/api/v1/albums', queryParameters: {
+        'artistId': artistId,
+        'cursor': ?cursor,
+        'limit': limit,
+      }),
+    );
+    return CatalogPage.fromJson(res.data as Map<String, dynamic>, AlbumListItem.fromJson);
+  }
+
+  Future<AlbumDetail> album(String id) async {
+    final res = await _send(() => _dio.get('/api/v1/albums/$id'));
+    return AlbumDetail.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<TrackDetail> track(String id) async {
+    final res = await _send(() => _dio.get('/api/v1/tracks/$id'));
+    return TrackDetail.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<CatalogPage<SearchItem>> search(String q, {String? cursor, int limit = 20}) async {
+    final res = await _send(
+      () => _dio.get('/api/v1/search', queryParameters: {
+        'q': q,
+        'cursor': ?cursor,
+        'limit': limit,
+      }),
+    );
+    return CatalogPage.fromJson(res.data as Map<String, dynamic>, SearchItem.fromJson);
   }
 
   Future<Response<dynamic>> _send(Future<Response<dynamic>> Function() run) async {
