@@ -1,6 +1,6 @@
 # Music Anti Blur — описание продукта и план
 
-Версия: 0.3  
+Версия: 0.4
 Клиенты MVP: только мобильное приложение (Flutter)  
 Дизайн: отсутствует, разрабатывается отдельно; в спринтах UI не полируем
 
@@ -66,14 +66,15 @@ flowchart TB
   API --> HG
   HG --> FF
   HG --> SMTP
-  API -->|"каталог и private upload"| S3
+  API -->|"инициация multipart + подписи частей"| S3
+  Flutter -->|"presigned multipart PUT"| S3
   FF -->|"рендиции"| S3
-  API -->|"signed URL"| Flutter
+  API -->|"CDN secure-token URL"| Flutter
   Player -->|"Range GET"| CDN
   CDN --> S3
 ```
 
-Правило: **API не стримит аудиобайты**. API отдаёт метаданные и короткоживущий signed URL на CDN. Плеер качает файл напрямую. Для приватной копии URL выдаётся **только владельцу**.
+Правило: **API не принимает и не стримит аудиобайты**. Загрузка идёт из Flutter прямо в Object Storage по presigned multipart URL. Для воспроизведения API после проверки ACL создаёт короткоживущий **Yandex CDN secure-token URL**; это не S3 SigV4 URL с заменённым hostname. CDN проверяет токен до cache lookup, origin закрыт от публичного чтения. Для private URL выдаётся только владельцу.
 
 Hangfire в MVP крутится **в процессе API** (один деплой). FFmpeg вызывается из Hangfire-джобы. Если CPU станет узким — вынести worker отдельно, контракт джоб не менять.
 
@@ -81,7 +82,7 @@ Hangfire в MVP крутится **в процессе API** (один депл�
 
 - Flutter — фон, lock screen, Bluetooth, доступ к файлам для подмены.
 - ASP.NET + EF + PostgreSQL — каталог, пользователи, миграции, транзакции.
-- Redis нужен сразу: логин и reset без брутфорса, SignalR на нескольких инстансах, кэш signed URL.
+- Redis нужен сразу: rate limit, SignalR на нескольких инстансах, кэш CDN secure-token URL.
 - FFmpeg + Hangfire — выбор качества не сделать «на лету» из одного файла без предрасчёта; тот же пайплайн для приватных загрузок.
 - Yandex Object Storage + CDN — аудитория РФ/СНГ, S3-совместимость, трафик не через Kestrel.
 - SignalR — несколько устройств одного пользователя и пуш «транскод готов» (каталог и private).
@@ -93,7 +94,7 @@ Hangfire в MVP крутится **в процессе API** (один депл�
 
 1. **Дизайна нет.** Flutter: Material 3 из коробки, стандартные `AppBar` / `ListTile` / `Slider`. Никаких кастомных тем, иллюстраций, анимаций «для красоты». Имена экранов и поля держать стабильными — дизайнер наложит UI позже.
 2. **Один клиент.** Веб не делаем, даже «на час». Контракт API проектировать так, чтобы веб мог подключиться post-MVP.
-3. **Нет плейлистов и избранного** в MVP. Очередь воспроизведения — эфемерная, только на устройстве (плюс синхронизация через SignalR, если устройство онлайн).
+3. **Нет плейлистов и избранного** в MVP. Очередь эфемерная и не становится библиотечной сущностью. Через SignalR передаётся полный snapshot для продолжения на другом устройстве, но удалённого управления играющим устройством в MVP нет.
 4. **Нет рекомендаций** в MVP. Не собирать под них отдельный сервис, экраны «для вас» и джобы пересчёта.
 5. Приватный файл пользователя не попадает в каталог, поиск и выдачу другим аккаунтам.
 6. Не тащить в спринт пункты из раздела «Вне MVP / out of scope».
@@ -104,28 +105,37 @@ Hangfire в MVP крутится **в процессе API** (один депл�
 
 ### 4.1. Аккаунт
 
-**Регистрация.** Пользователь **явно выбирает**, чем регистрироваться: **email** или **логин** (radio / сегмент), не оба сразу и не автоопределение по символу `@`. Поля: выбранный идентификатор + пароль.
+**Регистрация.** Обязательны **логин и email** + пароль. На клиенте нет выбора «только email / только логин» (такой выбор остаётся на **входе**).
 
-- `identifierType`: `email` | `login`
-- В БД заполняется только выбранное поле, второе — `NULL`.
+- Тело: `{ login, email, password }`.
+- В БД сразу заполняются оба идентификатора. `email_verified_at` пуст, пока пользователь не подтвердит почту.
 - Email хранить normalized lowercase, уникальный среди не-null.
 - Login: `[a-zA-Z0-9_.-]{3,32}`, уникальный среди не-null.
-- CHECK: задан ровно один из `Email` / `Login`.
+- Успех: `201` + сессия (вход по login доступен сразу). Вход и recovery по email — только после verification.
+- Инвариант: задан **минимум один** идентификатор; после регистрации MVP заданы оба.
 
 **Вход.** Тоже явный выбор типа: «войти по email» или «войти по логину». Тело запроса: `{ identifierType, identifier, password }`. Сервер **не** угадывает тип по `@`.
 
-**Пароль** хранится только как хеш (ASP.NET Identity hasher или аналог). Никогда в открытом виде.
+**Пароль:** 12–128 Unicode-символов, без обязательных классов; пробелы и Unicode не нормализовать и не обрезать незаметно. Проверять по списку очевидно скомпрометированных/частых паролей. Хранить только как хеш ASP.NET `PasswordHasher`, никогда в открытом виде. Login и auth request body имеют фиксированный предел размера.
 
-**Сессия:** JWT access + refresh, refresh в БД (можно отозвать). Выход, выход со всех устройств. Смена пароля залогиненным.
+**Сессия:** JWT access TTL 15 минут + refresh TTL 30 дней. Refresh хранится в БД только как хеш, а на Flutter — в secure storage. Каждый refresh одноразовый: атомарная ротация создаёт потомка в той же token family; повторное использование уже погашенного токена отзывает всю family. Выход отзывает текущую family, выход со всех устройств — все refresh пользователя. Два конкурентных refresh одного токена: успешен только один.
+
+**Подтверждение email:**
+
+- Регистрация создаёт аккаунт с login+email и одноразовый **6-значный код** в письме (TTL 24 часа, в БД только хеш). Deep link не используется. До подтверждения email нельзя использовать для входа по почте и recovery; разрешены повторная отправка письма и ввод кода в приложении. Вход по login доступен сразу.
+- Неподтверждённые email-аккаунты удаляются cleanup-job через 24 часа, если подтверждение не завершено.
+- Verification/reset — 6-значный код, одноразовый, в БД только хеш. Повторная отправка инвалидирует предыдущие активные коды того же назначения.
+- Смена и привязка login/email после регистрации — [вне MVP / out of scope](#52-out-of-scope).
 
 **Восстановление пароля по email (MVP):**
 
 1. Экран «забыл пароль»: пользователь вводит email.
-2. `POST /api/auth/forgot-password` всегда отвечает одинаково (200), чтобы не раскрывать, есть ли аккаунт.
-3. Если пользователь с таким email есть — Hangfire/SMTP шлёт письмо со ссылкой или кодом (TTL, одноразовый токен в БД).
-4. Экран смены пароля по токену: `POST /api/auth/reset-password`.
+2. `POST /api/v1/auth/forgot-password` всегда отвечает одинаково (200), чтобы не раскрывать, есть ли аккаунт.
+3. Если пользователь с подтверждённым email есть — Hangfire/SMTP шлёт письмо с **6-значным кодом** TTL 30 минут (без deep link).
+4. Экран смены пароля: код из письма + новый пароль, `POST /api/v1/auth/reset-password { code, newPassword }`.
 5. Rate limit на forgot-password (Redis).
-6. Аккаунт, зарегистрированный **только по логину**, восстановить по почте нельзя, пока не привязан email. В профиле MVP: **привязать email** (уникальный) — после этого recovery работает. Привязать логин к email-аккаунту — симметрично, тоже MVP (чтобы вход «по логину» был доступен тем, кто пришёл с почты).
+6. Reset выполняется одной транзакцией: код атомарно помечается использованным, меняется password hash, инвалидируются остальные reset-коды и **все** refresh-токены пользователя.
+7. Recovery доступен только для подтверждённого email, заданного при регистрации. Сменить почту в MVP нельзя.
 
 Вне MVP: вход через Яндекс (OAuth).
 
@@ -166,10 +176,11 @@ Hangfire в MVP крутится **в процессе API** (один депл�
 Поведение:
 
 - У трека список `availableQualities` (только готовые рендиции источника, статус `Ready`).
-- Пользователь выбирает: конкретный профиль **или** `auto` (в MVP auto = максимальный Ready).
+- Пользователь выбирает конкретный профиль или `auto`. Сервер — единственный источник решения о фактической рендиции.
 - Выбор качества — настройка пользователя + возможность переключить на текущем треке.
-- Если выбранного качества нет (ещё транскодируется) — fallback на ближайшее более низкое Ready, иначе ошибка с понятным текстом.
-- Плеер запрашивает signed URL **конкретной** рендиции выбранного источника (каталог или private).
+- Фиксированный порядок AAC: `aac_256` → `aac_128`. Для выбранного AAC разрешён fallback только вниз; если выбран `aac_128`, наличие только `aac_256` не является fallback и даёт `quality_unavailable`.
+- `auto` выбирает `aac_256`, затем `aac_128`. `src` никогда не выбирается автоматически и отдаётся только при успешной проверке контейнера/кодека, fast-start и Range seek на поддерживаемых iOS/Android.
+- Плеер запрашивает CDN secure-token URL конкретной Ready-рендиции. При приближении `expiresAt` или первом 401/403 он один раз повторно резолвит URL, сохраняет позицию и возобновляет Range GET.
 
 Исходный файл после загрузки кладётся в бакет; Hangfire режет профили через FFmpeg.
 
@@ -188,7 +199,7 @@ Hangfire в MVP крутится **в процессе API** (один депл�
 Правила привязки и локального файла:
 
 - Привязка персональная, per-user, не меняет каталог для других.
-- Глобальный дефолт: «если локальный файл доступен — играть его; иначе если есть Ready private — его; иначе каталог». Плюс явное переопределение на трек.
+- `sourcePreference`: `auto` | `catalog` | `local` | `private`. Только `auto` применяет глобальный порядок Local → Ready Private → Catalog. Явный источник пытается играть выбранный вариант, затем использует тот же безопасный fallback с заметным сообщением.
 - Локальный файл недоступен (нет permission, удалили):
   - есть private Ready → играть private, можно показать баннер «локальный файл недоступен, играет копия на сервере»;
   - private нет → тост/баннер + каталог, не тихий skip.
@@ -199,13 +210,16 @@ Hangfire в MVP крутится **в процессе API** (один депл�
 
 - Загрузка **опциональна**, отдельное действие («загрузить на сервер»), не скрытый побочный эффект picker’а.
 - Объект в бакете с ключом вида `users/{userId}/overrides/{trackId}/...`. Не класть в каталожный префикс `tracks/{trackId}/`.
-- Транскод теми же профилями, статусы Pending / Processing / Ready / Failed.
+- Транспорт: direct presigned multipart upload. Flow: `initiate` → части → `complete` → S3 `HEAD`/size → вычисление full-file SHA-256 при чтении → `ffprobe` → Hangfire transcode → publish generation.
+- Каждая попытка имеет immutable `generationId`; он входит в DB-строки, S3-префикс и аргументы job. Job меняет состояние только через compare-and-swap своей generation и не может опубликовать/перезаписать более новую.
+- Состояния upload: `initiated` → `uploading` → `uploaded` → `validating` → `processing` → `ready` | `failed` | `cancelled` | `deleting`. Зависшие состояния имеют lease/timeout и подбираются cleanup/recovery job.
 - Signed URL и метаданные рендиций — только для `userId` владельца. Чужой пользователь: 404 (не 403), чтобы не палить существование.
 - **Другие пользователи не видят, не ищут, не стримят, не получают в SignalR чужой private-трек.** Каталожная карточка для них без этой подмены.
 - Админ-каталог и публичные списки private не включают. Ключи в логах Hangfire не должны светить URL с подписью.
-- Лимит MVP: один исходник на пару (user, track); ограничить размер файла (зафиксировать в коде, например 100 МБ).
-- Удаление private-копии владельцем: объекты в бакете + строки рендиций. Локальная привязка может остаться.
-- Второе устройство того же аккаунта играет Private по signed URL, даже если локального файла там нет.
+- Лимит MVP: один **активный** исходник на пару `(user, track)`, до **100 MiB** и **60 минут**; суммарная private-квота аккаунта — **2 GiB**. Initiate атомарно резервирует заявленный размер под user-scoped lock; после `CompleteMultipartUpload` проверяются фактические размер/full-file SHA-256/duration.
+- `deletePrivateCopy` удаляет server copy через transactional outbox, но сохраняет local binding; source переключается на `local`, если файл доступен, иначе `catalog`.
+- `deleteOverride` удаляет и local binding, и private generation. Перед удалением metadata каждый известный object key материализуется в outbox; reconciler перечисляет orphan/temp objects и ставит каждый отдельно.
+- Второе устройство того же аккаунта играет Private по CDN secure-token URL, даже если локального файла там нет.
 
 Автоскан папки и fingerprint — вне MVP (ручная привязка).
 
@@ -213,13 +227,13 @@ Hangfire в MVP крутится **в процессе API** (один депл�
 
 Hub: состояние воспроизведения пользователя.
 
-- События: now playing, pause/play, seek, смена качества, смена источника (`catalog` / `local` / `private`), прогресс, эфемерная очередь.
+- События: versioned snapshot now playing, pause/play, seek, качество, источник, прогресс и полная эфемерная очередь.
 - Присутствие устройств.
 - Пуш: рендиция стала `Ready` (каталог для admin/карточки; private — только владельцу).
 - Авторизация JWT на хабе.
 - Backplane: Redis (даже на одном инстансе — чтобы не переделывать).
 
-Конфликт двух устройств, которые оба жмут play: last-write-wins по timestamp сервера.
+Каждый принятый snapshot получает монотонную `revision` из PostgreSQL. Update содержит `expectedRevision`; несовпадение даёт conflict и актуальный snapshot. Broadcast отправляется только после commit, клиент игнорирует меньшие revision. Периодический progress не может менять play/pause, source, quality или queue. После reconnect клиент сначала получает authoritative snapshot. Устройство, начавшее play, становится текущим writer session; другое устройство может продолжить snapshot у себя, но не управляет первым удалённо.
 
 Источник `local` на другом устройстве без файла: если есть private — играть private; иначе каталог + пометка в UI.
 
@@ -258,10 +272,11 @@ Hub: состояние воспроизведения пользователя.
 
 Пока явно не попросим — не проектировать и не делать «заодно»:
 
+- смена и привязка login/email после регистрации (профиль, recent re-auth, `/me/identifiers/*`); логин и почта задаются только при регистрации;
 - автосопоставление локальных файлов по fingerprint (Chromaprint / AcoustID) и скан папки;
 - HLS / адаптивный битрейт;
 - кабинет артиста, модерация каталога;
-- синхронизация очереди как отдельный продукт (сейчас SignalR — технический слой now playing);
+- удалённое управление другим устройством и долговременное хранение очередей (SignalR передаёт только текущий эфемерный snapshot);
 - ListenEvent и аналитика прослушиваний (нужны рекомендациям, не MVP);
 - нейросеть по сырому аудио, отдельный ML-сервис, A/B reco;
 - восстановление пароля не по email (SMS, секретный вопрос);
@@ -273,26 +288,32 @@ Hub: состояние воспроизведения пользователя.
 
 Имена таблиц можно уточнить в спринте 1, смысл полей — нет.
 
-**User** — Login nullable, Email nullable, PasswordHash, Role, CreatedAt  
-Ограничение: ровно одно из Login/Email при регистрации; позже второе можно привязать.
+**User** — Login nullable, Email nullable, EmailVerifiedAt nullable, PasswordHash, Role, CreatedAt  
+Регистрация MVP пишет login и email сразу. DB требует минимум один идентификатор. Менять их после регистрации — вне скоупа.
 
-**RefreshToken** — UserId, TokenHash, ExpiresAt, RevokedAt, DeviceId  
+**RefreshToken** — UserId, TokenHash, FamilyId, ParentTokenId, ExpiresAt, RevokedAt, DeviceId
 
 **PasswordResetToken** — UserId, TokenHash, ExpiresAt, UsedAt  
 
+**EmailVerificationToken** — UserId, PendingEmail, Purpose, TokenHash, ExpiresAt, UsedAt
+
 **Artist / Album / Track** — каталог; у Track опционально Isrc  
 
-**TrackRendition** — TrackId, ProfileCode, Status (Pending/Processing/Ready/Failed), BucketKey, ContentType, BitrateKbps, SizeBytes, DurationMs  
+**TrackRendition** — TrackId, GenerationId, ProfileCode, Status, BucketKey, ContentType, BitrateKbps, SizeBytes, DurationMs
 Только каталог.
 
-**UserSettings** — PreferredQuality (auto | profile code), PreferLocalIfAvailable  
+**UserSettings** — PreferredQuality (auto | profile code)
 
-**UserTrackOverride** — UserId, TrackId, PreferredSource (Catalog | Local | Private), DisplayName, DurationMs, SizeBytes, HasServerCopy, UploadStatus, UpdatedAt  
+**UserTrackOverride** — UserId, TrackId, SourcePreference (Auto | Catalog | Local | Private), DisplayName, DurationMs, SizeBytes, UpdatedAt
 
-**UserPrivateRendition** — UserId, TrackId, ProfileCode, Status, BucketKey, …  
+**UserPrivateUpload / CatalogUpload** — immutable GenerationId, multipart state, checksum/size/duration, active flag, lease и timestamps.
+
+**UserPrivateRendition** — UserId, TrackId, GenerationId, ProfileCode, Status, BucketKey, …
 Доступ только по паре (UserId владельца, TrackId).
 
-**PlaybackState** — UserId, TrackId, PositionMs, IsPlaying, QueueJson, QualityCode, Source, UpdatedAt  
+**ObjectDeletion** — outbox удаления точного S3 object key с retry.
+
+**PlaybackState** — UserId, Revision, WriterSessionId, TrackId, PositionMs, IsPlaying, QueueJson, QualityCode, Source, UpdatedAt
 
 Hangfire создаёт свои таблицы в PostgreSQL (схема `hangfire`).
 
@@ -304,13 +325,15 @@ Hangfire создаёт свои таблицы в PostgreSQL (схема `hangf
 
 - HTTPS.
 - Секреты (JWT signing key, S3 keys, Redis, SMTP) только в env / user-secrets, не в репозитории.
-- Бакет приватный. Публичных вечных URL на треки нет.
-- Signed URL TTL короткий (минуты, не дни).
+- Бакет и CDN origin приватные. Публичных вечных URL нет. Воспроизведение использует CDN secure token, upload — S3 multipart presigned URL; эти подписи не взаимозаменяемы.
+- Playback URL TTL 10 минут; Redis-кэш живёт не более 8 минут и ключуется owner/rendition/generation. ACL проверяется до cache lookup.
 - Private-ключи неотличимы от «нет объекта» для чужого userId (404).
-- Rate limit на `/auth/login` и `/auth/forgot-password` через Redis.
+- Rate limit обязателен для login, registration, verification resend, forgot/reset, refresh, URL issue, upload и admin import; точные ключи и значения — в API contract.
 - Логи без паролей, без тел писем с токенами, без полных URL с подписью.
+- Входное аудио недоверенное: S3 HEAD/size, вычисление full-file SHA-256, ffprobe, allowlist, timeout и resource limits до Ready.
 - Миграции EF — единственный способ менять схему.
 - Время в UTC.
+- Backup/restore, probes, telemetry, deployment и cleanup — обязательная часть DoD, см. `04-operations.md`.
 
 ---
 
@@ -320,26 +343,33 @@ Hangfire создаёт свои таблицы в PostgreSQL (схема `hangf
 |---|---|
 | iOS bookmark на локальный файл протухает | хранить bookmark; UI «выбрать файл снова»; fallback на private/каталог |
 | CDN + private bucket + Range | прототип одного трека в спринте хранилища, до плеера |
-| FFmpeg в процессе API ест CPU | лимит параллельных джоб Hangfire (WorkerCount) |
+| FFmpeg в процессе API ест CPU/обрабатывает недоверенный файл | WorkerCount + sandbox, ffprobe, timeout, лимиты CPU/RAM/temp disk |
+| Retry старого транскода перезаписывает новый | immutable generation keys + CAS перед publish |
+| DB удалена, S3 не удалён | transactional outbox + retry + reconciliation |
+| URL истёк в background/seek | refresh по expiresAt и один повтор после 401/403 |
+| SignalR-события пришли не по порядку | DB revision; broadcast после commit; discard stale |
 | Утечка private-файла в каталог/поиск | отдельный префикс ключей, отдельные таблицы, тесты на 404 чужому user |
 | Два устройства и только local | private-копия для синка; иначе каталог |
 | Нет дизайна → бесконечный пиксель-пуш | DoD спринтов: функция, не внешний вид |
 | Пустой каталог | seed из 2–3 альбомов для демо |
 | SMTP на проде | в MVP достаточно рабочего SMTP; локально MailHog |
-| Login-only аккаунт без почты | recovery недоступен, пока не привязан email; это ожидаемо |
+| Login-only аккаунт без почты | в MVP регистрация всегда с email; сменить/привязать идентификаторы нельзя |
 
 ---
 
 ## 9. Критерии готовности MVP (продукт)
 
-- Регистрация с **явным** выбором email **или** логина; вход с явным выбором типа.
-- Восстановление пароля по email работает на аккаунте с почтой (письмо видно в MailHog / SMTP).
+- Регистрация принимает login **и** email. Email-вход/recovery недоступны до verification. Смена логина и почты после регистрации не входит в MVP.
+- Два параллельных refresh/reset одного токена дают ровно один успех; reset отзывает все сессии.
 - Каталог открывается, поиск находит seed-треки и **не** находит чужие private-файлы.
-- Трек играет с CDN, в фоне, с lock screen.
-- Можно выбрать качество из готовых рендиций.
+- Трек играет по CDN secure-token URL с Range. После expiry/background/seek URL обновляется, позиция сохраняется.
+- На Android/iOS проверены lock screen, notification actions, звонок/audio focus, unplug headphones, Bluetooth и process restart.
+- `auto` и явный quality выбираются сервером по фиксированному fallback; неподдержанный `src` не выдаётся.
 - Можно привязать локальный файл и переключить источник Catalog / Local.
-- Можно загрузить подмену на сервер; второе устройство играет private; после удаления локального файла private остаётся доступен владельцу; второй пользователь файл не видит и не стримит.
-- Второе устройство видит now playing через SignalR.
+- Multipart upload переживает retry/restart, проверяет 100 MiB/60 минут/2 GiB и не позволяет старой generation стать активной после новой.
+- `deletePrivateCopy` сохраняет local binding; сбой cleanup не теряет задачу outbox.
+- Второй пользователь не получает private metadata/URL ни по одному публичному id.
+- Второе устройство получает полный queue snapshot с `currentItemId` и revision; stale SignalR event не откатывает состояние и не управляет первым устройством.
 - Нет экранов рекомендаций, плейлистов, OAuth, веба.
 - UI допускается «серый Material», если всё выше работает.
 
@@ -356,4 +386,4 @@ docker-compose.yml  PostgreSQL + Redis + MailHog (+ опционально api)
 docs/             позже, не в no_commit
 ```
 
-Инструкции по локальному запуску — `README` в корне репо (уже в git), когда появится код.
+Инструкции по локальному запуску — корневой [README.md](../README.md). Актуальная карта файлов для агентов — [00-ai-agents.md §3](00-ai-agents.md#3-структура-репозитория).
