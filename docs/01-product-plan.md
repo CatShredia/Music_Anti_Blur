@@ -382,7 +382,7 @@ Hangfire создаёт свои таблицы в PostgreSQL (схема `hangf
 ```
 src/api/          ASP.NET Core
 src/mobile/       Flutter
-docker-compose.yml  PostgreSQL + Redis + MailHog (+ опционально api)
+docker-compose.yml  PostgreSQL + Redis + MailHog + MinIO (локальный S3; прод — Yandex)
 docs/             позже, не в no_commit
 ```
 

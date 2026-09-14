@@ -128,7 +128,7 @@ public static class ExceptionHandling
             }
             catch (ApiException ex)
             {
-                var result = ProblemResults.Problem(context, ex.Status, ex.Code, ex.Title, ex.Errors);
+                var result = ProblemResults.Problem(context, ex.Status, ex.Code, ex.Title, ex.Errors, ex.Extras);
                 await result.ExecuteAsync(context);
             }
             catch (Microsoft.EntityFrameworkCore.DbUpdateException ex)

@@ -24,6 +24,182 @@ namespace MusicAntiBlur.Api.Data.Migrations
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "pgcrypto");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.Album", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<Guid>("ArtistId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("artist_id");
+
+                    b.Property<string>("CoverObjectKey")
+                        .HasColumnType("text")
+                        .HasColumnName("cover_object_key");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("title");
+
+                    b.Property<int?>("Year")
+                        .HasColumnType("integer")
+                        .HasColumnName("year");
+
+                    b.HasKey("Id")
+                        .HasName("pk_albums");
+
+                    b.HasIndex("ArtistId")
+                        .HasDatabaseName("ix_albums_artist");
+
+                    b.HasIndex("Title")
+                        .HasDatabaseName("gin_albums_title");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("Title"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("Title"), new[] { "gin_trgm_ops" });
+
+                    b.ToTable("albums", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_albums_year", "year IS NULL OR year BETWEEN 1000 AND 9999");
+                        });
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.Artist", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("name");
+
+                    b.Property<string>("SortName")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("sort_name");
+
+                    b.HasKey("Id")
+                        .HasName("pk_artists");
+
+                    b.HasIndex("Name")
+                        .HasDatabaseName("gin_artists_name");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("Name"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("Name"), new[] { "gin_trgm_ops" });
+
+                    b.HasIndex("SortName")
+                        .HasDatabaseName("ix_artists_sort_name");
+
+                    b.ToTable("artists", (string)null);
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.CatalogUpload", b =>
+                {
+                    b.Property<Guid>("GenerationId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("generation_id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("ComputedChecksumSha256")
+                        .HasColumnType("text")
+                        .HasColumnName("computed_checksum_sha256");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<int?>("DurationMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("duration_ms");
+
+                    b.Property<string>("ExpectedChecksumSha256")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("expected_checksum_sha256");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_active");
+
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_expires_at");
+
+                    b.Property<string>("MultipartUploadId")
+                        .HasColumnType("text")
+                        .HasColumnName("multipart_upload_id");
+
+                    b.Property<long?>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<string>("SourceBucketKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("source_bucket_key");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TrackId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("track_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("GenerationId")
+                        .HasName("pk_catalog_uploads");
+
+                    b.HasAlternateKey("TrackId", "GenerationId")
+                        .HasName("ux_catalog_upload_track_generation");
+
+                    b.HasIndex("TrackId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_catalog_upload_active")
+                        .HasFilter("is_active");
+
+                    b.HasIndex("Status", "LeaseExpiresAt")
+                        .HasDatabaseName("ix_catalog_upload_lease");
+
+                    b.HasIndex("TrackId", "CreatedAt")
+                        .HasDatabaseName("ix_catalog_upload_track_created");
+
+                    b.ToTable("catalog_uploads", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_catalog_upload_active", "NOT is_active OR (status = 'ready' AND computed_checksum_sha256 IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_catalog_upload_checksum", "computed_checksum_sha256 IS NULL OR computed_checksum_sha256 = expected_checksum_sha256");
+
+                            t.HasCheckConstraint("ck_catalog_upload_duration", "duration_ms IS NULL OR duration_ms > 0");
+
+                            t.HasCheckConstraint("ck_catalog_upload_key", "source_bucket_key = 'tracks/' || track_id::text || '/generations/' || generation_id::text || '/source'");
+
+                            t.HasCheckConstraint("ck_catalog_upload_size", "size_bytes IS NULL OR size_bytes > 0");
+
+                            t.HasCheckConstraint("ck_catalog_upload_status", "status IN ('initiated','uploading','uploaded','validating','processing','ready','failed','cancelled','deleting')");
+                        });
+                });
+
             modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.EmailVerificationToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -98,6 +274,136 @@ namespace MusicAntiBlur.Api.Data.Migrations
                             t.HasCheckConstraint("ck_evt_terminal", "used_at IS NULL OR invalidated_at IS NULL");
 
                             t.HasCheckConstraint("ck_evt_used", "used_at IS NULL OR used_at >= created_at");
+                        });
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.IdempotencyRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<Guid>("IdempotencyKey")
+                        .HasColumnType("uuid")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("request_hash");
+
+                    b.Property<string>("ResponseBody")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("response_body");
+
+                    b.Property<int>("ResponseStatus")
+                        .HasColumnType("integer")
+                        .HasColumnName("response_status");
+
+                    b.Property<string>("Route")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("route");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_idempotency_records");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasDatabaseName("ix_idempotency_expiry");
+
+                    b.HasIndex("UserId", "Route", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("ux_idempotency_scope");
+
+                    b.ToTable("idempotency_records", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_idempotency_expiry", "expires_at > created_at");
+
+                            t.HasCheckConstraint("ck_idempotency_response", "response_status BETWEEN 200 AND 599");
+                        });
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.ObjectDeletion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempt_count");
+
+                    b.Property<string>("BucketKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("bucket_key");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_expires_at");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<Guid?>("OwnerUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_user_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id")
+                        .HasName("pk_object_deletions");
+
+                    b.HasIndex("BucketKey")
+                        .IsUnique()
+                        .HasDatabaseName("ux_object_deletions_pending")
+                        .HasFilter("status <> 'done'");
+
+                    b.HasIndex("OwnerUserId")
+                        .HasDatabaseName("ix_object_deletions_owner");
+
+                    b.HasIndex("Status", "NextAttemptAt")
+                        .HasDatabaseName("ix_object_deletions_due");
+
+                    b.ToTable("object_deletions", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_od_attempt", "attempt_count >= 0");
+
+                            t.HasCheckConstraint("ck_od_completed", "(status = 'done') = (completed_at IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_od_status", "status IN ('pending','processing','done','failed')");
                         });
                 });
 
@@ -234,6 +540,168 @@ namespace MusicAntiBlur.Api.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.Track", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<Guid>("AlbumId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("album_id");
+
+                    b.Property<Guid>("ArtistId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("artist_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<int?>("DurationMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("duration_ms");
+
+                    b.Property<string>("Isrc")
+                        .HasColumnType("text")
+                        .HasColumnName("isrc");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("title");
+
+                    b.Property<int>("TrackNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("track_number");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_tracks");
+
+                    b.HasIndex("ArtistId")
+                        .HasDatabaseName("ix_tracks_artist");
+
+                    b.HasIndex("Isrc")
+                        .IsUnique()
+                        .HasDatabaseName("ux_tracks_isrc")
+                        .HasFilter("isrc IS NOT NULL");
+
+                    b.HasIndex("Title")
+                        .HasDatabaseName("gin_tracks_title");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("Title"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("Title"), new[] { "gin_trgm_ops" });
+
+                    b.HasIndex("AlbumId", "TrackNumber")
+                        .IsUnique()
+                        .HasDatabaseName("ux_tracks_album_number");
+
+                    b.ToTable("tracks", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_tracks_duration", "duration_ms IS NULL OR duration_ms > 0");
+
+                            t.HasCheckConstraint("ck_tracks_number", "track_number >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.TrackRendition", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<int?>("BitrateKbps")
+                        .HasColumnType("integer")
+                        .HasColumnName("bitrate_kbps");
+
+                    b.Property<string>("BucketKey")
+                        .HasColumnType("text")
+                        .HasColumnName("bucket_key");
+
+                    b.Property<string>("ContentType")
+                        .HasColumnType("text")
+                        .HasColumnName("content_type");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<int?>("DurationMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("duration_ms");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text")
+                        .HasColumnName("error_message");
+
+                    b.Property<Guid>("GenerationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("generation_id");
+
+                    b.Property<string>("ProfileCode")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("profile_code");
+
+                    b.Property<long?>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TrackId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("track_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_track_renditions");
+
+                    b.HasIndex("BucketKey")
+                        .IsUnique()
+                        .HasDatabaseName("ux_track_renditions_bucket")
+                        .HasFilter("bucket_key IS NOT NULL");
+
+                    b.HasIndex("GenerationId", "ProfileCode")
+                        .IsUnique()
+                        .HasDatabaseName("ux_track_renditions_profile");
+
+                    b.HasIndex("TrackId", "GenerationId")
+                        .HasDatabaseName("ix_track_renditions_ready")
+                        .HasFilter("status = 'ready'");
+
+                    b.ToTable("track_renditions", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_tr_bitrate", "bitrate_kbps IS NULL OR bitrate_kbps > 0");
+
+                            t.HasCheckConstraint("ck_tr_duration", "duration_ms IS NULL OR duration_ms > 0");
+
+                            t.HasCheckConstraint("ck_tr_key_scope", "bucket_key IS NULL OR bucket_key LIKE 'tracks/' || track_id::text || '/generations/' || generation_id::text || '/%'");
+
+                            t.HasCheckConstraint("ck_tr_profile", "profile_code IN ('aac_128', 'aac_256', 'src')");
+
+                            t.HasCheckConstraint("ck_tr_ready", "status <> 'ready' OR (bucket_key IS NOT NULL AND content_type IS NOT NULL AND size_bytes > 0 AND duration_ms > 0)");
+
+                            t.HasCheckConstraint("ck_tr_size", "size_bytes IS NULL OR size_bytes > 0");
+
+                            t.HasCheckConstraint("ck_tr_status", "status IN ('pending', 'processing', 'ready', 'failed')");
+                        });
+                });
+
             modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -331,6 +799,30 @@ namespace MusicAntiBlur.Api.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.Album", b =>
+                {
+                    b.HasOne("MusicAntiBlur.Api.Data.Entities.Artist", "Artist")
+                        .WithMany("Albums")
+                        .HasForeignKey("ArtistId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_albums_artists_artist_id");
+
+                    b.Navigation("Artist");
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.CatalogUpload", b =>
+                {
+                    b.HasOne("MusicAntiBlur.Api.Data.Entities.Track", "Track")
+                        .WithMany("Uploads")
+                        .HasForeignKey("TrackId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_catalog_uploads_tracks_track_id");
+
+                    b.Navigation("Track");
+                });
+
             modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.EmailVerificationToken", b =>
                 {
                     b.HasOne("MusicAntiBlur.Api.Data.Entities.User", "User")
@@ -341,6 +833,29 @@ namespace MusicAntiBlur.Api.Data.Migrations
                         .HasConstraintName("fk_email_verification_tokens_users_user_id");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.IdempotencyRecord", b =>
+                {
+                    b.HasOne("MusicAntiBlur.Api.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_idempotency_records_users_user_id");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.ObjectDeletion", b =>
+                {
+                    b.HasOne("MusicAntiBlur.Api.Data.Entities.User", "Owner")
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_object_deletions_users_owner_user_id");
+
+                    b.Navigation("Owner");
                 });
 
             modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.PasswordResetToken", b =>
@@ -375,6 +890,40 @@ namespace MusicAntiBlur.Api.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.Track", b =>
+                {
+                    b.HasOne("MusicAntiBlur.Api.Data.Entities.Album", "Album")
+                        .WithMany("Tracks")
+                        .HasForeignKey("AlbumId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_tracks_albums_album_id");
+
+                    b.HasOne("MusicAntiBlur.Api.Data.Entities.Artist", "Artist")
+                        .WithMany("Tracks")
+                        .HasForeignKey("ArtistId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_tracks_artists_artist_id");
+
+                    b.Navigation("Album");
+
+                    b.Navigation("Artist");
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.TrackRendition", b =>
+                {
+                    b.HasOne("MusicAntiBlur.Api.Data.Entities.CatalogUpload", "Upload")
+                        .WithMany("Renditions")
+                        .HasForeignKey("TrackId", "GenerationId")
+                        .HasPrincipalKey("TrackId", "GenerationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_track_renditions_catalog_uploads_track_id_generation_id");
+
+                    b.Navigation("Upload");
+                });
+
             modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserSettings", b =>
                 {
                     b.HasOne("MusicAntiBlur.Api.Data.Entities.User", "User")
@@ -385,6 +934,28 @@ namespace MusicAntiBlur.Api.Data.Migrations
                         .HasConstraintName("fk_user_settings_users_user_id");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.Album", b =>
+                {
+                    b.Navigation("Tracks");
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.Artist", b =>
+                {
+                    b.Navigation("Albums");
+
+                    b.Navigation("Tracks");
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.CatalogUpload", b =>
+                {
+                    b.Navigation("Renditions");
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.Track", b =>
+                {
+                    b.Navigation("Uploads");
                 });
 
             modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.User", b =>

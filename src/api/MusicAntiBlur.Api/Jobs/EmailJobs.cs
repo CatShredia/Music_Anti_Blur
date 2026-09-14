@@ -80,5 +80,6 @@ public static class RecurringJobSetup
         RecurringJob.AddOrUpdate<MaintenanceJobs>("ping", x => x.Ping(), "*/5 * * * *");
         RecurringJob.AddOrUpdate<MaintenanceJobs>("cleanup-unverified", x => x.CleanupUnverifiedEmailAccounts(), "0 * * * *");
         RecurringJob.AddOrUpdate<MaintenanceJobs>("cleanup-auth-tokens", x => x.CleanupExpiredAuthTokens(), "15 * * * *");
+        RecurringJob.AddOrUpdate<StorageCleanupJobs>("storage-sweep", x => x.Sweep(), "*/5 * * * *");
     }
 }

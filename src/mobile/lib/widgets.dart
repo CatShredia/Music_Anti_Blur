@@ -82,6 +82,7 @@ class VizeTextField extends StatelessWidget {
     this.textInputAction,
     this.autofillHints,
     this.onChanged,
+    this.onSubmitted,
   });
 
   final TextEditingController controller;
@@ -93,6 +94,7 @@ class VizeTextField extends StatelessWidget {
   final TextInputAction? textInputAction;
   final Iterable<String>? autofillHints;
   final ValueChanged<String>? onChanged;
+  final ValueChanged<String>? onSubmitted;
 
   @override
   Widget build(BuildContext context) {
@@ -104,6 +106,7 @@ class VizeTextField extends StatelessWidget {
       textInputAction: textInputAction,
       autofillHints: autofillHints,
       onChanged: onChanged,
+      onSubmitted: onSubmitted,
       decoration: InputDecoration(
         labelText: label,
         errorText: errorText,
@@ -246,15 +249,15 @@ class VizeTabBar extends StatelessWidget {
             child: _TabItem(
               icon: Icons.search,
               label: 'Поиск',
-              selected: false,
-              onTap: () => showVizeMessage(context, 'Поиск появится вместе с каталогом.'),
+              selected: index == 1,
+              onTap: () => context.go('/search'),
             ),
           ),
           Expanded(
             child: _TabItem(
               icon: Icons.menu,
               label: 'Меню',
-              selected: index == 1,
+              selected: index == 2,
               onTap: () => context.go('/settings'),
             ),
           ),

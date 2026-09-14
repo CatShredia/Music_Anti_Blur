@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using MusicAntiBlur.Api.Auth;
+using MusicAntiBlur.Api.Catalog;
 using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Http;
@@ -16,6 +17,9 @@ using MusicAntiBlur.Api.Jobs;
 using MusicAntiBlur.Api.Mail;
 using MusicAntiBlur.Api.Config;
 using MusicAntiBlur.Api.RateLimiting;
+using MusicAntiBlur.Api.Storage;
+using MusicAntiBlur.Api.Media;
+using MusicAntiBlur.Api.Uploads;
 using StackExchange.Redis;
 
 DotEnv.LoadFromAncestors(Directory.GetCurrentDirectory());
@@ -51,7 +55,17 @@ builder.Services.AddSingleton<RedisRateLimiter>();
 builder.Services.AddSingleton<PasswordHasher<User>>();
 builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddSingleton<SmtpEmailSender>();
+builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection(StorageOptions.Section));
+builder.Services.Configure<CdnOptions>(builder.Configuration.GetSection(CdnOptions.Section));
+builder.Services.Configure<MediaOptions>(builder.Configuration.GetSection(MediaOptions.Section));
+builder.Services.AddSingleton<ObjectStorageClient>();
+builder.Services.AddSingleton<PlaybackUrlSigner>();
+builder.Services.AddSingleton<MediaProcessRunner>();
 builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<CatalogService>();
+builder.Services.AddScoped<AdminUploadService>();
+builder.Services.AddScoped<IdempotencyStore>();
+builder.Services.AddScoped<PlaybackUrlService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -155,6 +169,8 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 });
 
 app.MapAuthEndpoints();
+app.MapCatalogEndpoints();
+app.MapCatalogMediaEndpoints();
 app.MapHub<PlaybackHub>("/hubs/playback");
 
 app.MapGet("/health", async (AppDbContext db, CancellationToken ct) =>
@@ -165,10 +181,11 @@ app.MapGet("/health", async (AppDbContext db, CancellationToken ct) =>
         : Results.Json(new { status = "fail" }, statusCode: 503);
 });
 
-app.MapGet("/health/deps", async (IConnectionMultiplexer mux, IConfiguration config, CancellationToken ct) =>
+app.MapGet("/health/deps", async (IConnectionMultiplexer mux, IConfiguration config, ObjectStorageClient storage, CancellationToken ct) =>
 {
     var redis = false;
     var smtp = false;
+    var s3 = false;
     try
     {
         redis = (await mux.GetDatabase().PingAsync()).TotalMilliseconds >= 0;
@@ -201,8 +218,10 @@ app.MapGet("/health/deps", async (IConnectionMultiplexer mux, IConfiguration con
         hangfire = false;
     }
 
-    var payload = new { redis, smtp, hangfire };
-    var all = redis && smtp && hangfire;
+    s3 = await storage.HeadBucketAsync(ct);
+
+    var payload = new { redis, smtp, hangfire, s3 };
+    var all = redis && smtp && hangfire && s3;
     return all ? Results.Ok(payload) : Results.Json(payload, statusCode: 503);
 });
 
@@ -212,7 +231,26 @@ using (var scope = app.Services.CreateScope())
     await db.Database.MigrateAsync();
 }
 
+if (!app.Environment.IsDevelopment())
+{
+    var storage = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<StorageOptions>>().Value;
+    if (!storage.IsConfigured)
+    {
+        throw new InvalidOperationException("Storage is required in Production.");
+    }
+
+    if (storage.UseCdn)
+    {
+        var cdn = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<CdnOptions>>().Value;
+        if (!cdn.IsConfigured)
+        {
+            throw new InvalidOperationException("Cdn is required when Storage:UseCdn is true.");
+        }
+    }
+}
+
 await AdminSeeder.SeedAsync(app);
+await CatalogSeeder.SeedAsync(app);
 RecurringJobSetup.Register();
 
 app.Run();

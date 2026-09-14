@@ -10,7 +10,7 @@
 
 **Music Anti Blur** — стриминг с каталогом на сервере. Отличие: пользователь подменяет каталожный трек **своим** файлом (локально и/или приватной копией в Object Storage) и выбирает preference: `auto` | `catalog` | `local` | `private`.
 
-MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Аудиобайты API не принимает и не стримит: upload идёт presigned multipart прямо в Object Storage, playback — по Yandex CDN secure-token URL.
+MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Аудиобайты API не принимает и не стримит: upload идёт presigned multipart прямо в Object Storage. В продукте playback — **Yandex CDN secure-token URL**. Локальная разработка: бакет — MinIO в Compose, `Storage__UseCdn=false`, playback URL — S3 presigned GET (тот же JSON `playback-url`). MinIO не заменяет Yandex CDN в проде.
 
 Не выдумывай фичи из «типичного Spotify». Список вне MVP и out of scope — в [01-product-plan.md](01-product-plan.md) §5.
 
@@ -56,23 +56,23 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 ```
 .
 ├── README.md
-├── docker-compose.yml          PostgreSQL 16, Redis 7, MailHog
+├── docker-compose.yml          PostgreSQL 16, Redis 7, MailHog, MinIO
 ├── .env.example
 ├── .github/workflows/ci.yml    push/PR в develop: API build + Flutter analyze/test
 ├── docs/                       нормативные документы, см. §2
-├── devops/                     start/stop: Compose + окна API и Flutter (cmd / ps1 / sh)
+├── devops/                     start/stop + инструкция Object Storage/CDN
 ├── src/api/                    ASP.NET Core (.NET 10)
 └── src/mobile/                 Flutter
 ```
 
 | Путь | Зачем |
 |---|---|
-| [README.md](../README.md) | Compose, API, Flutter, MailHog, CI |
-| [docker-compose.yml](../docker-compose.yml) | Postgres, Redis, MailHog |
+| [README.md](../README.md) | Compose, API, Flutter, MailHog, MinIO, CI |
+| [docker-compose.yml](../docker-compose.yml) | Postgres, Redis, MailHog, MinIO |
 | [.env.example](../.env.example) | Имена переменных; значения только локально |
 | [.github/workflows/ci.yml](../.github/workflows/ci.yml) | CI на ветке `develop` |
 | [docs/](./) | Product / schema / API / operations |
-| [devops/](../devops/) | Скрипты start/stop: Compose + API и Flutter в отдельных окнах |
+| [devops/](../devops/) | Скрипты start/stop; [yandex-storage-cdn.md](../devops/yandex-storage-cdn.md) — локальный MinIO и (позже) Yandex |
 
 ### 3.1. API — `src/api/`
 
@@ -84,10 +84,14 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 src/api/MusicAntiBlur.Api/
 ├── Program.cs
 ├── Auth/           register, login, refresh, reset, JWT
+├── Catalog/        чтение каталога, поиск, admin metadata, playback-url
 ├── Data/           DbContext, сущности, миграции EF
 ├── Hubs/           PlaybackHub (JWT + Redis backplane)
-├── Jobs/           Hangfire: письма, ping, cleanup
+├── Jobs/           Hangfire: письма, ping, cleanup, transcode, S3 outbox
 ├── Mail/           SMTP (MailKit)
+├── Media/          профили FFmpeg, ffprobe, process runner
+├── Storage/        S3 (MinIO/Yandex), CDN/presign signer
+├── Uploads/        admin multipart + idempotency
 ├── Http/           problem+json, request id
 ├── RateLimiting/   Redis, fail closed
 └── Config/         загрузка корневого .env
@@ -98,13 +102,15 @@ src/api/MusicAntiBlur.Api/
 | HTTP auth | [AuthEndpoints.cs](../src/api/MusicAntiBlur.Api/Auth/AuthEndpoints.cs), [AuthService.cs](../src/api/MusicAntiBlur.Api/Auth/AuthService.cs) |
 | Пароль / login / email | [AuthValidation.cs](../src/api/MusicAntiBlur.Api/Auth/AuthValidation.cs), [TokenHasher.cs](../src/api/MusicAntiBlur.Api/Auth/TokenHasher.cs) |
 | JWT | [JwtTokenService.cs](../src/api/MusicAntiBlur.Api/Auth/JwtTokenService.cs) |
+| Каталог / поиск | [CatalogEndpoints.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogEndpoints.cs), [CatalogService.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogService.cs), [CatalogValidation.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogValidation.cs), [PlaybackUrlService.cs](../src/api/MusicAntiBlur.Api/Catalog/PlaybackUrlService.cs) |
+| Загрузка / S3 | [Uploads/](../src/api/MusicAntiBlur.Api/Uploads/), [Storage/](../src/api/MusicAntiBlur.Api/Storage/), [Media/](../src/api/MusicAntiBlur.Api/Media/) |
 | Схема БД | [AppDbContext.cs](../src/api/MusicAntiBlur.Api/Data/AppDbContext.cs), [Data/Entities/](../src/api/MusicAntiBlur.Api/Data/Entities/), [Data/Migrations/](../src/api/MusicAntiBlur.Api/Data/Migrations/) — только EF-миграции |
 | SignalR | [PlaybackHub.cs](../src/api/MusicAntiBlur.Api/Hubs/PlaybackHub.cs) |
-| Письма / Hangfire | [EmailJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/EmailJobs.cs), [SmtpEmailSender.cs](../src/api/MusicAntiBlur.Api/Mail/SmtpEmailSender.cs), [HangfireDashboardAuth.cs](../src/api/MusicAntiBlur.Api/Jobs/HangfireDashboardAuth.cs) |
+| Письма / Hangfire | [EmailJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/EmailJobs.cs), [TranscodeCatalogJob.cs](../src/api/MusicAntiBlur.Api/Jobs/TranscodeCatalogJob.cs), [SmtpEmailSender.cs](../src/api/MusicAntiBlur.Api/Mail/SmtpEmailSender.cs), [HangfireDashboardAuth.cs](../src/api/MusicAntiBlur.Api/Jobs/HangfireDashboardAuth.cs) |
 | Rate limit | [RedisRateLimiter.cs](../src/api/MusicAntiBlur.Api/RateLimiting/RedisRateLimiter.cs) |
-| Seed admin (Development) | [AdminSeeder.cs](../src/api/MusicAntiBlur.Api/Auth/AdminSeeder.cs) |
+| Seed Development | [AdminSeeder.cs](../src/api/MusicAntiBlur.Api/Auth/AdminSeeder.cs), [CatalogSeeder.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogSeeder.cs) |
 
-Сущности сейчас: `User`, `UserSettings`, `RefreshToken`, `PasswordResetToken`, `EmailVerificationToken`. Новые таблицы — только если они есть в [02-database-overview.md](02-database-overview.md).
+Сущности: `User`, `UserSettings`, `RefreshToken`, `PasswordResetToken`, `EmailVerificationToken`, `Artist`, `Album`, `Track`, `CatalogUpload`, `TrackRendition`, `ObjectDeletion`, `IdempotencyRecord`. Новые таблицы — только если они есть в [02-database-overview.md](02-database-overview.md). Private/override/`playback_states` — ещё не в `src/`.
 
 ### 3.2. Flutter — `src/mobile/`
 
@@ -112,20 +118,21 @@ src/api/MusicAntiBlur.Api/
 
 ```
 src/mobile/lib/
-├── main.dart              экраны auth / home / settings, go_router
+├── main.dart              экраны auth / settings, go_router
+├── catalog/               дом, поиск, карточки artist/album/track
 ├── theme.dart             тёмная тема Vize (токены макета)
 ├── widgets.dart           шапка, чипы, поля, таббар, ошибки формы
-├── validation/auth_rules.dart  те же правила, что API/CHECK; тексты ошибок
+├── validation/            auth + search; те же коды, что API/CHECK
 └── api/api_client.dart    dio, JWT, refresh, X-Device-Id, problem+json
 ```
 
 | Задача | Файл |
 |---|---|
-| Экраны и роуты | [main.dart](../src/mobile/lib/main.dart) |
+| Экраны и роуты | [main.dart](../src/mobile/lib/main.dart), [catalog/catalog_screens.dart](../src/mobile/lib/catalog/catalog_screens.dart) |
 | Тема / токены | [theme.dart](../src/mobile/lib/theme.dart) |
 | Общие виджеты | [widgets.dart](../src/mobile/lib/widgets.dart) |
 | HTTP + secure storage | [api_client.dart](../src/mobile/lib/api/api_client.dart) |
-| Валидация полей | [auth_rules.dart](../src/mobile/lib/validation/auth_rules.dart) |
+| Валидация полей | [auth_rules.dart](../src/mobile/lib/validation/auth_rules.dart), [catalog_rules.dart](../src/mobile/lib/validation/catalog_rules.dart) |
 
 Платформенные обёртки (`android/`, `ios/`, …) — стандартный Flutter; бизнес-логику туда не класть.
 
@@ -133,7 +140,7 @@ src/mobile/lib/
 
 - Секреты, `.env`, `no_commit/` — не в git.
 - Hangfire-таблицы и S3-байты — не в EF `DbContext`.
-- Каталог / плеер / FFmpeg / Object Storage — ещё нет в `src/`; появятся по [01-product-plan.md](01-product-plan.md), не invent-ahead.
+- Плеер Flutter и private upload — ещё нет в `src/`; не invent-ahead.
 
 ---
 
@@ -255,7 +262,7 @@ src/mobile/lib/
 
 ### 5.6. Object Storage upload, CDN secure token, Range
 
-Yandex Object Storage — S3-совместимый API, регион подписи обычно `ru-central1`, endpoint `https://storage.yandexcloud.net`.
+Продукт: Yandex Object Storage — S3-совместимый API, регион подписи обычно `ru-central1`, endpoint `https://storage.yandexcloud.net`. Локально тот же AWSSDK.S3 смотрит на MinIO (`http://127.0.0.1:9000`, `ForcePathStyle=true`, region `us-east-1`).
 
 | Тема | Ссылка |
 |---|---|
@@ -268,13 +275,14 @@ Yandex Object Storage — S3-совместимый API, регион подпи
 | CDN + bucket origin | https://yandex.cloud/ru/docs/cdn/quickstart/bucket |
 | CDN secure tokens | https://yandex.cloud/ru/docs/cdn/concepts/secure-tokens |
 | AWS SDK for .NET, S3 | https://docs.aws.amazon.com/sdk-for-net/v3/developer-guide/s3-apis-intro.html |
+| MinIO (локальный S3) | https://min.io/docs/minio/container/index.html |
 | HTTP Range | https://httpwg.org/specs/rfc9110.html#range.requests |
 
 Паттерн:
 
 - Бакет и origin приватные.
 - Upload: S3 SigV4 presigned multipart PUT, API bytes не проксирует.
-- Playback: **CDN secure token**, не S3 pre-signed GET с заменой hostname.
+- Playback в продукте: **CDN secure token**, не S3 pre-signed GET с заменой hostname. Локально (`Storage__UseCdn=false`): S3 presigned GET на MinIO; поле `delivery` остаётся `cdn` (ветка remote HTTP URL), JSON тот же.
 - Ответ discriminated по `delivery`: для CDN — `{ url, expiresAt, resolvedSource, resolvedQuality, generationId }`, для local — `url/expiresAt/generationId = null`. Плеер делает Range GET и re-resolve после expiry/первого 401/403.
 - Ключи включают immutable `generations/{generationId}`; original filename в key не использовать.
 
@@ -339,8 +347,10 @@ Yandex Object Storage — S3-совместимый API, регион подпи
 | Docker Compose | https://docs.docker.com/compose/ |
 | PostgreSQL Docker | https://hub.docker.com/_/postgres |
 | Redis Docker | https://hub.docker.com/_/redis |
+| MinIO | https://min.io/docs/minio/container/index.html |
+| pgsty/minio (локальный образ) | https://hub.docker.com/r/pgsty/minio |
 
-Ожидаемый compose: Postgres 16 + Redis + MailHog. FFmpeg pin в API image. Production probes, backup, graceful deploy и restore drill — `04-operations.md`.
+Ожидаемый compose: Postgres 16 + Redis + MailHog + MinIO (локальный S3). API на хосте ходит в MinIO как `http://127.0.0.1:9000`, не `http://minio:9000`. FFmpeg pin в API image. Production probes, backup, graceful deploy и restore drill — `04-operations.md`. Yandex — когда подключаем облако, не вместо MinIO в локальном `start`.
 
 ---
 
