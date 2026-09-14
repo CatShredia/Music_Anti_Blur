@@ -145,9 +145,13 @@ public sealed class PlaybackStateService(
             return row;
         }
 
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct)
+            ?? throw new ApiException(401, "invalid_token", "Invalid token.");
+
         row = new PlaybackState
         {
-            UserId = userId,
+            UserId = user.Id,
+            User = user,
             Queue = PlaybackQueue.EmptyJson,
             UpdatedAt = DateTimeOffset.UtcNow
         };

@@ -22,6 +22,11 @@ public static class DbConstraintMapper
             return MapCheck(pg.ConstraintName);
         }
 
+        if (pg.SqlState == PostgresErrorCodes.ForeignKeyViolation)
+        {
+            return MapForeignKey(pg.ConstraintName);
+        }
+
         return new ApiException(503, "dependency_unavailable", "Database is unavailable.");
     }
 
@@ -67,6 +72,23 @@ public static class DbConstraintMapper
         }
 
         return new ApiException(409, "identifier_taken", "Identifier is already taken.");
+    }
+
+    private static ApiException MapForeignKey(string? constraint)
+    {
+        var name = constraint ?? "";
+        if (name.Contains("playback_states_users", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ApiException(401, "invalid_token", "Invalid token.");
+        }
+
+        if (name.Contains("playback_states_tracks", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ApiException(400, "validation_failed", "Validation failed.",
+                new Dictionary<string, string[]> { ["trackId"] = ["required"] });
+        }
+
+        return new ApiException(409, "invalid_state", "Related record is missing.");
     }
 
     private static ApiException MapCheck(string? constraint)

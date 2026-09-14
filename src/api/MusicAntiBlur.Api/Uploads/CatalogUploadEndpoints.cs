@@ -16,8 +16,14 @@ public static class CatalogUploadEndpoints
             PlaybackUrlRequest? req,
             PlaybackUrlService svc,
             ClaimsPrincipal user,
+            HttpContext http,
             CancellationToken ct) =>
-            Results.Ok(await svc.IssueAsync(UserId(user), id, req ?? new PlaybackUrlRequest(null, null, false), ct)));
+            Results.Ok(await svc.IssueAsync(
+                UserId(user),
+                id,
+                req ?? new PlaybackUrlRequest(null, null, false),
+                http.Request.Host.Host,
+                ct)));
 
         admin.MapPost("/tracks/{trackId:guid}/uploads", async (
             Guid trackId,

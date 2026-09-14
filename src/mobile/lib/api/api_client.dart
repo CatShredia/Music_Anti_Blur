@@ -154,6 +154,7 @@ class ApiClient {
                 _refreshing = false;
                 return handler.resolve(clone);
               }
+              await clearSession();
             } catch (_) {
               await clearSession();
             }

@@ -20,7 +20,7 @@ Sprint 01: каркас API + Flutter auth. Локальный бакет — Mi
 - Windows: `devops\stop.cmd`
 - Linux / macOS: `bash devops/stop.sh`
 
-Стереть данные БД и бакет MinIO: `devops\stop.cmd -Volumes` или `bash devops/stop.sh --volumes`.
+Стереть данные БД и бакет MinIO: `devops\stop.cmd -Volumes` или `bash devops/stop.sh --volumes`. После этого в приложении нужно **войти заново**: JWT со старого user id в новой базе больше не действует.
 
 Развертывание сейчас — это Release/Production API на этой же машине плюс Flutter в режиме разработки. Отдельного Kubernetes/образа API ещё нет.
 
@@ -81,7 +81,7 @@ devops\upload-catalog-source.ps1 -Path C:\path\to\track.mp3
 
 Скрипт логинится как admin, грузит multipart в MinIO и ждёт транскод. `POST /api/v1/tracks/{id}/playback-url` отдаёт signed URL (локально MinIO GET, не тело аудио через API). Play на карточке трека и «Играть альбом» в приложении берут этот URL через `just_audio` / `audio_service`. API байты аудио не стримит.
 
-Host внутри подписи URL должен быть тем, куда ходит **плеер**, не API. Для эмулятора Android задайте `Storage__PresignEndpoint=http://10.0.2.2:9000` (API по-прежнему ходит в MinIO как `127.0.0.1:9000`). На Windows desktop Flutter оставьте пустым. Не подменяйте hostname у уже подписанного URL на клиенте — сломается SigV4.
+Host внутри подписи URL должен быть тем, куда ходит **плеер**, не API. При `Storage__UseCdn=false` API берёт hostname из запроса к себе (`Host`): эмулятор Android ходит на `http://10.0.2.2:5080` — в URL MinIO попадёт `http://10.0.2.2:9000`. Windows desktop с `http://127.0.0.1:5080` получит `127.0.0.1:9000`. Явный `Storage__PresignEndpoint` по-прежнему перекрывает это. Не подменяйте hostname у уже подписанного URL на клиенте — сломается SigV4.
 
 Для next/prev по seed-альбому `[SEED DATA] Night Signals` залейте **два** Ready-трека (Neon Pulse по умолчанию и Glass Rain):
 

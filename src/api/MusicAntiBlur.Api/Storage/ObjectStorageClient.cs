@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
@@ -11,7 +12,7 @@ public sealed class ObjectStorageClient : IDisposable
     private readonly StorageOptions _options;
     private readonly ILogger<ObjectStorageClient> _logger;
     private AmazonS3Client? _client;
-    private AmazonS3Client? _presignClient;
+    private readonly ConcurrentDictionary<string, AmazonS3Client> _presignClients = new(StringComparer.OrdinalIgnoreCase);
 
     public ObjectStorageClient(IOptions<StorageOptions> options, ILogger<ObjectStorageClient> logger)
     {
@@ -76,16 +77,20 @@ public sealed class ObjectStorageClient : IDisposable
         });
     }
 
-    public string PresignGet(string key, TimeSpan ttl)
+    public string PresignGet(string key, TimeSpan ttl, string? publicEndpoint = null)
     {
         EnsureConfigured();
-        return PresignClient().GetPreSignedURL(new GetPreSignedUrlRequest
+        var endpoint = string.IsNullOrWhiteSpace(publicEndpoint)
+            ? PresignEndpoint()
+            : publicEndpoint.Trim().TrimEnd('/');
+        var client = _presignClients.GetOrAdd(endpoint, CreatePresignClient);
+        return client.GetPreSignedURL(new GetPreSignedUrlRequest
         {
             BucketName = _options.Bucket,
             Key = key,
             Verb = HttpVerb.GET,
             Expires = DateTime.UtcNow.Add(ttl),
-            Protocol = PresignProtocol(PresignEndpoint())
+            Protocol = PresignProtocol(endpoint)
         });
     }
 
@@ -203,7 +208,12 @@ public sealed class ObjectStorageClient : IDisposable
     public void Dispose()
     {
         _client?.Dispose();
-        _presignClient?.Dispose();
+        foreach (var client in _presignClients.Values)
+        {
+            client.Dispose();
+        }
+
+        _presignClients.Clear();
     }
 
     private AmazonS3Client Client()
@@ -218,20 +228,8 @@ public sealed class ObjectStorageClient : IDisposable
         return _client;
     }
 
-    private AmazonS3Client PresignClient()
-    {
-        EnsureConfigured();
-        if (_presignClient is not null)
-        {
-            return _presignClient;
-        }
-
-        _presignClient = new AmazonS3Client(
-            _options.AccessKey,
-            _options.SecretKey,
-            CreateS3Config(PresignEndpoint(), _options));
-        return _presignClient;
-    }
+    private AmazonS3Client CreatePresignClient(string endpoint) =>
+        new(_options.AccessKey, _options.SecretKey, CreateS3Config(endpoint, _options));
 
     private string PresignEndpoint() =>
         string.IsNullOrWhiteSpace(_options.PresignEndpoint) ? _options.Endpoint : _options.PresignEndpoint;

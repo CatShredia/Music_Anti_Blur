@@ -44,6 +44,7 @@ class PlayerController extends ChangeNotifier {
   bool _refreshing = false;
   bool _completing = false;
   bool _restored = false;
+  bool _starting = false;
   String? _sessionId;
   int _revision = 0;
   int _playGen = 0;
@@ -88,8 +89,12 @@ class PlayerController extends ChangeNotifier {
       return;
     }
     _restored = true;
+    final gen = _playGen;
     try {
       final snapshot = await api.playbackState();
+      if (gen != _playGen || _starting || playing) {
+        return;
+      }
       await _applySnapshot(snapshot, autoplay: false);
     } catch (e) {
       debugPrint('playback restore failed: $e');
@@ -103,13 +108,7 @@ class PlayerController extends ChangeNotifier {
   }) async {
     requestedQuality = quality;
     queue = PlayerQueue.single(trackId, source: source).copyWith(repeat: queue.repeat);
-    try {
-      await _playCurrent(resumeIfSame: true, autoplay: true);
-      await _persistCommand(playing: true);
-    } catch (_) {
-      await _persistCommand(playing: false);
-      rethrow;
-    }
+    await _playAndPersist(resumeIfSame: true);
   }
 
   Future<void> playAlbum(
@@ -123,13 +122,7 @@ class PlayerController extends ChangeNotifier {
       ordered.map((item) => item.id),
       startTrackId: startTrackId,
     ).copyWith(repeat: queue.repeat);
-    try {
-      await _playCurrent(resumeIfSame: false, autoplay: true);
-      await _persistCommand(playing: true);
-    } catch (_) {
-      await _persistCommand(playing: false);
-      rethrow;
-    }
+    await _playAndPersist(resumeIfSame: false);
   }
 
   Future<void> setQuality(String quality) async {
@@ -137,13 +130,7 @@ class PlayerController extends ChangeNotifier {
       return;
     }
     requestedQuality = quality;
-    try {
-      await _playCurrent(resumeIfSame: true, autoplay: true);
-      await _persistCommand(playing: true);
-    } catch (_) {
-      await _persistCommand(playing: false);
-      rethrow;
-    }
+    await _playAndPersist(resumeIfSame: true);
   }
 
   Future<void> togglePlay() async {
@@ -187,13 +174,7 @@ class PlayerController extends ChangeNotifier {
     }
     queue = nextQueue;
     notifyListeners();
-    try {
-      await _playCurrent(resumeIfSame: false, autoplay: true);
-      await _persistCommand(playing: true);
-    } catch (_) {
-      await _persistCommand(playing: false);
-      rethrow;
-    }
+    await _playAndPersist(resumeIfSame: false);
   }
 
   Future<void> previous() async {
@@ -209,13 +190,7 @@ class PlayerController extends ChangeNotifier {
     }
     queue = prev;
     notifyListeners();
-    try {
-      await _playCurrent(resumeIfSame: false, autoplay: true);
-      await _persistCommand(playing: true);
-    } catch (_) {
-      await _persistCommand(playing: false);
-      rethrow;
-    }
+    await _playAndPersist(resumeIfSame: false);
   }
 
   Future<void> cycleRepeat() async {
@@ -258,6 +233,19 @@ class PlayerController extends ChangeNotifier {
 
   bool get hasQueue => queue.current != null;
 
+  Future<void> _playAndPersist({required bool resumeIfSame}) async {
+    _starting = true;
+    try {
+      await _playCurrent(resumeIfSame: resumeIfSame, autoplay: true);
+    } catch (_) {
+      unawaited(_persistCommand(playing: false));
+      rethrow;
+    } finally {
+      _starting = false;
+    }
+    await _persistCommand(playing: true);
+  }
+
   static String qualityLabel(String code) => switch (code) {
         'auto' => 'Авто',
         'aac_128' => 'aac_128',
@@ -298,19 +286,21 @@ class PlayerController extends ChangeNotifier {
       qualityFallbackFrom = url.qualityFallbackFrom;
       _expiresAt = url.expiresAt.toUtc();
       _refreshUsed = false;
-      if (url.durationMs > 0) {
-        duration = Duration(milliseconds: url.durationMs);
-      }
-      await handler.setUrl(
+      final loaded = await handler.setUrl(
         url.url,
         item: MediaItem(
           id: detail.id,
           title: detail.title,
           album: detail.album.title,
           artist: detail.artist.name,
-          duration: duration,
+          duration: url.durationMs > 0 ? Duration(milliseconds: url.durationMs) : null,
         ),
       );
+      if (loaded != null && loaded > Duration.zero) {
+        duration = loaded;
+      } else if (url.durationMs > 0) {
+        duration = Duration(milliseconds: url.durationMs);
+      }
       if (resume > Duration.zero) {
         await _seekPreservingSeconds(resume);
       }
@@ -323,7 +313,12 @@ class PlayerController extends ChangeNotifier {
     } on ApiException catch (e) {
       if (e.code == 'source_unavailable' || e.code == 'quality_unavailable') {
         _emitNotice(e.localizedMessage);
+      } else if (e.status == 401 || e.code == 'invalid_token') {
+        _emitNotice('Сессия устарела. Войдите снова.');
       }
+      rethrow;
+    } catch (e) {
+      _emitNotice('Не удалось начать воспроизведение');
       rethrow;
     } finally {
       if (gen == _playGen) {
@@ -365,6 +360,9 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _applySnapshot(PlaybackSnapshot snapshot, {required bool autoplay}) async {
+    if (_starting || playing) {
+      return;
+    }
     _revision = snapshot.revision;
     queue = snapshot.queue;
     requestedQuality = snapshot.qualityCode;
@@ -546,6 +544,7 @@ class PlayerController extends ChangeNotifier {
     }
     if (message != null && message.isNotEmpty) {
       debugPrint('playback error $code $message');
+      _emitNotice('Воспроизведение прервалось');
     }
   }
 

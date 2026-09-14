@@ -1,13 +1,19 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 
-/// Единственное место, где вызывается [AudioPlayer.setUrl].
+/// Единственное место, где вызывается [AudioPlayer.setUrl] / [AudioPlayer.setFilePath].
 class MusicAudioHandler extends BaseAudioHandler with SeekHandler {
   MusicAudioHandler({AudioPlayer? player}) : _player = player ?? AudioPlayer() {
     _player.playbackEventStream.listen(_broadcast);
     _player.processingStateStream.listen((state) {
+      if (_replacingSource) {
+        return;
+      }
       if (state == ProcessingState.completed) {
         onCompleted?.call();
       }
@@ -18,13 +24,15 @@ class MusicAudioHandler extends BaseAudioHandler with SeekHandler {
   void Function()? onSkipNext;
   void Function()? onSkipPrevious;
   void Function()? onCompleted;
+  bool _replacingSource = false;
+  String? _tempPath;
 
   Future<void> configureSession() async {
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
     session.becomingNoisyEventStream.listen((_) => pause());
     session.interruptionEventStream.listen((event) {
-      if (event.begin) {
+      if (event.begin && event.type == AudioInterruptionType.pause) {
         pause();
       }
     });
@@ -34,7 +42,19 @@ class MusicAudioHandler extends BaseAudioHandler with SeekHandler {
     if (item != null) {
       mediaItem.add(item);
     }
-    return _player.setUrl(url);
+    _replacingSource = true;
+    try {
+      if (_player.playing) {
+        await _player.pause();
+      }
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+        final path = await _downloadToTemp(url);
+        return _player.setFilePath(path);
+      }
+      return _player.setUrl(url);
+    } finally {
+      _replacingSource = false;
+    }
   }
 
   @override
@@ -107,7 +127,41 @@ class MusicAudioHandler extends BaseAudioHandler with SeekHandler {
     await super.customAction(name, extras);
   }
 
-  Future<void> release() => _player.dispose();
+  Future<String> _downloadToTemp(String url) async {
+    final previous = _tempPath;
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(Uri.parse(url));
+      final response = await request.close();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException('Audio HTTP ${response.statusCode}', uri: request.uri);
+      }
+      final path =
+          '${Directory.systemTemp.path}${Platform.pathSeparator}mab-play-${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await response.pipe(File(path).openWrite());
+      _tempPath = path;
+      unawaited(_deleteQuietly(previous));
+      return path;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> release() async {
+    final previous = _tempPath;
+    _tempPath = null;
+    await _player.dispose();
+    await _deleteQuietly(previous);
+  }
+
+  Future<void> _deleteQuietly(String? path) async {
+    if (path == null || path.isEmpty) {
+      return;
+    }
+    try {
+      await File(path).delete();
+    } catch (_) {}
+  }
 }
 
 Future<MusicAudioHandler> createMusicAudioHandler() async {

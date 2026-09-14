@@ -1,3 +1,5 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using System.Text;
 using Hangfire;
 using Hangfire.PostgreSql;
@@ -99,6 +101,22 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 }
 
                 return Task.CompletedTask;
+            },
+            OnTokenValidated = async context =>
+            {
+                var raw = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub);
+                if (raw is null || !Guid.TryParse(raw, out var userId))
+                {
+                    context.Fail("invalid_token");
+                    return;
+                }
+
+                var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+                if (!await db.Users.AsNoTracking().AnyAsync(u => u.Id == userId))
+                {
+                    context.Fail("invalid_token");
+                }
             },
             OnChallenge = async context =>
             {

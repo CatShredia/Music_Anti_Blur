@@ -31,7 +31,8 @@ public sealed class PlaybackUrlService(
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public async Task<PlaybackUrlResponse> IssueAsync(Guid userId, Guid trackId, PlaybackUrlRequest req, CancellationToken ct)
+    public async Task<PlaybackUrlResponse> IssueAsync(
+        Guid userId, Guid trackId, PlaybackUrlRequest req, string? clientHost, CancellationToken ct)
     {
         await limiter.HitAsync($"rl:playback-url:{userId:D}", 60, TimeSpan.FromMinutes(1), ct);
 
@@ -87,7 +88,7 @@ public sealed class PlaybackUrlService(
 
         var chosen = resolved.Chosen;
         var cacheTtl = Math.Clamp(cdnOptions.Value.CacheTtlSeconds, 1, 480);
-        var cacheKey = $"playback:catalog:{trackId:D}:{chosen.GenerationId:D}:{chosen.Code}";
+        var cacheKey = $"playback:catalog:{trackId:D}:{chosen.GenerationId:D}:{chosen.Code}:{signer.CachePartition(clientHost)}";
         try
         {
             var cached = await redis.GetDatabase().StringGetAsync(cacheKey);
@@ -105,7 +106,7 @@ public sealed class PlaybackUrlService(
             throw new ApiException(503, "dependency_unavailable", "Rate limiter is unavailable.");
         }
 
-        var signed = signer.Sign(chosen.BucketKey);
+        var signed = signer.Sign(chosen.BucketKey, clientHost);
         var response = new PlaybackUrlResponse(
             "catalog",
             "cdn",
