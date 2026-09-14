@@ -38,6 +38,14 @@ class Session {
       );
 }
 
+class SettingsDto {
+  SettingsDto({required this.preferredQuality});
+  final String preferredQuality;
+
+  factory SettingsDto.fromJson(Map<String, dynamic> json) =>
+      SettingsDto(preferredQuality: json['preferredQuality'] as String);
+}
+
 class UserDto {
   UserDto({
     required this.id,
@@ -259,6 +267,18 @@ class ApiClient {
   Future<UserDto> me() async {
     final res = await _send(() => _dio.get('/api/v1/me'));
     return UserDto.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<SettingsDto> settings() async {
+    final res = await _send(() => _dio.get('/api/v1/me/settings'));
+    return SettingsDto.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<SettingsDto> updateSettings(String preferredQuality) async {
+    final res = await _send(
+      () => _dio.patch('/api/v1/me/settings', data: {'preferredQuality': preferredQuality}),
+    );
+    return SettingsDto.fromJson(res.data as Map<String, dynamic>);
   }
 
   Future<void> bindEmail(String email, String currentPassword) async {

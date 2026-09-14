@@ -35,5 +35,5 @@ coverage/
 Thumbs.db
 .DS_Store
 
-# Logs
-*.log
+# Локальный запуск (pid, логи, publish)
+devops/.run/

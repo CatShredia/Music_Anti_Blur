@@ -60,6 +60,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 ├── .env.example
 ├── .github/workflows/ci.yml    push/PR в develop: API build + Flutter analyze/test
 ├── docs/                       нормативные документы, см. §2
+├── devops/                     start/stop: Compose + окна API и Flutter (cmd / ps1 / sh)
 ├── src/api/                    ASP.NET Core (.NET 10)
 └── src/mobile/                 Flutter
 ```
@@ -71,6 +72,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 | [.env.example](../.env.example) | Имена переменных; значения только локально |
 | [.github/workflows/ci.yml](../.github/workflows/ci.yml) | CI на ветке `develop` |
 | [docs/](./) | Product / schema / API / operations |
+| [devops/](../devops/) | Скрипты start/stop: Compose + API и Flutter в отдельных окнах |
 
 ### 3.1. API — `src/api/`
 
@@ -111,12 +113,16 @@ src/api/MusicAntiBlur.Api/
 ```
 src/mobile/lib/
 ├── main.dart              экраны auth / home / settings, go_router
+├── theme.dart             тёмная тема Vize (токены макета)
+├── widgets.dart           шапка, чипы, поля, таббар
 └── api/api_client.dart    dio, JWT, refresh, X-Device-Id
 ```
 
 | Задача | Файл |
 |---|---|
 | Экраны и роуты | [main.dart](../src/mobile/lib/main.dart) |
+| Тема / токены | [theme.dart](../src/mobile/lib/theme.dart) |
+| Общие виджеты | [widgets.dart](../src/mobile/lib/widgets.dart) |
 | HTTP + secure storage | [api_client.dart](../src/mobile/lib/api/api_client.dart) |
 
 Платформенные обёртки (`android/`, `ios/`, …) — стандартный Flutter; бизнес-логику туда не класть.

@@ -6,6 +6,26 @@ Sprint 01: каркас API + Flutter auth. FFmpeg, Object Storage и CDN поя
 
 ## Локальный запуск
 
+Предпочтительно из корня репозитория:
+
+- Windows: `devops\start.cmd`
+- Linux / macOS: `bash devops/start.sh`
+
+В консоли меню: **1** локальная разработка (Enter по умолчанию), **2** развертывание. Без меню: `devops\start.cmd -Mode local` или `bash devops/start.sh deploy`.
+
+Скрипт поднимает Docker Compose (Postgres, Redis, MailHog), затем API и `flutter run` **в отдельных окнах**. Стартовый скрипт после этого завершается. Нужны Docker Desktop / daemon, .NET 10 SDK и Flutter. Устройство для Flutter: переменная `FLUTTER_DEVICE` или интерактивный выбор `flutter run`.
+
+Остановка (API + Flutter + Compose, том Postgres сохраняется):
+
+- Windows: `devops\stop.cmd`
+- Linux / macOS: `bash devops/stop.sh`
+
+Стереть данные БД: `devops\stop.cmd -Volumes` или `bash devops/stop.sh --volumes`.
+
+Развертывание сейчас — это Release/Production API на этой же машине плюс Flutter в режиме разработки. Отдельного Kubernetes/образа API ещё нет.
+
+Ручной запуск по шагам:
+
 1. Docker Desktop должен быть запущен.
 
 ```bash
