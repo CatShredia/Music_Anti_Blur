@@ -4,7 +4,7 @@ class QueueItem {
   const QueueItem({
     required this.itemId,
     required this.trackId,
-    this.sourcePreference = 'catalog',
+    this.sourcePreference = 'auto',
   });
 
   final String itemId;
@@ -20,7 +20,7 @@ class QueueItem {
   factory QueueItem.fromJson(Map<String, dynamic> json) => QueueItem(
         itemId: json['itemId'] as String,
         trackId: json['trackId'] as String,
-        sourcePreference: json['sourcePreference'] as String? ?? 'catalog',
+        sourcePreference: json['sourcePreference'] as String? ?? 'auto',
       );
 }
 
@@ -48,7 +48,7 @@ class PlayerQueue {
 
   bool get isEmpty => items.isEmpty;
 
-  static PlayerQueue single(String trackId, {String source = 'catalog', String? itemId}) {
+  static PlayerQueue single(String trackId, {String source = 'auto', String? itemId}) {
     final id = itemId ?? const Uuid().v4();
     return PlayerQueue(
       currentItemId: id,
@@ -59,7 +59,7 @@ class PlayerQueue {
   static PlayerQueue album(
     Iterable<String> trackIds, {
     String? startTrackId,
-    String source = 'catalog',
+    String source = 'auto',
     String Function()? newId,
   }) {
     final idOf = newId ?? const Uuid().v4;
@@ -96,6 +96,16 @@ class PlayerQueue {
         items: items ?? this.items,
       );
 
+  PlayerQueue withItemSource(String itemId, String sourcePreference) => copyWith(
+        items: [
+          for (final item in items)
+            if (item.itemId == itemId)
+              QueueItem(itemId: item.itemId, trackId: item.trackId, sourcePreference: sourcePreference)
+            else
+              item,
+        ],
+      );
+
   bool get hasNext => skipNext().currentItemId != currentItemId;
 
   bool get hasPrevious => skipPrevious().currentItemId != currentItemId;
@@ -103,7 +113,7 @@ class PlayerQueue {
   /// Keep the playing item's [itemId] so persist/progress stay consistent.
   PlayerQueue replacingWithAlbum(
     Iterable<String> trackIds, {
-    String source = 'catalog',
+    String source = 'auto',
     String Function()? newId,
   }) {
     final currentItem = current;

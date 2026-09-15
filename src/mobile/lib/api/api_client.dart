@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
 import '../catalog/catalog_models.dart';
+import '../overrides/override_models.dart';
 import '../player/playback_models.dart';
 import '../validation/auth_rules.dart';
 
@@ -367,7 +368,7 @@ class ApiClient {
 
   Future<PlaybackUrl> playbackUrl({
     required String trackId,
-    String sourcePreference = 'catalog',
+    String sourcePreference = 'auto',
     required String qualityPreference,
     bool localAvailable = false,
   }) async {
@@ -382,6 +383,142 @@ class ApiClient {
       ),
     );
     return PlaybackUrl.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<TrackOverride?> trackOverride(String trackId) async {
+    try {
+      final res = await _send(() => _dio.get('/api/v1/tracks/$trackId/override'));
+      return TrackOverride.fromJson(res.data as Map<String, dynamic>);
+    } on ApiException catch (e) {
+      if (e.status == 404 || e.code == 'not_found') {
+        return null;
+      }
+      rethrow;
+    }
+  }
+
+  Future<TrackOverride> putTrackOverride({
+    required String trackId,
+    required String sourcePreference,
+    String? displayName,
+    int? durationMs,
+    int? sizeBytes,
+  }) async {
+    final res = await _send(
+      () => _dio.put(
+        '/api/v1/tracks/$trackId/override',
+        data: {
+          'sourcePreference': sourcePreference,
+          'displayName': displayName,
+          'durationMs': durationMs,
+          'sizeBytes': sizeBytes,
+        },
+      ),
+    );
+    return TrackOverride.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<void> deleteTrackOverride(String trackId) async {
+    await _send(() => _dio.delete('/api/v1/tracks/$trackId/override'));
+  }
+
+  Future<void> deletePrivateCopy(String trackId) async {
+    await _send(() => _dio.delete('/api/v1/tracks/$trackId/private-copy'));
+  }
+
+  Future<InitiatePrivateUpload> initiatePrivateUpload({
+    required String trackId,
+    required String fileName,
+    required int sizeBytes,
+    required String contentType,
+    required String checksumSha256,
+  }) async {
+    final res = await _send(
+      () => _dio.post(
+        '/api/v1/tracks/$trackId/private-uploads',
+        data: {
+          'fileName': fileName,
+          'sizeBytes': sizeBytes,
+          'contentType': contentType,
+          'checksumSha256': checksumSha256,
+        },
+        options: Options(headers: {'Idempotency-Key': const Uuid().v4()}),
+      ),
+    );
+    return InitiatePrivateUpload.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<List<UploadPartUrl>> privateUploadParts({
+    required String trackId,
+    required String generationId,
+    required List<int> partNumbers,
+  }) async {
+    final res = await _send(
+      () => _dio.post(
+        '/api/v1/tracks/$trackId/private-uploads/$generationId/parts',
+        data: {'partNumbers': partNumbers},
+      ),
+    );
+    final parts = (res.data as Map<String, dynamic>)['parts'] as List<dynamic>? ?? const [];
+    return [
+      for (final part in parts)
+        if (part is Map<String, dynamic>) UploadPartUrl.fromJson(part),
+    ];
+  }
+
+  Future<String> putPresignedPart(String url, List<int> bytes) async {
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(minutes: 2),
+        sendTimeout: const Duration(minutes: 2),
+      ),
+    );
+    try {
+      final res = await dio.put<dynamic>(
+        url,
+        data: bytes,
+        options: Options(
+          contentType: 'application/octet-stream',
+          headers: {Headers.contentLengthHeader: bytes.length},
+        ),
+      );
+      final tag = res.headers.value('etag') ?? res.headers.value('ETag') ?? '';
+      if (tag.isEmpty) {
+        throw ApiException(409, 'invalid_state', 'Multipart complete failed.');
+      }
+      return tag.replaceAll('"', '');
+    } on DioException catch (e) {
+      throw _toApi(e);
+    }
+  }
+
+  Future<void> completePrivateUpload({
+    required String trackId,
+    required String generationId,
+    required List<({int partNumber, String eTag})> parts,
+  }) async {
+    await _send(
+      () => _dio.post(
+        '/api/v1/tracks/$trackId/private-uploads/$generationId/complete',
+        data: {
+          'parts': [
+            for (final part in parts) {'partNumber': part.partNumber, 'eTag': part.eTag},
+          ],
+        },
+        options: Options(headers: {'Idempotency-Key': const Uuid().v4()}),
+      ),
+    );
+  }
+
+  Future<PrivateUploadStatus> privateUploadStatus({
+    required String trackId,
+    required String generationId,
+  }) async {
+    final res = await _send(
+      () => _dio.get('/api/v1/tracks/$trackId/private-uploads/$generationId'),
+    );
+    return PrivateUploadStatus.fromJson(res.data as Map<String, dynamic>);
   }
 
   Future<PlaybackSnapshot> playbackState() async {

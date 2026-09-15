@@ -57,6 +57,39 @@ class MusicAudioHandler extends BaseAudioHandler with SeekHandler {
     }
   }
 
+  Future<Duration?> setFilePath(String path, {MediaItem? item}) async {
+    if (item != null) {
+      mediaItem.add(item);
+    }
+    _replacingSource = true;
+    try {
+      if (_player.playing) {
+        await _player.pause();
+      }
+      return _player.setFilePath(path);
+    } finally {
+      _replacingSource = false;
+    }
+  }
+
+  Future<Duration?> setUri(Uri uri, {MediaItem? item}) async {
+    if (uri.scheme == 'file') {
+      return setFilePath(uri.toFilePath(), item: item);
+    }
+    if (item != null) {
+      mediaItem.add(item);
+    }
+    _replacingSource = true;
+    try {
+      if (_player.playing) {
+        await _player.pause();
+      }
+      return _player.setUrl(uri.toString());
+    } finally {
+      _replacingSource = false;
+    }
+  }
+
   /// just_audio's [AudioPlayer.play] Future completes on pause/stop/end, not on start.
   @override
   Future<void> play() async {

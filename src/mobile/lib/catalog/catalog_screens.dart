@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../api/api_client.dart';
+import '../overrides/override_panel.dart';
 import '../player/player_controller.dart';
 import '../player/player_nav.dart';
 import '../theme.dart';
@@ -427,6 +428,7 @@ class TrackScreen extends StatefulWidget {
 }
 
 class _TrackScreenState extends State<TrackScreen> {
+  final _overrideKey = GlobalKey<TrackOverridePanelState>();
   TrackDetail? _track;
   String? _error;
   bool _busy = false;
@@ -471,9 +473,18 @@ class _TrackScreenState extends State<TrackScreen> {
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 20),
+                    if (PlayerScope.maybeOf(context) != null)
+                      TrackOverridePanel(
+                        key: _overrideKey,
+                        api: widget.api,
+                        bindings: PlayerScope.maybeOf(context)!.bindings,
+                        trackId: track.id,
+                        catalogDurationMs: track.durationMs,
+                      ),
+                    const SizedBox(height: 20),
                     if (track.availableQualities.isEmpty)
                       const Text(
-                        'Файл ещё не загружен. После обработки admin здесь появятся качества.',
+                        'Каталожный файл ещё не загружен. Можно привязать локальный или дождаться обработки.',
                         style: TextStyle(color: VizeColors.accentMuted, fontSize: 14),
                       )
                     else
@@ -489,8 +500,7 @@ class _TrackScreenState extends State<TrackScreen> {
                     VizePrimaryButton(
                       label: 'Play',
                       busy: _busy,
-                      onPressed: track.availableQualities.isEmpty ||
-                              PlayerScope.maybeOf(context) == null
+                      onPressed: PlayerScope.maybeOf(context) == null
                           ? null
                           : () async {
                               final player = PlayerScope.maybeOf(context);
@@ -499,7 +509,10 @@ class _TrackScreenState extends State<TrackScreen> {
                               }
                               setState(() => _busy = true);
                               try {
-                                await player.playTrack(track.id);
+                                await player.playTrack(
+                                  track.id,
+                                  source: _overrideKey.currentState?.preference ?? 'auto',
+                                );
                                 if (context.mounted) {
                                   openPlayer(context);
                                 }

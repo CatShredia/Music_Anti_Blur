@@ -22,6 +22,7 @@ using MusicAntiBlur.Api.RateLimiting;
 using MusicAntiBlur.Api.Storage;
 using MusicAntiBlur.Api.Media;
 using MusicAntiBlur.Api.Uploads;
+using MusicAntiBlur.Api.Overrides;
 using MusicAntiBlur.Api.Playback;
 using StackExchange.Redis;
 
@@ -69,6 +70,8 @@ builder.Services.AddScoped<CatalogService>();
 builder.Services.AddScoped<AdminUploadService>();
 builder.Services.AddScoped<IdempotencyStore>();
 builder.Services.AddScoped<PlaybackUrlService>();
+builder.Services.AddScoped<OverrideService>();
+builder.Services.AddScoped<PrivateUploadService>();
 builder.Services.AddSingleton<PlaybackSessionStore>();
 builder.Services.AddScoped<PlaybackStateService>();
 
@@ -143,6 +146,19 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 builder.Services.AddAuthorization();
 
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddCors(options =>
+    {
+        options.AddDefaultPolicy(policy =>
+            policy.SetIsOriginAllowed(static origin =>
+                    Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.IsLoopback)
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials());
+    });
+}
+
 builder.Services.AddSignalR()
     .AddStackExchangeRedis(redisCs);
 
@@ -179,6 +195,7 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI(options => options.EnablePersistAuthorization());
+    app.UseCors();
 }
 
 app.UseAuthentication();
@@ -192,6 +209,7 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 app.MapAuthEndpoints();
 app.MapCatalogEndpoints();
 app.MapCatalogMediaEndpoints();
+app.MapOverrideEndpoints();
 app.MapPlaybackEndpoints();
 app.MapHub<PlaybackHub>("/hubs/playback");
 

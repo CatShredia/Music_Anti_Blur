@@ -15,4 +15,5 @@ public sealed class Track
     public Album Album { get; set; } = null!;
     public Artist Artist { get; set; } = null!;
     public ICollection<CatalogUpload> Uploads { get; set; } = new List<CatalogUpload>();
+    public ICollection<UserTrackOverride> Overrides { get; set; } = new List<UserTrackOverride>();
 }

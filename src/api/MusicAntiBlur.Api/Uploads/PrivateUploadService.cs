@@ -5,45 +5,70 @@ using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Http;
 using MusicAntiBlur.Api.Jobs;
+using MusicAntiBlur.Api.Overrides;
 using MusicAntiBlur.Api.RateLimiting;
 using MusicAntiBlur.Api.Storage;
 
 namespace MusicAntiBlur.Api.Uploads;
 
-public sealed class AdminUploadService(
+public sealed class PrivateUploadService(
     AppDbContext db,
     ObjectStorageClient storage,
     IBackgroundJobClient jobs,
     RedisRateLimiter limiter,
     IdempotencyStore idempotency,
+    OverrideService overrides,
     IOptions<StorageOptions> storageOptions,
     IHostEnvironment env,
-    ILogger<AdminUploadService> logger)
+    ILogger<PrivateUploadService> logger)
 {
+    public const long MaxSourceBytes = 104_857_600;
+
     public async Task<InitiateUploadResponse> InitiateAsync(
         Guid userId, Guid trackId, InitiateUploadRequest req, string? idempotencyKey, CancellationToken ct)
     {
-        await HitAdminImportAsync(userId, ct);
+        await HitImportAsync(userId, ct);
         storage.EnsureConfigured();
-        if (!await db.Tracks.AnyAsync(t => t.Id == trackId, ct))
+        var key = UploadValidation.RequireIdempotencyKey(idempotencyKey);
+        if (req.SizeBytes is long tooBig && tooBig > MaxSourceBytes)
         {
-            throw new ApiException(404, "not_found", "Not found.");
+            throw new ApiException(400, "validation_failed", "Validation failed.",
+                new Dictionary<string, string[]> { ["sizeBytes"] = ["too_large"] });
         }
 
-        var key = UploadValidation.RequireIdempotencyKey(idempotencyKey);
-        var max = storageOptions.Value.CatalogMaxSourceBytes;
-        var (size, _, checksum, _) = UploadValidation.ValidateInitiate(req, max);
-        var hash = IdempotencyStore.HashRequest($"{trackId:D}:{size}:{checksum}");
-        var route = $"POST /api/v1/admin/tracks/{trackId:D}/uploads";
+        var (size, _, checksum, _) = UploadValidation.ValidateInitiate(req, MaxSourceBytes);
+        var hash = IdempotencyStore.HashRequest($"{userId:D}:{trackId:D}:{size}:{checksum}");
+        var route = $"POST /api/v1/tracks/{trackId:D}/private-uploads";
         return await idempotency.ExecuteAsync(userId, route, key, hash, StatusCodes.Status201Created, async () =>
         {
+            await LockUserAsync(userId, ct);
+            await overrides.EnsureRowAsync(userId, trackId, ct);
+
+            var used = await db.UserPrivateUploads
+                .Where(u => u.UserId == userId && u.Status != "cancelled" && u.Status != "deleting")
+                .SumAsync(u => u.SizeBytes ?? 0, ct);
+            var quota = storageOptions.Value.PrivateQuotaBytes <= 0
+                ? 2L * 1024 * 1024 * 1024
+                : storageOptions.Value.PrivateQuotaBytes;
+            if (used + size > quota)
+            {
+                throw new ApiException(400, "validation_failed", "Validation failed.",
+                    new Dictionary<string, string[]> { ["sizeBytes"] = ["too_large"] });
+            }
+
             var generationId = Guid.NewGuid();
-            var objectKey = ObjectKeys.Source(trackId, generationId);
+            var objectKey = ObjectKeys.PrivateSource(userId, trackId, generationId);
+            if (objectKey.StartsWith("tracks/", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Private object key must not use catalog prefix.");
+            }
+
             var uploadId = await storage.InitiateMultipartAsync(objectKey, ct);
             var now = DateTimeOffset.UtcNow;
-            db.CatalogUploads.Add(new CatalogUpload
+            db.UserPrivateUploads.Add(new UserPrivateUpload
             {
                 GenerationId = generationId,
+                UserId = userId,
                 TrackId = trackId,
                 Status = "initiated",
                 IsActive = false,
@@ -56,7 +81,7 @@ public sealed class AdminUploadService(
             });
             await db.SaveChangesAsync(ct);
             var (partSize, partCount) = UploadValidation.SplitParts(size);
-            logger.LogInformation("Catalog upload initiated track {TrackId} generation {GenerationId}.", trackId, generationId);
+            logger.LogInformation("Private upload initiated track {TrackId} generation {GenerationId}.", trackId, generationId);
             return new InitiateUploadResponse(generationId, partSize, partCount, now.AddHours(24));
         }, ct);
     }
@@ -66,7 +91,7 @@ public sealed class AdminUploadService(
     {
         await limiter.HitAsync($"rl:part-url:{userId:D}", 120, TimeSpan.FromMinutes(1), ct);
         storage.EnsureConfigured();
-        var upload = await RequireUpload(trackId, generationId, ct);
+        var upload = await RequireUpload(userId, trackId, generationId, ct);
         if (upload.MultipartUploadId is null || upload.Status is "ready" or "cancelled" or "deleting" or "failed")
         {
             throw new ApiException(409, "invalid_state", "Upload cannot accept parts.");
@@ -108,16 +133,16 @@ public sealed class AdminUploadService(
     public async Task<UploadAcceptedResponse> CompleteAsync(
         Guid userId, Guid trackId, Guid generationId, CompleteUploadRequest req, string? idempotencyKey, CancellationToken ct)
     {
-        await HitAdminImportAsync(userId, ct);
+        await HitImportAsync(userId, ct);
         storage.EnsureConfigured();
         var key = UploadValidation.RequireIdempotencyKey(idempotencyKey);
         var parts = req.Parts ?? [];
-        var hash = IdempotencyStore.HashRequest($"{trackId:D}:{generationId:D}:" +
+        var hash = IdempotencyStore.HashRequest($"{userId:D}:{trackId:D}:{generationId:D}:" +
             string.Join(',', parts.OrderBy(p => p.PartNumber).Select(p => $"{p.PartNumber}:{p.ETag}")));
-        var route = $"POST /api/v1/admin/tracks/{trackId:D}/uploads/{generationId:D}/complete";
+        var route = $"POST /api/v1/tracks/{trackId:D}/private-uploads/{generationId:D}/complete";
         return await idempotency.ExecuteAsync(userId, route, key, hash, StatusCodes.Status202Accepted, async () =>
         {
-            var upload = await RequireUpload(trackId, generationId, ct);
+            var upload = await RequireUpload(userId, trackId, generationId, ct);
             if (upload.Status is "uploaded" or "validating" or "processing" or "ready")
             {
                 return new UploadAcceptedResponse(upload.GenerationId, upload.Status);
@@ -144,14 +169,14 @@ public sealed class AdminUploadService(
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "S3 complete failed for generation {GenerationId}.", generationId);
+                logger.LogWarning(ex, "S3 complete failed for private generation {GenerationId}.", generationId);
                 throw new ApiException(409, "invalid_state", "Multipart complete failed.");
             }
 
             var head = await storage.HeadObjectAsync(upload.SourceBucketKey, ct);
             if (head is null || (upload.SizeBytes is long expected && head.ContentLength != expected))
             {
-                EnqueueDeletion(upload.SourceBucketKey, userId);
+                ObjectDeletionQueue.Enqueue(db, upload.SourceBucketKey, userId);
                 upload.Status = "failed";
                 upload.MultipartUploadId = null;
                 upload.UpdatedAt = DateTimeOffset.UtcNow;
@@ -163,16 +188,16 @@ public sealed class AdminUploadService(
             upload.MultipartUploadId = null;
             upload.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(ct);
-            jobs.Enqueue<TranscodeCatalogJob>(j => j.Run(trackId, generationId));
-            logger.LogInformation("Catalog upload completed track {TrackId} generation {GenerationId}.", trackId, generationId);
+            jobs.Enqueue<TranscodePrivateJob>(j => j.Run(userId, trackId, generationId));
+            logger.LogInformation("Private upload completed track {TrackId} generation {GenerationId}.", trackId, generationId);
             return new UploadAcceptedResponse(generationId, "uploaded");
         }, ct);
     }
 
-    public async Task<UploadStatusResponse> GetAsync(Guid trackId, Guid generationId, CancellationToken ct)
+    public async Task<UploadStatusResponse> GetAsync(Guid userId, Guid trackId, Guid generationId, CancellationToken ct)
     {
-        var upload = await RequireUpload(trackId, generationId, ct);
-        var failed = await db.TrackRenditions.AsNoTracking()
+        var upload = await RequireUpload(userId, trackId, generationId, ct);
+        var failed = await db.UserPrivateRenditions.AsNoTracking()
             .Where(r => r.GenerationId == generationId && r.Status == "failed" && r.ErrorMessage != null)
             .Select(r => r.ErrorMessage)
             .FirstOrDefaultAsync(ct);
@@ -182,7 +207,7 @@ public sealed class AdminUploadService(
 
     public async Task AbortAsync(Guid userId, Guid trackId, Guid generationId, CancellationToken ct)
     {
-        var upload = await RequireUpload(trackId, generationId, ct);
+        var upload = await RequireUpload(userId, trackId, generationId, ct);
         if (upload.IsActive || upload.Status == "ready")
         {
             throw new ApiException(409, "invalid_state", "Active generation cannot be aborted.");
@@ -193,10 +218,10 @@ public sealed class AdminUploadService(
             await storage.AbortMultipartAsync(upload.SourceBucketKey, upload.MultipartUploadId, ct);
         }
 
-        EnqueueDeletion(upload.SourceBucketKey, userId);
-        foreach (var rendition in await db.TrackRenditions.Where(r => r.GenerationId == generationId && r.BucketKey != null).ToListAsync(ct))
+        ObjectDeletionQueue.Enqueue(db, upload.SourceBucketKey, userId);
+        foreach (var rendition in await db.UserPrivateRenditions.Where(r => r.GenerationId == generationId && r.BucketKey != null).ToListAsync(ct))
         {
-            EnqueueDeletion(rendition.BucketKey!, userId);
+            ObjectDeletionQueue.Enqueue(db, rendition.BucketKey!, userId);
         }
 
         upload.Status = "cancelled";
@@ -205,48 +230,10 @@ public sealed class AdminUploadService(
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task<IReadOnlyList<RenditionStatusDto>> ListRenditionsAsync(Guid trackId, CancellationToken ct)
+    public async Task<UploadAcceptedResponse> RetryTranscodeAsync(Guid userId, Guid trackId, Guid generationId, CancellationToken ct)
     {
-        if (!await db.Tracks.AnyAsync(t => t.Id == trackId, ct))
-        {
-            throw new ApiException(404, "not_found", "Not found.");
-        }
-
-        return await db.TrackRenditions.AsNoTracking()
-            .Where(r => r.TrackId == trackId)
-            .OrderByDescending(r => r.CreatedAt)
-            .Select(r => new RenditionStatusDto(
-                r.GenerationId,
-                r.ProfileCode,
-                r.Status,
-                r.BitrateKbps,
-                r.Upload.IsActive,
-                r.ErrorMessage))
-            .ToListAsync(ct);
-    }
-
-    public async Task<UploadAcceptedResponse> RetryTranscodeAsync(Guid trackId, TranscodeRequest req, CancellationToken ct)
-    {
-        CatalogUpload upload;
-        if (req.GenerationId is Guid gid)
-        {
-            upload = await RequireUpload(trackId, gid, ct);
-        }
-        else
-        {
-            upload = await db.CatalogUploads
-                .Where(u => u.TrackId == trackId)
-                .OrderByDescending(u => u.CreatedAt)
-                .FirstOrDefaultAsync(ct)
-                ?? throw new ApiException(404, "not_found", "Not found.");
-        }
-
-        if (upload.Status is "validating" or "processing")
-        {
-            return new UploadAcceptedResponse(upload.GenerationId, upload.Status);
-        }
-
-        if (upload.Status is "ready")
+        var upload = await RequireUpload(userId, trackId, generationId, ct);
+        if (upload.Status is "validating" or "processing" or "ready")
         {
             return new UploadAcceptedResponse(upload.GenerationId, upload.Status);
         }
@@ -260,13 +247,14 @@ public sealed class AdminUploadService(
         upload.LeaseExpiresAt = null;
         upload.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
-        jobs.Enqueue<TranscodeCatalogJob>(j => j.Run(trackId, upload.GenerationId));
+        jobs.Enqueue<TranscodePrivateJob>(j => j.Run(userId, trackId, upload.GenerationId));
         return new UploadAcceptedResponse(upload.GenerationId, "uploaded");
     }
 
-    private async Task<CatalogUpload> RequireUpload(Guid trackId, Guid generationId, CancellationToken ct)
+    private async Task<UserPrivateUpload> RequireUpload(Guid userId, Guid trackId, Guid generationId, CancellationToken ct)
     {
-        var upload = await db.CatalogUploads.FirstOrDefaultAsync(u => u.TrackId == trackId && u.GenerationId == generationId, ct);
+        var upload = await db.UserPrivateUploads
+            .FirstOrDefaultAsync(u => u.UserId == userId && u.TrackId == trackId && u.GenerationId == generationId, ct);
         if (upload is null)
         {
             throw new ApiException(404, "not_found", "Not found.");
@@ -275,32 +263,21 @@ public sealed class AdminUploadService(
         return upload;
     }
 
-    private Task HitAdminImportAsync(Guid userId, CancellationToken ct)
+    private Task HitImportAsync(Guid userId, CancellationToken ct)
     {
         if (env.IsDevelopment())
         {
             return Task.CompletedTask;
         }
 
-        return limiter.HitAsync($"rl:admin-import:{userId:D}", 10, TimeSpan.FromHours(1), ct);
+        return limiter.HitAsync($"rl:private-import:{userId:D}", 10, TimeSpan.FromHours(1), ct);
     }
 
-    private void EnqueueDeletion(string bucketKey, Guid? ownerUserId)
+    private async Task LockUserAsync(Guid userId, CancellationToken ct)
     {
-        if (db.ObjectDeletions.Local.Any(o => o.BucketKey == bucketKey && o.Status != "done") ||
-            db.ObjectDeletions.Any(o => o.BucketKey == bucketKey && o.Status != "done"))
-        {
-            return;
-        }
-
-        db.ObjectDeletions.Add(new ObjectDeletion
-        {
-            Id = Guid.NewGuid(),
-            OwnerUserId = ownerUserId,
-            BucketKey = bucketKey,
-            Status = "pending",
-            NextAttemptAt = DateTimeOffset.UtcNow,
-            CreatedAt = DateTimeOffset.UtcNow
-        });
+        var bytes = userId.ToByteArray();
+        var k1 = BitConverter.ToInt32(bytes, 0);
+        var k2 = BitConverter.ToInt32(bytes, 4);
+        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({k1}, {k2})", ct);
     }
 }

@@ -18,6 +18,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ObjectDeletion> ObjectDeletions => Set<ObjectDeletion>();
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
     public DbSet<PlaybackState> PlaybackStates => Set<PlaybackState>();
+    public DbSet<UserTrackOverride> UserTrackOverrides => Set<UserTrackOverride>();
+    public DbSet<UserPrivateUpload> UserPrivateUploads => Set<UserPrivateUpload>();
+    public DbSet<UserPrivateRendition> UserPrivateRenditions => Set<UserPrivateRendition>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -283,6 +286,80 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Track).WithMany().HasForeignKey(x => x.TrackId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<UserTrackOverride>(e =>
+        {
+            e.ToTable("user_track_overrides", t =>
+            {
+                t.HasCheckConstraint("ck_uto_source", "source_preference IN ('auto', 'catalog', 'local', 'private')");
+                t.HasCheckConstraint("ck_uto_duration", "duration_ms IS NULL OR duration_ms > 0");
+                t.HasCheckConstraint("ck_uto_size", "size_bytes IS NULL OR size_bytes > 0");
+            });
+            e.HasKey(x => new { x.UserId, x.TrackId });
+            e.Property(x => x.SourcePreference).HasDefaultValue("auto");
+            e.HasIndex(x => x.TrackId).HasDatabaseName("ix_overrides_track");
+            e.HasOne(x => x.User).WithMany(x => x.Overrides).HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Track).WithMany(x => x.Overrides).HasForeignKey(x => x.TrackId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UserPrivateUpload>(e =>
+        {
+            e.ToTable("user_private_uploads", t =>
+            {
+                t.HasCheckConstraint("ck_private_upload_status",
+                    "status IN ('initiated','uploading','uploaded','validating','processing','ready','failed','cancelled','deleting')");
+                t.HasCheckConstraint("ck_private_upload_active",
+                    "NOT is_active OR (status = 'ready' AND computed_checksum_sha256 IS NOT NULL)");
+                t.HasCheckConstraint("ck_private_upload_checksum",
+                    "computed_checksum_sha256 IS NULL OR computed_checksum_sha256 = expected_checksum_sha256");
+                t.HasCheckConstraint("ck_private_upload_key",
+                    "source_bucket_key = 'users/' || user_id::text || '/overrides/' || track_id::text || '/generations/' || generation_id::text || '/source'");
+                t.HasCheckConstraint("ck_private_upload_size",
+                    "size_bytes IS NULL OR size_bytes BETWEEN 1 AND 104857600");
+                t.HasCheckConstraint("ck_private_upload_duration",
+                    "duration_ms IS NULL OR duration_ms BETWEEN 1 AND 3600000");
+            });
+            e.HasKey(x => x.GenerationId);
+            e.Property(x => x.GenerationId).HasDefaultValueSql("gen_random_uuid()");
+            e.HasAlternateKey(x => new { x.UserId, x.TrackId, x.GenerationId })
+                .HasName("ux_private_upload_owner_generation");
+            e.HasIndex(x => new { x.UserId, x.TrackId }).IsUnique().HasDatabaseName("ux_private_upload_active")
+                .HasFilter("is_active");
+            e.HasIndex(x => new { x.Status, x.LeaseExpiresAt }).HasDatabaseName("ix_private_upload_lease");
+            e.HasOne(x => x.Override).WithMany(x => x.Uploads)
+                .HasForeignKey(x => new { x.UserId, x.TrackId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UserPrivateRendition>(e =>
+        {
+            e.ToTable("user_private_renditions", t =>
+            {
+                t.HasCheckConstraint("ck_upr_profile", "profile_code IN ('aac_128', 'aac_256', 'src')");
+                t.HasCheckConstraint("ck_upr_status", "status IN ('pending', 'processing', 'ready', 'failed')");
+                t.HasCheckConstraint("ck_upr_bitrate", "bitrate_kbps IS NULL OR bitrate_kbps > 0");
+                t.HasCheckConstraint("ck_upr_size", "size_bytes IS NULL OR size_bytes > 0");
+                t.HasCheckConstraint("ck_upr_duration", "duration_ms IS NULL OR duration_ms > 0");
+                t.HasCheckConstraint("ck_upr_key_scope",
+                    "bucket_key IS NULL OR bucket_key LIKE 'users/' || user_id::text || '/overrides/' || track_id::text || '/generations/' || generation_id::text || '/%'");
+                t.HasCheckConstraint("ck_upr_ready",
+                    "status <> 'ready' OR (bucket_key IS NOT NULL AND content_type IS NOT NULL AND size_bytes > 0 AND duration_ms > 0)");
+            });
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.HasIndex(x => new { x.GenerationId, x.ProfileCode }).IsUnique()
+                .HasDatabaseName("ux_upr_profile");
+            e.HasIndex(x => new { x.UserId, x.TrackId, x.GenerationId }).HasDatabaseName("ix_private_renditions_ready")
+                .HasFilter("status = 'ready'");
+            e.HasIndex(x => x.BucketKey).IsUnique().HasDatabaseName("ux_private_renditions_bucket")
+                .HasFilter("bucket_key IS NOT NULL");
+            e.HasOne(x => x.Upload).WithMany(x => x.Renditions)
+                .HasForeignKey(x => new { x.UserId, x.TrackId, x.GenerationId })
+                .HasPrincipalKey(x => new { x.UserId, x.TrackId, x.GenerationId })
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

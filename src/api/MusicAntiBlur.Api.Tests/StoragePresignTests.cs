@@ -67,6 +67,26 @@ public sealed class StoragePresignTests
     }
 
     [Fact]
+    public void PresignUploadPart_override_endpoint_signs_emulator_host()
+    {
+        using var storage = new ObjectStorageClient(
+            Options.Create(new StorageOptions
+            {
+                Endpoint = "http://127.0.0.1:9000",
+                Region = "us-east-1",
+                Bucket = "music-anti-blur",
+                AccessKey = "minio",
+                SecretKey = "minio-local-only",
+                ForcePathStyle = true
+            }),
+            NullLogger<ObjectStorageClient>.Instance);
+
+        var url = storage.PresignUploadPart("users/a/overrides/b/generations/c/source", "upload", 1, TimeSpan.FromMinutes(10), "http://10.0.2.2:9000");
+        Assert.StartsWith("http://10.0.2.2:9000/music-anti-blur/", url, StringComparison.Ordinal);
+        Assert.DoesNotContain("127.0.0.1", url, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ResolvePresignBase_maps_android_emulator_host()
     {
         var storage = new StorageOptions { Endpoint = "http://127.0.0.1:9000" };
