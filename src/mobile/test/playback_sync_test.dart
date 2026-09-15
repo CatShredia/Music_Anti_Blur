@@ -103,4 +103,27 @@ void main() {
     expect(snapshot.queue.current?.trackId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
     expect(snapshot.updatedAt, DateTime.utc(2026, 9, 15, 12));
   });
+
+  test('DevicePresence and RenditionReady parse hub payloads', () {
+    final presence = presenceFromHubArgs([
+      {
+        'devices': [
+          {'deviceId': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'lastSeen': '2026-09-15T12:00:00Z'},
+          {'deviceId': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'},
+        ],
+      },
+    ]);
+    expect(presence?.devices, hasLength(2));
+    expect(presence!.devices.first.deviceId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+
+    final ready = renditionReadyFromHubArgs([
+      {
+        'trackId': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        'generationId': 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        'scope': 'private',
+      },
+    ]);
+    expect(ready?.scope, 'private');
+    expect(ready?.trackId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+  });
 }

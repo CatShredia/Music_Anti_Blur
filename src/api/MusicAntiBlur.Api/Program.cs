@@ -73,6 +73,7 @@ builder.Services.AddScoped<PlaybackUrlService>();
 builder.Services.AddScoped<OverrideService>();
 builder.Services.AddScoped<PrivateUploadService>();
 builder.Services.AddSingleton<PlaybackSessionStore>();
+builder.Services.AddSingleton<PlaybackPresenceStore>();
 builder.Services.AddSingleton<IPlaybackHubPublisher, PlaybackHubPublisher>();
 builder.Services.AddScoped<PlaybackStateService>();
 

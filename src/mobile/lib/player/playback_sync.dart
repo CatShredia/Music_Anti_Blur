@@ -55,3 +55,19 @@ PlaybackSnapshot? snapshotFromHubArgs(List<Object?>? args) {
   final map = asJsonMap(args.first);
   return map == null ? null : PlaybackSnapshot.fromJson(map);
 }
+
+DevicePresence? presenceFromHubArgs(List<Object?>? args) {
+  if (args == null || args.isEmpty) {
+    return null;
+  }
+  final map = asJsonMap(args.first);
+  return map == null ? null : DevicePresence.fromJson(map);
+}
+
+RenditionReady? renditionReadyFromHubArgs(List<Object?>? args) {
+  if (args == null || args.isEmpty) {
+    return null;
+  }
+  final map = asJsonMap(args.first);
+  return map == null ? null : RenditionReady.fromJson(map);
+}

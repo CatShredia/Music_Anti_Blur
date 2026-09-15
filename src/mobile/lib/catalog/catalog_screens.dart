@@ -432,6 +432,8 @@ class _TrackScreenState extends State<TrackScreen> {
   TrackDetail? _track;
   String? _error;
   bool _busy = false;
+  PlayerController? _player;
+  int _seenRendition = 0;
 
   @override
   void initState() {
@@ -445,6 +447,35 @@ class _TrackScreenState extends State<TrackScreen> {
         setState(() => _error = e is ApiException ? e.localizedMessage : e.toString());
       }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final player = PlayerScope.maybeOf(context);
+    if (!identical(player, _player)) {
+      _player?.removeListener(_onPlayer);
+      _player = player;
+      _player?.addListener(_onPlayer);
+    }
+  }
+
+  @override
+  void dispose() {
+    _player?.removeListener(_onPlayer);
+    super.dispose();
+  }
+
+  void _onPlayer() {
+    final player = _player;
+    if (player == null || player.renditionEpoch == _seenRendition) {
+      return;
+    }
+    _seenRendition = player.renditionEpoch;
+    final ready = player.lastRenditionReady;
+    if (ready != null && ready.trackId == widget.id && ready.scope == 'private') {
+      _overrideKey.currentState?.reload();
+    }
   }
 
   @override

@@ -217,6 +217,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     onPressed: () => _run(player.playHere),
                   ),
                 ],
+                if (player.devices.isNotEmpty) ...[
+                  const SizedBox(height: 20),
+                  Text('Устройства', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 8),
+                  for (final device in player.devices)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        device.deviceId == player.myDeviceId ? 'Это устройство' : 'Другое устройство',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                ],
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [

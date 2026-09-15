@@ -66,3 +66,54 @@ class CreatePlaybackSession {
         snapshot: PlaybackSnapshot.fromJson(json['snapshot'] as Map<String, dynamic>),
       );
 }
+
+class DevicePresenceItem {
+  DevicePresenceItem({required this.deviceId, this.lastSeen, this.name});
+
+  final String deviceId;
+  final DateTime? lastSeen;
+  final String? name;
+
+  factory DevicePresenceItem.fromJson(Map<String, dynamic> json) => DevicePresenceItem(
+        deviceId: json['deviceId']?.toString() ?? '',
+        lastSeen: json['lastSeen'] == null ? null : DateTime.tryParse(json['lastSeen'].toString())?.toUtc(),
+        name: json['name'] as String?,
+      );
+}
+
+class DevicePresence {
+  DevicePresence({required this.devices});
+
+  final List<DevicePresenceItem> devices;
+
+  factory DevicePresence.fromJson(Map<String, dynamic> json) {
+    final raw = json['devices'] as List<dynamic>? ?? const [];
+    return DevicePresence(
+      devices: [
+        for (final item in raw)
+          if (item is Map)
+            DevicePresenceItem.fromJson({
+              for (final entry in item.entries) entry.key.toString(): entry.value,
+            }),
+      ],
+    );
+  }
+}
+
+class RenditionReady {
+  RenditionReady({
+    required this.trackId,
+    required this.generationId,
+    required this.scope,
+  });
+
+  final String trackId;
+  final String generationId;
+  final String scope;
+
+  factory RenditionReady.fromJson(Map<String, dynamic> json) => RenditionReady(
+        trackId: json['trackId']?.toString() ?? '',
+        generationId: json['generationId']?.toString() ?? '',
+        scope: json['scope'] as String? ?? '',
+      );
+}

@@ -48,6 +48,10 @@ class PlayerController extends ChangeNotifier {
   final Map<String, QueueTrackLabel> queueLabels = {};
   Duration position = Duration.zero;
   Duration duration = Duration.zero;
+  String? myDeviceId;
+  List<DevicePresenceItem> devices = const [];
+  RenditionReady? lastRenditionReady;
+  int renditionEpoch = 0;
 
   DateTime? _expiresAt;
   bool _refreshUsed = false;
@@ -68,6 +72,7 @@ class PlayerController extends ChangeNotifier {
   int _remotePositionMs = 0;
   PlaybackHubClient? _hub;
   bool _followingRemote = false;
+  bool _remoteLocalFallbackNotice = false;
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration?>? _durationSub;
   StreamSubscription<PlayerState>? _stateSub;
@@ -210,6 +215,7 @@ class PlayerController extends ChangeNotifier {
     if (queue.current == null) {
       return;
     }
+    _remoteLocalFallbackNotice = resolvedSource == 'local';
     _stopFollowing();
     _starting = true;
     try {
@@ -356,6 +362,9 @@ class PlayerController extends ChangeNotifier {
     coverObjectKey = null;
     queueLabels.clear();
     _orderBeforeShuffle = null;
+    devices = const [];
+    lastRenditionReady = null;
+    renditionEpoch = 0;
     await stop();
   }
 
@@ -381,6 +390,7 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _playAndPersist({required bool resumeIfSame}) async {
+    _remoteLocalFallbackNotice = false;
     _stopFollowing();
     _starting = true;
     try {
@@ -421,6 +431,8 @@ class PlayerController extends ChangeNotifier {
     try {
       final local = await bindings.get(item.trackId);
       final localOk = local != null;
+      final remoteLocalOnly = _remoteLocalFallbackNotice && !localOk;
+      _remoteLocalFallbackNotice = false;
       final wantsLocal = item.sourcePreference == 'auto' || item.sourcePreference == 'local';
       TrackDetail? detail = track?.id == item.trackId ? track : null;
       try {
@@ -484,6 +496,8 @@ class PlayerController extends ChangeNotifier {
         final fallback = fallbackNotice(url.fallbackReason);
         if (fallback.isNotEmpty) {
           _emitNotice(fallback);
+        } else if (remoteLocalOnly && resolvedSource != 'local') {
+          _emitNotice('Локальный файл на другом устройстве');
         }
       }
 
@@ -608,10 +622,15 @@ class PlayerController extends ChangeNotifier {
     if (!await api.hasSession()) {
       return;
     }
+    final deviceId = await api.deviceId();
+    myDeviceId = deviceId;
     _hub ??= PlaybackHubClient(
       url: api.hubUrl,
+      deviceId: deviceId,
       tokenFactory: _hubToken,
       onSnapshot: (snapshot) => unawaited(_onHubSnapshot(snapshot)),
+      onPresence: _onPresence,
+      onRenditionReady: _onRenditionReady,
       onReconnecting: () async {
         await api.refresh();
       },
@@ -653,6 +672,20 @@ class PlayerController extends ChangeNotifier {
       return;
     }
     await _applyRemoteSnapshot(snapshot);
+  }
+
+  void _onPresence(DevicePresence presence) {
+    devices = presence.devices;
+    notifyListeners();
+  }
+
+  void _onRenditionReady(RenditionReady ready) {
+    lastRenditionReady = ready;
+    renditionEpoch++;
+    notifyListeners();
+    if (ready.scope == 'private') {
+      _emitNotice('Private-копия готова');
+    }
   }
 
   Future<void> _applyRemoteSnapshot(PlaybackSnapshot snapshot) async {

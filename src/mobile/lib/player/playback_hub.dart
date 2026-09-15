@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:signalr_netcore/ihub_protocol.dart';
 import 'package:signalr_netcore/iretry_policy.dart';
 import 'package:signalr_netcore/signalr_client.dart';
 
@@ -11,25 +12,38 @@ import 'playback_sync.dart';
 class PlaybackHubClient {
   PlaybackHubClient({
     required this.url,
+    required this.deviceId,
     required this.tokenFactory,
     required this.onSnapshot,
+    this.onPresence,
+    this.onRenditionReady,
     this.onReconnected,
     this.onReconnecting,
   });
 
   final String url;
+  final String deviceId;
   final Future<String> Function() tokenFactory;
   final void Function(PlaybackSnapshot snapshot) onSnapshot;
+  final void Function(DevicePresence presence)? onPresence;
+  final void Function(RenditionReady ready)? onRenditionReady;
   final Future<void> Function()? onReconnected;
   final Future<void> Function()? onReconnecting;
 
   HubConnection? _connection;
+  Timer? _heartbeat;
   var _stopped = true;
   var _starting = false;
+
+  String get _connectUrl {
+    final separator = url.contains('?') ? '&' : '?';
+    return '$url${separator}deviceId=${Uri.encodeComponent(deviceId)}';
+  }
 
   Future<void> start() async {
     _stopped = false;
     if (_starting || _connection?.state == HubConnectionState.Connected) {
+      _startHeartbeat();
       return;
     }
     _starting = true;
@@ -39,9 +53,11 @@ class PlaybackHubClient {
       while (!_stopped) {
         try {
           if (_connection?.state == HubConnectionState.Connected) {
+            _startHeartbeat();
             return;
           }
           await _connection!.start();
+          _startHeartbeat();
           return;
         } catch (e) {
           debugPrint('playback hub start failed: $e');
@@ -61,6 +77,8 @@ class PlaybackHubClient {
 
   Future<void> stop() async {
     _stopped = true;
+    _heartbeat?.cancel();
+    _heartbeat = null;
     final connection = _connection;
     _connection = null;
     if (connection == null) {
@@ -84,32 +102,71 @@ class PlaybackHubClient {
       _connection = null;
     }
 
+    final headers = MessageHeaders()..setHeaderValue('X-Device-Id', deviceId);
     final connection = HubConnectionBuilder()
         .withUrl(
-          url,
+          _connectUrl,
           options: HttpConnectionOptions(
             accessTokenFactory: tokenFactory,
             transport: HttpTransportType.WebSockets,
             skipNegotiation: false,
             requestTimeout: 20000,
+            headers: headers,
           ),
         )
         .withAutomaticReconnect(reconnectPolicy: _ExpBackoffJitterPolicy())
         .build();
-    connection.on('PlaybackSnapshot', _onHubArgs);
+    connection.on('PlaybackSnapshot', _onSnapshotArgs);
+    connection.on('DevicePresence', _onPresenceArgs);
+    connection.on('RenditionReady', _onRenditionArgs);
     connection.onreconnecting(({error}) {
       unawaited(_safe(onReconnecting));
     });
     connection.onreconnected(({connectionId}) {
       unawaited(_safe(onReconnected));
+      _startHeartbeat();
     });
     _connection = connection;
   }
 
-  void _onHubArgs(List<Object?>? args) {
+  void _startHeartbeat() {
+    _heartbeat?.cancel();
+    _heartbeat = Timer.periodic(const Duration(seconds: 25), (_) {
+      unawaited(_beat());
+    });
+    unawaited(_beat());
+  }
+
+  Future<void> _beat() async {
+    final connection = _connection;
+    if (_stopped || connection == null || connection.state != HubConnectionState.Connected) {
+      return;
+    }
+    try {
+      await connection.invoke('Heartbeat');
+    } catch (e) {
+      debugPrint('playback hub heartbeat failed: $e');
+    }
+  }
+
+  void _onSnapshotArgs(List<Object?>? args) {
     final snapshot = snapshotFromHubArgs(args);
     if (snapshot != null) {
       onSnapshot(snapshot);
+    }
+  }
+
+  void _onPresenceArgs(List<Object?>? args) {
+    final presence = presenceFromHubArgs(args);
+    if (presence != null) {
+      onPresence?.call(presence);
+    }
+  }
+
+  void _onRenditionArgs(List<Object?>? args) {
+    final ready = renditionReadyFromHubArgs(args);
+    if (ready != null) {
+      onRenditionReady?.call(ready);
     }
   }
 

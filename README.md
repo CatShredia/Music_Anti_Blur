@@ -104,6 +104,8 @@ flutter run
 
 На карточке трека: **Выбрать файл** копирует аудио в каталог приложения (Android ещё берёт persistable SAF URI). Play в airplane mode играет эту копию, если источник Авто или Local. Чип **Catalog** всегда берёт CDN/MinIO и игнорирует файл на устройстве. **Загрузить на сервер** — отдельный шаг: multipart в `users/{userId}/overrides/.../generations/{id}/`, не автозагрузка из picker. Чужой аккаунт на том же `trackId`: `GET /tracks/{id}/override` и private playback-url дают **404** `not_found`, не 403. Проверка: второй пользователь в приложении, поиск/карточка без подмены, Play идёт в каталог.
 
+Два клиента одного user (эмулятор Android + Windows или Chrome debug): у каждого свой `deviceId` в secure storage. Play на A обновляет now playing на B без автозвука (SignalR `PlaybackSnapshot`). **Играть здесь** на B забирает writer; A ставит паузу. Список «Это устройство / Другое устройство» — presence, не remote-control. Local-файл живёт только на том устройстве, где выбран picker: на B без файла «Играть здесь» берёт **ваш** private Ready или каталог и показывает «Локальный файл на другом устройстве», это не подмена каталога для всех. Chrome/Windows годится как второй экран now playing; браузер не продукт MVP.
+
 Письма verification/reset содержат 6-значный код для ввода в приложении. Смотреть в MailHog.
 
 Переменные окружения: см. `.env.example`. Локальный S3 и (позже) Yandex: [devops/yandex-storage-cdn.md](devops/yandex-storage-cdn.md).
