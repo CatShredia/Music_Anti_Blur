@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Storage;
+using MusicAntiBlur.Api.Uploads;
 
 namespace MusicAntiBlur.Api.Jobs;
 
@@ -12,7 +13,9 @@ public sealed class StorageCleanupJobs(AppDbContext db, ObjectStorageClient stor
         var ct = CancellationToken.None;
         var now = DateTimeOffset.UtcNow;
         await ReclaimStaleAsync(now, ct);
+        await ReclaimStalePrivateAsync(now, ct);
         await AbortOldMultipartAsync(now, ct);
+        await AbortOldPrivateMultipartAsync(now, ct);
         await DrainOutboxAsync(now, ct);
         await db.IdempotencyRecords.Where(r => r.ExpiresAt < now).ExecuteDeleteAsync(ct);
         await db.ObjectDeletions.Where(o => o.Status == "done" && o.CompletedAt != null && o.CompletedAt < now.AddDays(-30))
@@ -31,6 +34,26 @@ public sealed class StorageCleanupJobs(AppDbContext db, ObjectStorageClient stor
             upload.LeaseExpiresAt = null;
             upload.UpdatedAt = now;
             logger.LogWarning("Stale transcode lease generation {GenerationId}.", upload.GenerationId);
+        }
+
+        if (stale.Count > 0)
+        {
+            await db.SaveChangesAsync(ct);
+        }
+    }
+
+    private async Task ReclaimStalePrivateAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        var stale = await db.UserPrivateUploads
+            .Where(u => (u.Status == "validating" || u.Status == "processing") &&
+                        u.LeaseExpiresAt != null && u.LeaseExpiresAt < now)
+            .ToListAsync(ct);
+        foreach (var upload in stale)
+        {
+            upload.Status = "failed";
+            upload.LeaseExpiresAt = null;
+            upload.UpdatedAt = now;
+            logger.LogWarning("Stale private transcode lease generation {GenerationId}.", upload.GenerationId);
         }
 
         if (stale.Count > 0)
@@ -59,18 +82,39 @@ public sealed class StorageCleanupJobs(AppDbContext db, ObjectStorageClient stor
                 }
             }
 
-            if (!db.ObjectDeletions.Local.Any(o => o.BucketKey == upload.SourceBucketKey && o.Status != "done") &&
-                !db.ObjectDeletions.Any(o => o.BucketKey == upload.SourceBucketKey && o.Status != "done"))
+            ObjectDeletionQueue.Enqueue(db, upload.SourceBucketKey, null);
+            upload.Status = "cancelled";
+            upload.MultipartUploadId = null;
+            upload.UpdatedAt = now;
+        }
+
+        if (stale.Count > 0)
+        {
+            await db.SaveChangesAsync(ct);
+        }
+    }
+
+    private async Task AbortOldPrivateMultipartAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        var cutoff = now.AddHours(-24);
+        var stale = await db.UserPrivateUploads
+            .Where(u => (u.Status == "initiated" || u.Status == "uploading") && u.CreatedAt < cutoff)
+            .ToListAsync(ct);
+        foreach (var upload in stale)
+        {
+            if (upload.MultipartUploadId is not null)
             {
-                db.ObjectDeletions.Add(new ObjectDeletion
+                try
                 {
-                    Id = Guid.NewGuid(),
-                    BucketKey = upload.SourceBucketKey,
-                    Status = "pending",
-                    NextAttemptAt = now,
-                    CreatedAt = now
-                });
+                    await storage.AbortMultipartAsync(upload.SourceBucketKey, upload.MultipartUploadId, ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Abort private multipart failed generation {GenerationId}.", upload.GenerationId);
+                }
             }
+
+            ObjectDeletionQueue.Enqueue(db, upload.SourceBucketKey, upload.UserId);
             upload.Status = "cancelled";
             upload.MultipartUploadId = null;
             upload.UpdatedAt = now;

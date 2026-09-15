@@ -13,6 +13,7 @@ public sealed class StorageOptions
     public bool ForcePathStyle { get; set; } = true;
     public bool UseCdn { get; set; }
     public long CatalogMaxSourceBytes { get; set; } = 104_857_600;
+    public long PrivateQuotaBytes { get; set; } = 2L * 1024 * 1024 * 1024;
 
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(Endpoint) &&
@@ -50,4 +51,10 @@ public static class ObjectKeys
 
     public static string Aac(Guid trackId, Guid generationId, string profileCode) =>
         $"tracks/{trackId:D}/generations/{generationId:D}/{profileCode}.m4a";
+
+    public static string PrivateSource(Guid userId, Guid trackId, Guid generationId) =>
+        $"users/{userId:D}/overrides/{trackId:D}/generations/{generationId:D}/source";
+
+    public static string PrivateAac(Guid userId, Guid trackId, Guid generationId, string profileCode) =>
+        $"users/{userId:D}/overrides/{trackId:D}/generations/{generationId:D}/{profileCode}.m4a";
 }

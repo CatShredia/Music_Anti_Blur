@@ -6,6 +6,8 @@ import 'package:just_audio/just_audio.dart';
 
 import '../api/api_client.dart';
 import '../catalog/catalog_models.dart';
+import '../overrides/local_binding_store.dart';
+import '../overrides/override_models.dart';
 import 'audio_handler.dart';
 import 'playback_models.dart';
 import 'player_queue.dart';
@@ -22,15 +24,18 @@ class PlayerScope extends InheritedNotifier<PlayerController> {
 }
 
 class PlayerController extends ChangeNotifier {
-  PlayerController(this.api, {required this.handler});
+  PlayerController(this.api, {required this.handler, LocalBindingStore? bindings})
+      : bindings = bindings ?? LocalBindingStore();
 
   final ApiClient api;
   final MusicAudioHandler handler;
+  final LocalBindingStore bindings;
 
   PlayerQueue queue = PlayerQueue.empty;
   TrackDetail? track;
   String? requestedQuality;
   String? resolvedQuality;
+  String? resolvedSource;
   String? qualityFallbackFrom;
   String? notice;
   int noticeEpoch = 0;
@@ -108,7 +113,7 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> playTrack(
     String trackId, {
-    String source = 'catalog',
+    String source = 'auto',
     String? quality,
   }) async {
     requestedQuality = quality;
@@ -137,6 +142,16 @@ class PlayerController extends ChangeNotifier {
       queue = _shuffleQueue(queue);
     }
     await _playAndPersist(resumeIfSame: false);
+  }
+
+  Future<void> setItemSource(String sourcePreference) async {
+    final current = queue.current;
+    if (current == null) {
+      return;
+    }
+    queue = queue.withItemSource(current.itemId, sourcePreference);
+    notifyListeners();
+    await _playAndPersist(resumeIfSame: true);
   }
 
   Future<void> setQuality(String quality) async {
@@ -337,36 +352,92 @@ class PlayerController extends ChangeNotifier {
     notifyListeners();
     final gen = ++_playGen;
     try {
-      final preference = requestedQuality ?? (await api.settings()).preferredQuality;
-      final detail = await api.track(item.trackId);
-      final url = await api.playbackUrl(
-        trackId: item.trackId,
-        sourcePreference: item.sourcePreference,
-        qualityPreference: preference,
-      );
+      final local = await bindings.get(item.trackId);
+      final localOk = local != null;
+      final wantsLocal = item.sourcePreference == 'auto' || item.sourcePreference == 'local';
+      TrackDetail? detail = track?.id == item.trackId ? track : null;
+      try {
+        detail = await api.track(item.trackId);
+      } catch (e) {
+        if (!localOk || !wantsLocal) {
+          rethrow;
+        }
+      }
       if (gen != _playGen) {
         return;
       }
-      track = detail;
-      queueLabels[detail.id] = QueueTrackLabel(title: detail.title, subtitle: detail.artist.name);
-      resolvedQuality = url.resolvedQuality;
-      qualityFallbackFrom = url.qualityFallbackFrom;
-      _expiresAt = url.expiresAt.toUtc();
-      _refreshUsed = false;
-      final loaded = await handler.setUrl(
-        url.url,
-        item: MediaItem(
-          id: detail.id,
-          title: detail.title,
-          album: detail.album.title,
-          artist: detail.artist.name,
-          duration: url.durationMs > 0 ? Duration(milliseconds: url.durationMs) : null,
-        ),
-      );
+
+      Duration? loaded;
+      var durationMs = detail?.durationMs ?? local?.durationMs;
+      if (wantsLocal && local != null) {
+        final media = _mediaItem(detail, item, local, durationMs);
+        loaded = await handler.setFilePath(local.copiedPath, item: media);
+        resolvedSource = 'local';
+        resolvedQuality = null;
+        _expiresAt = null;
+        _refreshUsed = true;
+      } else {
+        var preference = requestedQuality ?? 'auto';
+        try {
+          preference = requestedQuality ?? (await api.settings()).preferredQuality;
+        } catch (_) {}
+        final url = await api.playbackUrl(
+          trackId: item.trackId,
+          sourcePreference: item.sourcePreference,
+          qualityPreference: preference,
+          localAvailable: localOk,
+        );
+        if (gen != _playGen) {
+          return;
+        }
+        resolvedSource = url.resolvedSource;
+        resolvedQuality = url.resolvedQuality;
+        qualityFallbackFrom = url.qualityFallbackFrom;
+        durationMs = url.durationMs ?? durationMs;
+        _expiresAt = url.expiresAt?.toUtc();
+        _refreshUsed = url.isLocal;
+        if (url.isLocal) {
+          if (local == null) {
+            throw ApiException(422, 'source_unavailable', 'No playable source.');
+          }
+          loaded = await handler.setFilePath(
+            local.copiedPath,
+            item: _mediaItem(detail, item, local, durationMs),
+          );
+        } else {
+          final remote = url.url;
+          if (remote == null || remote.isEmpty) {
+            throw ApiException(422, 'source_unavailable', 'No playable source.');
+          }
+          loaded = await handler.setUrl(
+            remote,
+            item: _mediaItem(detail, item, local, durationMs),
+          );
+        }
+        final fallback = fallbackNotice(url.fallbackReason);
+        if (fallback.isNotEmpty) {
+          _emitNotice(fallback);
+        }
+      }
+
+      if (gen != _playGen) {
+        return;
+      }
+      track = detail ??
+          TrackDetail(
+            id: item.trackId,
+            title: local?.displayName ?? labelFor(item).title,
+            trackNumber: 1,
+            artist: ArtistRef(id: '', name: ''),
+            album: AlbumRef(id: '', title: ''),
+            availableQualities: const [],
+            durationMs: durationMs,
+          );
+      queueLabels[track!.id] = QueueTrackLabel(title: track!.title, subtitle: track!.artist.name);
       if (loaded != null && loaded > Duration.zero) {
         duration = loaded;
-      } else if (url.durationMs > 0) {
-        duration = Duration(milliseconds: url.durationMs);
+      } else if (durationMs != null && durationMs > 0) {
+        duration = Duration(milliseconds: durationMs);
       }
       if (resume > Duration.zero) {
         await _seekPreservingSeconds(resume);
@@ -378,11 +449,11 @@ class PlayerController extends ChangeNotifier {
       if (autoplay) {
         await handler.play();
       }
-      if (url.qualityFallbackFrom != null) {
-        _emitNotice('Включено ${url.resolvedQuality}');
+      if (qualityFallbackFrom != null) {
+        _emitNotice('Включено ${resolvedQuality ?? qualityFallbackFrom}');
       }
     } on ApiException catch (e) {
-      if (e.code == 'source_unavailable' || e.code == 'quality_unavailable') {
+      if (e.code == 'source_unavailable' || e.code == 'quality_unavailable' || e.code == 'connection_failed') {
         _emitNotice(e.localizedMessage);
       } else if (e.status == 401 || e.code == 'invalid_token') {
         _emitNotice('Сессия устарела. Войдите снова.');
@@ -397,6 +468,16 @@ class PlayerController extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  MediaItem _mediaItem(TrackDetail? detail, QueueItem item, LocalTrackBinding? local, int? durationMs) {
+    return MediaItem(
+      id: detail?.id ?? item.trackId,
+      title: detail?.title ?? local?.displayName ?? 'Трек',
+      album: detail?.album.title,
+      artist: detail?.artist.name,
+      duration: durationMs != null && durationMs > 0 ? Duration(milliseconds: durationMs) : null,
+    );
   }
 
   Future<void> _onCompleted() async {
@@ -569,7 +650,7 @@ class PlayerController extends ChangeNotifier {
           'positionMs': position.inMilliseconds,
           'isPlaying': playing,
           'qualityCode': requestedQuality ?? resolvedQuality ?? 'auto',
-          'source': queue.current?.sourcePreference ?? 'catalog',
+          'source': resolvedSource ?? 'catalog',
           'queue': queue.toJson(),
         },
       );
@@ -693,7 +774,7 @@ class PlayerController extends ChangeNotifier {
   Future<void> _reresolve() async {
     final current = track;
     final quality = resolvedQuality;
-    if (_refreshUsed || _refreshing || current == null || quality == null) {
+    if (_refreshUsed || _refreshing || current == null || quality == null || resolvedSource == 'local') {
       return;
     }
     _refreshing = true;
@@ -703,14 +784,18 @@ class PlayerController extends ChangeNotifier {
     try {
       final url = await api.playbackUrl(
         trackId: current.id,
-        sourcePreference: queue.current?.sourcePreference ?? 'catalog',
+        sourcePreference: queue.current?.sourcePreference ?? 'auto',
         qualityPreference: quality,
+        localAvailable: await bindings.isAvailable(current.id),
       );
       if (gen != _playGen) {
         return;
       }
-      _expiresAt = url.expiresAt.toUtc();
-      await handler.setUrl(url.url);
+      if (url.isLocal || url.url == null) {
+        return;
+      }
+      _expiresAt = url.expiresAt?.toUtc();
+      await handler.setUrl(url.url!);
       try {
         await _seekPreservingSeconds(resume);
         unawaited(handler.play());

@@ -14,11 +14,11 @@ public sealed record PlaybackUrlRequest(string? SourcePreference, string? Qualit
 public sealed record PlaybackUrlResponse(
     string ResolvedSource,
     string Delivery,
-    string ResolvedQuality,
-    string Url,
-    DateTimeOffset ExpiresAt,
-    Guid GenerationId,
-    int DurationMs,
+    string? ResolvedQuality,
+    string? Url,
+    DateTimeOffset? ExpiresAt,
+    Guid? GenerationId,
+    int? DurationMs,
     string? QualityFallbackFrom,
     string? FallbackReason);
 
@@ -55,22 +55,39 @@ public sealed class PlaybackUrlService(
                 new Dictionary<string, string[]> { ["qualityPreference"] = ["preferred_quality"] });
         }
 
-        string? fallbackReason = null;
-        if (sourcePref == "local")
+        var catalogReady = await LoadCatalogReadyAsync(trackId, ct);
+        var privateReady = await LoadPrivateReadyAsync(userId, trackId, ct);
+        var source = SourceResolver.Resolve(sourcePref, req.LocalAvailable, privateReady.Count > 0, catalogReady.Count > 0);
+        if (!source.Ok || source.Chosen is null)
         {
-            fallbackReason = "local_unavailable";
-        }
-        else if (sourcePref == "private")
-        {
-            fallbackReason = "private_not_ready";
+            throw new ApiException(422, "source_unavailable", "No playable source.", extras: new Dictionary<string, object>
+            {
+                ["localAvailable"] = req.LocalAvailable,
+                ["privateReady"] = privateReady.Count > 0,
+                ["catalogReady"] = catalogReady.Count > 0
+            });
         }
 
-        var ready = await db.TrackRenditions.AsNoTracking()
-            .Where(r => r.TrackId == trackId && r.Status == "ready" && r.Upload.IsActive && r.BucketKey != null && r.DurationMs != null && r.BitrateKbps != null)
-            .Select(r => new ReadyQuality(r.ProfileCode, r.BitrateKbps!.Value, r.GenerationId, r.DurationMs!.Value, r.BucketKey!))
-            .ToListAsync(ct);
+        if (source.Chosen == "local")
+        {
+            var localDuration = await db.UserTrackOverrides.AsNoTracking()
+                .Where(o => o.UserId == userId && o.TrackId == trackId)
+                .Select(o => o.DurationMs)
+                .FirstOrDefaultAsync(ct);
+            return new PlaybackUrlResponse(
+                "local",
+                "local",
+                null,
+                null,
+                null,
+                null,
+                localDuration,
+                null,
+                source.FallbackReason);
+        }
 
-        var resolved = QualityResolver.Resolve(ready, qualityPref);
+        var pool = source.Chosen == "private" ? privateReady : catalogReady;
+        var resolved = QualityResolver.Resolve(pool, qualityPref);
         if (!resolved.Ok || resolved.Chosen is null)
         {
             if (resolved.ErrorCode == "quality_unavailable")
@@ -78,26 +95,29 @@ public sealed class PlaybackUrlService(
                 throw new ApiException(422, "quality_unavailable", "Requested quality is not available.");
             }
 
-            throw new ApiException(422, "source_unavailable", "No playable catalog rendition.", extras: new Dictionary<string, object>
+            throw new ApiException(422, "source_unavailable", "No playable source.", extras: new Dictionary<string, object>
             {
                 ["localAvailable"] = req.LocalAvailable,
-                ["privateReady"] = false,
-                ["catalogReady"] = false
+                ["privateReady"] = privateReady.Count > 0,
+                ["catalogReady"] = catalogReady.Count > 0
             });
         }
 
         var chosen = resolved.Chosen;
         var cacheTtl = Math.Clamp(cdnOptions.Value.CacheTtlSeconds, 1, 480);
-        var cacheKey = $"playback:catalog:{trackId:D}:{chosen.GenerationId:D}:{chosen.Code}:{signer.CachePartition(clientHost)}";
+        var cacheKey = source.Chosen == "private"
+            ? $"playback:private:{userId:D}:{trackId:D}:{chosen.GenerationId:D}:{chosen.Code}:{signer.CachePartition(clientHost)}"
+            : $"playback:{trackId:D}:{chosen.GenerationId:D}:{chosen.Code}:{signer.CachePartition(clientHost)}";
+
         try
         {
             var cached = await redis.GetDatabase().StringGetAsync(cacheKey);
             if (cached.HasValue)
             {
                 var replay = JsonSerializer.Deserialize<PlaybackUrlResponse>((string)cached!, Json);
-                if (replay is not null && replay.ExpiresAt > DateTimeOffset.UtcNow.AddSeconds(30))
+                if (replay is not null && replay.ExpiresAt is DateTimeOffset exp && exp > DateTimeOffset.UtcNow.AddSeconds(30))
                 {
-                    return replay with { FallbackReason = fallbackReason, QualityFallbackFrom = resolved.QualityFallbackFrom };
+                    return replay with { FallbackReason = source.FallbackReason, QualityFallbackFrom = resolved.QualityFallbackFrom };
                 }
             }
         }
@@ -108,7 +128,7 @@ public sealed class PlaybackUrlService(
 
         var signed = signer.Sign(chosen.BucketKey, clientHost);
         var response = new PlaybackUrlResponse(
-            "catalog",
+            source.Chosen,
             "cdn",
             chosen.Code,
             signed.Url,
@@ -116,7 +136,7 @@ public sealed class PlaybackUrlService(
             chosen.GenerationId,
             chosen.DurationMs,
             resolved.QualityFallbackFrom,
-            fallbackReason);
+            source.FallbackReason);
 
         try
         {
@@ -129,4 +149,17 @@ public sealed class PlaybackUrlService(
 
         return response;
     }
+
+    private Task<List<ReadyQuality>> LoadCatalogReadyAsync(Guid trackId, CancellationToken ct) =>
+        db.TrackRenditions.AsNoTracking()
+            .Where(r => r.TrackId == trackId && r.Status == "ready" && r.Upload.IsActive && r.BucketKey != null && r.DurationMs != null && r.BitrateKbps != null)
+            .Select(r => new ReadyQuality(r.ProfileCode, r.BitrateKbps!.Value, r.GenerationId, r.DurationMs!.Value, r.BucketKey!))
+            .ToListAsync(ct);
+
+    private Task<List<ReadyQuality>> LoadPrivateReadyAsync(Guid userId, Guid trackId, CancellationToken ct) =>
+        db.UserPrivateRenditions.AsNoTracking()
+            .Where(r => r.UserId == userId && r.TrackId == trackId && r.Status == "ready" && r.Upload.IsActive &&
+                        r.Upload.Status == "ready" && r.BucketKey != null && r.DurationMs != null && r.BitrateKbps != null)
+            .Select(r => new ReadyQuality(r.ProfileCode, r.BitrateKbps!.Value, r.GenerationId, r.DurationMs!.Value, r.BucketKey!))
+            .ToListAsync(ct);
 }

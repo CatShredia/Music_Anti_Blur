@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../overrides/override_models.dart';
 import '../theme.dart';
 import 'player_controller.dart';
 import 'player_nav.dart';
@@ -88,11 +89,21 @@ class MiniPlayerBar extends StatelessWidget {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: VizeColors.text, fontWeight: FontWeight.w600),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: VizeColors.text, fontWeight: FontWeight.w600),
+                        ),
+                        if (player.resolvedSource != null)
+                          Text(
+                            sourceLabel(player.resolvedSource!),
+                            style: const TextStyle(color: VizeColors.accentMuted, fontSize: 12),
+                          ),
+                      ],
                     ),
                   ),
                   IconButton(

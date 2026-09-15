@@ -22,6 +22,7 @@ using MusicAntiBlur.Api.RateLimiting;
 using MusicAntiBlur.Api.Storage;
 using MusicAntiBlur.Api.Media;
 using MusicAntiBlur.Api.Uploads;
+using MusicAntiBlur.Api.Overrides;
 using MusicAntiBlur.Api.Playback;
 using StackExchange.Redis;
 
@@ -69,6 +70,8 @@ builder.Services.AddScoped<CatalogService>();
 builder.Services.AddScoped<AdminUploadService>();
 builder.Services.AddScoped<IdempotencyStore>();
 builder.Services.AddScoped<PlaybackUrlService>();
+builder.Services.AddScoped<OverrideService>();
+builder.Services.AddScoped<PrivateUploadService>();
 builder.Services.AddSingleton<PlaybackSessionStore>();
 builder.Services.AddScoped<PlaybackStateService>();
 
@@ -192,6 +195,7 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 app.MapAuthEndpoints();
 app.MapCatalogEndpoints();
 app.MapCatalogMediaEndpoints();
+app.MapOverrideEndpoints();
 app.MapPlaybackEndpoints();
 app.MapHub<PlaybackHub>("/hubs/playback");
 

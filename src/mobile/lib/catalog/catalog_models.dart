@@ -237,33 +237,35 @@ class PlaybackUrl {
   PlaybackUrl({
     required this.resolvedSource,
     required this.delivery,
-    required this.resolvedQuality,
-    required this.url,
-    required this.expiresAt,
-    required this.generationId,
-    required this.durationMs,
+    this.resolvedQuality,
+    this.url,
+    this.expiresAt,
+    this.generationId,
+    this.durationMs,
     this.qualityFallbackFrom,
     this.fallbackReason,
   });
 
   final String resolvedSource;
   final String delivery;
-  final String resolvedQuality;
-  final String url;
-  final DateTime expiresAt;
-  final String generationId;
-  final int durationMs;
+  final String? resolvedQuality;
+  final String? url;
+  final DateTime? expiresAt;
+  final String? generationId;
+  final int? durationMs;
   final String? qualityFallbackFrom;
   final String? fallbackReason;
 
+  bool get isLocal => delivery == 'local' || resolvedSource == 'local';
+
   factory PlaybackUrl.fromJson(Map<String, dynamic> json) => PlaybackUrl(
         resolvedSource: json['resolvedSource'] as String,
-        delivery: json['delivery'] as String,
-        resolvedQuality: json['resolvedQuality'] as String,
-        url: json['url'] as String,
-        expiresAt: DateTime.parse(json['expiresAt'] as String),
-        generationId: json['generationId'] as String,
-        durationMs: json['durationMs'] as int,
+        delivery: json['delivery'] as String? ?? json['resolvedSource'] as String,
+        resolvedQuality: json['resolvedQuality'] as String?,
+        url: json['url'] as String?,
+        expiresAt: json['expiresAt'] == null ? null : DateTime.parse(json['expiresAt'] as String),
+        generationId: json['generationId'] as String?,
+        durationMs: (json['durationMs'] as num?)?.toInt(),
         qualityFallbackFrom: json['qualityFallbackFrom'] as String?,
         fallbackReason: json['fallbackReason'] as String?,
       );

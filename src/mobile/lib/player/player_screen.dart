@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../catalog/catalog_screens.dart';
+import '../overrides/override_models.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import 'player_controller.dart';
@@ -103,6 +104,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 Text(track.artist.name, style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 4),
                 Text(track.album.title, style: Theme.of(context).textTheme.bodySmall),
+                if (player.resolvedSource != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    sourceLabel(player.resolvedSource!),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
                 const SizedBox(height: 24),
                 Slider(
                   min: 0,
@@ -317,15 +325,18 @@ class _QueueTile extends StatelessWidget {
                           fontWeight: current ? FontWeight.w700 : FontWeight.w600,
                         ),
                       ),
-                      if (label.subtitle.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          label.subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ],
+                      const SizedBox(height: 2),
+                      Text(
+                        [
+                          if (label.subtitle.isNotEmpty) label.subtitle,
+                          sourceLabel(current && player.resolvedSource != null
+                              ? player.resolvedSource!
+                              : item.sourcePreference),
+                        ].join(' · '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ],
                   ),
                 ),
