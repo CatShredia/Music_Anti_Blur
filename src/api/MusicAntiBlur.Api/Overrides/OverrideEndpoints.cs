@@ -50,8 +50,9 @@ public static class OverrideEndpoints
             UploadPartsRequest req,
             PrivateUploadService svc,
             ClaimsPrincipal user,
+            HttpContext http,
             CancellationToken ct) =>
-            Results.Ok(await svc.PartsAsync(UserId(user), trackId, generationId, req, ct)));
+            Results.Ok(await svc.PartsAsync(UserId(user), trackId, generationId, req, http.Request.Host.Host, ct)));
 
         v1.MapPost("/tracks/{trackId:guid}/private-uploads/{generationId:guid}/complete", async (
             Guid trackId,

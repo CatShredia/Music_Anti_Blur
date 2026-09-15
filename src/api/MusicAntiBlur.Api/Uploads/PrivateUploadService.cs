@@ -87,7 +87,7 @@ public sealed class PrivateUploadService(
     }
 
     public async Task<UploadPartsResponse> PartsAsync(
-        Guid userId, Guid trackId, Guid generationId, UploadPartsRequest req, CancellationToken ct)
+        Guid userId, Guid trackId, Guid generationId, UploadPartsRequest req, string? clientHost, CancellationToken ct)
     {
         await limiter.HitAsync($"rl:part-url:{userId:D}", 120, TimeSpan.FromMinutes(1), ct);
         storage.EnsureConfigured();
@@ -120,8 +120,12 @@ public sealed class PrivateUploadService(
 
         var ttl = TimeSpan.FromMinutes(15);
         var expires = DateTimeOffset.UtcNow.Add(ttl);
+        var endpoint = PlaybackUrlSigner.ResolvePresignBase(storageOptions.Value, clientHost);
         var parts = numbers.Distinct().OrderBy(n => n)
-            .Select(n => new UploadPartUrlDto(n, storage.PresignUploadPart(upload.SourceBucketKey, upload.MultipartUploadId, n, ttl), expires))
+            .Select(n => new UploadPartUrlDto(
+                n,
+                storage.PresignUploadPart(upload.SourceBucketKey, upload.MultipartUploadId, n, ttl, endpoint),
+                expires))
             .ToList();
         return new UploadPartsResponse(parts);
     }

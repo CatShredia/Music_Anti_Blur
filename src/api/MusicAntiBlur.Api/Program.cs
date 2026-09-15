@@ -146,6 +146,19 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 builder.Services.AddAuthorization();
 
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddCors(options =>
+    {
+        options.AddDefaultPolicy(policy =>
+            policy.SetIsOriginAllowed(static origin =>
+                    Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.IsLoopback)
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials());
+    });
+}
+
 builder.Services.AddSignalR()
     .AddStackExchangeRedis(redisCs);
 
@@ -182,6 +195,7 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI(options => options.EnablePersistAuthorization());
+    app.UseCors();
 }
 
 app.UseAuthentication();

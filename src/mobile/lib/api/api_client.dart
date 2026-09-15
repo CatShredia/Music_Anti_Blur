@@ -474,19 +474,23 @@ class ApiClient {
         sendTimeout: const Duration(minutes: 2),
       ),
     );
-    final res = await dio.put<dynamic>(
-      url,
-      data: bytes,
-      options: Options(
-        contentType: 'application/octet-stream',
-        headers: {Headers.contentLengthHeader: bytes.length},
-      ),
-    );
-    final tag = res.headers.value('etag') ?? res.headers.value('ETag') ?? '';
-    if (tag.isEmpty) {
-      throw ApiException(409, 'invalid_state', 'Multipart complete failed.');
+    try {
+      final res = await dio.put<dynamic>(
+        url,
+        data: bytes,
+        options: Options(
+          contentType: 'application/octet-stream',
+          headers: {Headers.contentLengthHeader: bytes.length},
+        ),
+      );
+      final tag = res.headers.value('etag') ?? res.headers.value('ETag') ?? '';
+      if (tag.isEmpty) {
+        throw ApiException(409, 'invalid_state', 'Multipart complete failed.');
+      }
+      return tag.replaceAll('"', '');
+    } on DioException catch (e) {
+      throw _toApi(e);
     }
-    return tag.replaceAll('"', '');
   }
 
   Future<void> completePrivateUpload({

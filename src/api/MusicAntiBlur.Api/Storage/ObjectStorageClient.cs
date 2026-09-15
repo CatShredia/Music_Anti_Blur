@@ -62,10 +62,14 @@ public sealed class ObjectStorageClient : IDisposable
         return response.UploadId;
     }
 
-    public string PresignUploadPart(string key, string uploadId, int partNumber, TimeSpan ttl)
+    public string PresignUploadPart(string key, string uploadId, int partNumber, TimeSpan ttl, string? publicEndpoint = null)
     {
         EnsureConfigured();
-        return Client().GetPreSignedURL(new GetPreSignedUrlRequest
+        var endpoint = string.IsNullOrWhiteSpace(publicEndpoint)
+            ? PresignEndpoint()
+            : publicEndpoint.Trim().TrimEnd('/');
+        var client = _presignClients.GetOrAdd(endpoint, CreatePresignClient);
+        return client.GetPreSignedURL(new GetPreSignedUrlRequest
         {
             BucketName = _options.Bucket,
             Key = key,
@@ -73,7 +77,7 @@ public sealed class ObjectStorageClient : IDisposable
             Expires = DateTime.UtcNow.Add(ttl),
             UploadId = uploadId,
             PartNumber = partNumber,
-            Protocol = PresignProtocol(_options.Endpoint)
+            Protocol = PresignProtocol(endpoint)
         });
     }
 

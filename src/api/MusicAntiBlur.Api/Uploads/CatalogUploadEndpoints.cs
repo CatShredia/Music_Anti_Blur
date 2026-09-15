@@ -42,8 +42,9 @@ public static class CatalogUploadEndpoints
             UploadPartsRequest req,
             AdminUploadService svc,
             ClaimsPrincipal user,
+            HttpContext http,
             CancellationToken ct) =>
-            Results.Ok(await svc.PartsAsync(UserId(user), trackId, generationId, req, ct)));
+            Results.Ok(await svc.PartsAsync(UserId(user), trackId, generationId, req, http.Request.Host.Host, ct)));
 
         admin.MapPost("/tracks/{trackId:guid}/uploads/{generationId:guid}/complete", async (
             Guid trackId,
