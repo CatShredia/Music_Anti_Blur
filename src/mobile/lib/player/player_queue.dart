@@ -197,7 +197,7 @@ class PlayerQueue {
     return copyWith(
       shuffle: true,
       items: [
-        if (currentItem != null) currentItem,
+        ?currentItem,
         ...shuffled,
       ],
       currentItemId: currentItem?.itemId,
