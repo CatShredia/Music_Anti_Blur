@@ -1,20 +1,39 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using MusicAntiBlur.Api.RateLimiting;
+using StackExchange.Redis;
 
 namespace MusicAntiBlur.Api.Hubs;
 
 [Authorize]
-public sealed class PlaybackHub(RedisRateLimiter limiter) : Hub
+public sealed class PlaybackHub(RedisRateLimiter limiter, IConnectionMultiplexer redis) : Hub
 {
     public override async Task OnConnectedAsync()
     {
-        var userId = Context.User?.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anon";
+        var raw = Context.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? Context.User?.FindFirstValue(JwtRegisteredClaimNames.Sub);
+        if (raw is null || !Guid.TryParse(raw, out var userId))
+        {
+            Context.Abort();
+            return;
+        }
+
+        try
+        {
+            await redis.GetDatabase().PingAsync();
+        }
+        catch
+        {
+            Context.Abort();
+            return;
+        }
+
         var ip = Context.GetHttpContext()?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         try
         {
-            await limiter.HitAsync($"rl:signalr:{ip}:{userId}", 20, TimeSpan.FromMinutes(5), Context.ConnectionAborted);
+            await limiter.HitAsync($"rl:signalr:{ip}:{userId:D}", 20, TimeSpan.FromMinutes(5), Context.ConnectionAborted);
         }
         catch (RateLimitedException)
         {
@@ -27,6 +46,7 @@ public sealed class PlaybackHub(RedisRateLimiter limiter) : Hub
             return;
         }
 
+        await Groups.AddToGroupAsync(Context.ConnectionId, PlaybackHubGroups.ForUser(userId), Context.ConnectionAborted);
         await base.OnConnectedAsync();
     }
 }

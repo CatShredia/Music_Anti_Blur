@@ -10,7 +10,9 @@ namespace MusicAntiBlur.Api.Playback;
 public sealed class PlaybackStateService(
     AppDbContext db,
     PlaybackSessionStore sessions,
-    RedisRateLimiter limiter)
+    RedisRateLimiter limiter,
+    IPlaybackHubPublisher hub,
+    ILogger<PlaybackStateService> logger)
 {
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -67,8 +69,7 @@ public sealed class PlaybackStateService(
         row.DeviceId = live.DeviceId;
         row.Revision += 1;
         row.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync(ct);
-        return ToSnapshot(row);
+        return await CommitAndBroadcastAsync(userId, row, ct);
     }
 
     public async Task<PlaybackSnapshotDto> PutAsync(Guid userId, PutPlaybackStateRequest req, CancellationToken ct)
@@ -126,8 +127,26 @@ public sealed class PlaybackStateService(
         next = PlaybackQueue.PruneSnapshot(next, known);
         WriteRow(row, next, req.WriterSessionId, live.DeviceId);
         row.Revision += 1;
+        return await CommitAndBroadcastAsync(userId, row, ct);
+    }
+
+    private async Task<PlaybackSnapshotDto> CommitAndBroadcastAsync(
+        Guid userId,
+        PlaybackState row,
+        CancellationToken ct)
+    {
         await db.SaveChangesAsync(ct);
-        return ToSnapshot(row);
+        var snapshot = ToSnapshot(row);
+        try
+        {
+            await hub.PlaybackSnapshotAsync(userId, snapshot, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to broadcast PlaybackSnapshot for {UserId}", userId);
+        }
+
+        return snapshot;
     }
 
     private async Task HitStateLimitAsync(Guid userId, CancellationToken ct)

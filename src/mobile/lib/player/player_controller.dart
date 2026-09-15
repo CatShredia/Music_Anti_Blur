@@ -9,7 +9,9 @@ import '../catalog/catalog_models.dart';
 import '../overrides/local_binding_store.dart';
 import '../overrides/override_models.dart';
 import 'audio_handler.dart';
+import 'playback_hub.dart';
 import 'playback_models.dart';
+import 'playback_sync.dart';
 import 'player_queue.dart';
 
 class PlayerScope extends InheritedNotifier<PlayerController> {
@@ -57,10 +59,15 @@ class PlayerController extends ChangeNotifier {
   int _revision = 0;
   int _playGen = 0;
   Timer? _progressTimer;
+  Timer? _followTimer;
   Future<void> _writes = Future.value();
   Future<void>? _expanding;
   List<QueueItem>? _orderBeforeShuffle;
   DateTime? _lastStateWrite;
+  DateTime? _remoteUpdatedAt;
+  int _remotePositionMs = 0;
+  PlaybackHubClient? _hub;
+  bool _followingRemote = false;
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration?>? _durationSub;
   StreamSubscription<PlayerState>? _stateSub;
@@ -72,6 +79,9 @@ class PlayerController extends ChangeNotifier {
     handler.onSkipPrevious = () => unawaited(previous());
     handler.onCompleted = () => unawaited(_onCompleted());
     _positionSub = handler.positionStream.listen((value) {
+      if (_followingRemote) {
+        return;
+      }
       position = value;
       unawaited(_maybeRefreshNearExpiry());
       _scheduleProgress();
@@ -84,6 +94,9 @@ class PlayerController extends ChangeNotifier {
       }
     });
     _stateSub = handler.playerStateStream.listen((state) {
+      if (_followingRemote) {
+        return;
+      }
       playing = state.playing;
       notifyListeners();
     });
@@ -99,10 +112,16 @@ class PlayerController extends ChangeNotifier {
       return;
     }
     _restored = true;
+    unawaited(_connectHub());
     final gen = _playGen;
     try {
       final snapshot = await api.playbackState();
       if (gen != _playGen || _starting || playing) {
+        return;
+      }
+      final myDevice = await api.deviceId();
+      if (snapshot.deviceId != null && snapshot.deviceId != myDevice) {
+        await _applyRemoteSnapshot(snapshot);
         return;
       }
       await _applySnapshot(snapshot, autoplay: false);
@@ -145,6 +164,9 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> setItemSource(String sourcePreference) async {
+    if (_followingRemote) {
+      return;
+    }
     final current = queue.current;
     if (current == null) {
       return;
@@ -155,7 +177,7 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> setQuality(String quality) async {
-    if (queue.current == null) {
+    if (_followingRemote || queue.current == null) {
       return;
     }
     requestedQuality = quality;
@@ -163,6 +185,10 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> togglePlay() async {
+    if (_followingRemote) {
+      await playHere();
+      return;
+    }
     if (track == null && queue.current != null) {
       await _playCurrent(resumeIfSame: false, autoplay: true, seekTo: position);
       await _persistCommand(playing: true);
@@ -180,7 +206,27 @@ class PlayerController extends ChangeNotifier {
     }
   }
 
+  Future<void> playHere() async {
+    if (queue.current == null) {
+      return;
+    }
+    _stopFollowing();
+    _starting = true;
+    try {
+      await _playCurrent(resumeIfSame: false, autoplay: true, seekTo: position);
+    } catch (_) {
+      unawaited(_persistCommand(playing: false));
+      rethrow;
+    } finally {
+      _starting = false;
+    }
+    await _persistCommand(playing: true);
+  }
+
   Future<void> seek(Duration value) async {
+    if (_followingRemote) {
+      return;
+    }
     var target = value;
     if (target.isNegative) {
       target = Duration.zero;
@@ -196,6 +242,9 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> next() async {
+    if (_followingRemote) {
+      return;
+    }
     final before = queue.currentItemId;
     final nextQueue = queue.skipNext();
     if (nextQueue.currentItemId == before) {
@@ -208,6 +257,9 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> playQueueItem(String itemId) async {
+    if (_followingRemote) {
+      return;
+    }
     if (queue.currentItemId == itemId) {
       return;
     }
@@ -226,6 +278,9 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> previous() async {
+    if (_followingRemote) {
+      return;
+    }
     if (position > const Duration(seconds: 3)) {
       await seek(Duration.zero);
       return;
@@ -242,12 +297,18 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> cycleRepeat() async {
+    if (_followingRemote) {
+      return;
+    }
     queue = queue.cycleRepeat();
     notifyListeners();
     await _persistCommand(playing: playing);
   }
 
   Future<void> toggleShuffle() async {
+    if (_followingRemote) {
+      return;
+    }
     if (queue.shuffle) {
       final restored = _orderBeforeShuffle;
       _orderBeforeShuffle = null;
@@ -283,6 +344,9 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> resetLocal() async {
+    await _hub?.stop();
+    _hub = null;
+    _stopFollowing();
     _sessionId = null;
     _revision = 0;
     _restored = false;
@@ -299,9 +363,11 @@ class PlayerController extends ChangeNotifier {
 
   bool get hasQueue => queue.current != null;
 
-  bool get canSkipNext => queue.hasNext;
+  bool get followingRemote => _followingRemote;
 
-  bool get canSkipPrevious => queue.hasPrevious || position > Duration.zero;
+  bool get canSkipNext => !_followingRemote && queue.hasNext;
+
+  bool get canSkipPrevious => !_followingRemote && (queue.hasPrevious || position > Duration.zero);
 
   QueueTrackLabel labelFor(QueueItem item) {
     final cached = queueLabels[item.trackId];
@@ -315,6 +381,7 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _playAndPersist({required bool resumeIfSame}) async {
+    _stopFollowing();
     _starting = true;
     try {
       await _playCurrent(resumeIfSame: resumeIfSame, autoplay: true);
@@ -481,7 +548,7 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _onCompleted() async {
-    if (_completing) {
+    if (_followingRemote || _completing) {
       return;
     }
     _completing = true;
@@ -512,7 +579,7 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _applySnapshot(PlaybackSnapshot snapshot, {required bool autoplay}) async {
-    if (_starting || playing) {
+    if (_starting || playing || _followingRemote) {
       return;
     }
     _revision = snapshot.revision;
@@ -535,6 +602,167 @@ class PlayerController extends ChangeNotifier {
     } on ApiException catch (e) {
       debugPrint('playback restore track failed: $e');
     }
+  }
+
+  Future<void> _connectHub() async {
+    if (!await api.hasSession()) {
+      return;
+    }
+    _hub ??= PlaybackHubClient(
+      url: api.hubUrl,
+      tokenFactory: _hubToken,
+      onSnapshot: (snapshot) => unawaited(_onHubSnapshot(snapshot)),
+      onReconnecting: () async {
+        await api.refresh();
+      },
+      onReconnected: () async {
+        try {
+          await _onHubSnapshot(await api.playbackState());
+        } catch (e) {
+          debugPrint('playback hub resync failed: $e');
+        }
+      },
+    );
+    try {
+      await _hub!.start();
+    } catch (e) {
+      debugPrint('playback hub connect failed: $e');
+    }
+  }
+
+  Future<String> _hubToken() async {
+    var token = await api.accessToken();
+    if (token != null && token.isNotEmpty) {
+      return token;
+    }
+    await api.refresh();
+    return await api.accessToken() ?? '';
+  }
+
+  Future<void> _onHubSnapshot(PlaybackSnapshot snapshot) async {
+    final myDevice = await api.deviceId();
+    if (shouldIgnoreRemoteSnapshot(
+      localRevision: _revision,
+      incomingRevision: snapshot.revision,
+      localDeviceId: myDevice,
+      incomingDeviceId: snapshot.deviceId,
+    )) {
+      if (snapshot.revision > _revision) {
+        _revision = snapshot.revision;
+      }
+      return;
+    }
+    await _applyRemoteSnapshot(snapshot);
+  }
+
+  Future<void> _applyRemoteSnapshot(PlaybackSnapshot snapshot) async {
+    _playGen++;
+    _progressTimer?.cancel();
+    _sessionId = null;
+    _followingRemote = true;
+    _revision = snapshot.revision;
+    _remoteUpdatedAt = snapshot.updatedAt ?? DateTime.now().toUtc();
+    _remotePositionMs = snapshot.positionMs;
+    queue = snapshot.queue;
+    requestedQuality = snapshot.qualityCode;
+    resolvedSource = snapshot.source;
+    resolvedQuality = snapshot.qualityCode;
+    playing = snapshot.isPlaying;
+    loading = false;
+    position = Duration(
+      milliseconds: interpolatePositionMs(
+        positionMs: snapshot.positionMs,
+        isPlaying: snapshot.isPlaying,
+        updatedAt: _remoteUpdatedAt!,
+        now: DateTime.now().toUtc(),
+        durationMs: duration.inMilliseconds > 0 ? duration.inMilliseconds : null,
+      ),
+    );
+    notifyListeners();
+    try {
+      await handler.pause();
+    } catch (e) {
+      debugPrint('playback follow pause failed: $e');
+    }
+    _syncFollowClock();
+    unawaited(_hydrateFollowedTrack(snapshot));
+  }
+
+  Future<void> _hydrateFollowedTrack(PlaybackSnapshot snapshot) async {
+    final id = snapshot.trackId ?? queue.current?.trackId;
+    if (id == null) {
+      track = null;
+      notifyListeners();
+      return;
+    }
+    try {
+      final detail = await api.track(id);
+      if (!_followingRemote) {
+        return;
+      }
+      track = detail;
+      queueLabels[detail.id] = QueueTrackLabel(title: detail.title, subtitle: detail.artist.name);
+      if (detail.durationMs != null && detail.durationMs! > 0) {
+        duration = Duration(milliseconds: detail.durationMs!);
+        _syncFollowClock();
+      }
+      notifyListeners();
+      if (detail.album.id.isNotEmpty) {
+        try {
+          final album = await api.album(detail.album.id);
+          if (_followingRemote) {
+            _rememberAlbum(album);
+            notifyListeners();
+          }
+        } catch (_) {}
+      }
+    } catch (e) {
+      debugPrint('playback follow track failed: $e');
+      if (_followingRemote && track?.id != id) {
+        final item = queue.current;
+        track = TrackDetail(
+          id: id,
+          title: item != null ? labelFor(item).title : 'Трек',
+          trackNumber: 1,
+          artist: ArtistRef(id: '', name: ''),
+          album: AlbumRef(id: '', title: ''),
+          availableQualities: const [],
+        );
+        notifyListeners();
+      }
+    }
+    unawaited(_hydrateQueueLabels());
+  }
+
+  void _stopFollowing() {
+    _followTimer?.cancel();
+    _followTimer = null;
+    _followingRemote = false;
+    _remoteUpdatedAt = null;
+    _remotePositionMs = 0;
+  }
+
+  void _syncFollowClock() {
+    _followTimer?.cancel();
+    if (!_followingRemote || !playing) {
+      return;
+    }
+    _followTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      final started = _remoteUpdatedAt;
+      if (!_followingRemote || started == null) {
+        return;
+      }
+      position = Duration(
+        milliseconds: interpolatePositionMs(
+          positionMs: _remotePositionMs,
+          isPlaying: playing,
+          updatedAt: started,
+          now: DateTime.now().toUtc(),
+          durationMs: duration.inMilliseconds > 0 ? duration.inMilliseconds : null,
+        ),
+      );
+      notifyListeners();
+    });
   }
 
   Future<void> _expandQueueFromAlbum() {
@@ -640,7 +868,7 @@ class PlayerController extends ChangeNotifier {
   Future<void> _persistCommand({required bool playing}) async {
     _progressTimer?.cancel();
     await _enqueueWrite(() async {
-      if (!await api.hasSession() || queue.isEmpty && track == null) {
+      if (_followingRemote || !await api.hasSession() || queue.isEmpty && track == null) {
         return;
       }
       await _putState(
@@ -659,7 +887,7 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> _persistProgress() async {
     await _enqueueWrite(() async {
-      if (!await api.hasSession() || _sessionId == null || queue.current == null) {
+      if (_followingRemote || !await api.hasSession() || _sessionId == null || queue.current == null) {
         return;
       }
       await _putState(
@@ -673,11 +901,11 @@ class PlayerController extends ChangeNotifier {
   }
 
   void _scheduleProgress() {
-    if (_sessionId == null || !playing) {
+    if (_followingRemote || _sessionId == null || !playing) {
       return;
     }
     _progressTimer?.cancel();
-    _progressTimer = Timer(const Duration(seconds: 8), () {
+    _progressTimer = Timer(const Duration(milliseconds: 500), () {
       unawaited(_persistProgress());
     });
   }
@@ -698,10 +926,23 @@ class PlayerController extends ChangeNotifier {
       );
       _revision = snapshot.revision;
     } on ApiException catch (e) {
-      if (e.code == 'revision_conflict' || e.code == 'not_writer') {
+      if (e.code == 'not_writer') {
         _sessionId = null;
         if (e.snapshot != null) {
-          _revision = e.snapshot!.revision;
+          await _applyRemoteSnapshot(e.snapshot!);
+        }
+        return;
+      }
+      if (e.code == 'revision_conflict') {
+        final snapshot = e.snapshot;
+        if (snapshot != null) {
+          final myDevice = await api.deviceId();
+          if (snapshot.deviceId != null && snapshot.deviceId != myDevice) {
+            _sessionId = null;
+            await _applyRemoteSnapshot(snapshot);
+            return;
+          }
+          _revision = snapshot.revision;
         }
         if (kind == 'command') {
           try {
@@ -711,13 +952,13 @@ class PlayerController extends ChangeNotifier {
               return;
             }
             await _paceStateWrite();
-            final snapshot = await api.putPlaybackState(
+            final retried = await api.putPlaybackState(
               expectedRevision: _revision,
               writerSessionId: sessionId,
               kind: kind,
               state: state,
             );
-            _revision = snapshot.revision;
+            _revision = retried.revision;
           } catch (retryError) {
             debugPrint('playback persist retry failed: $retryError');
           }
@@ -837,6 +1078,8 @@ class PlayerController extends ChangeNotifier {
   @override
   void dispose() {
     _progressTimer?.cancel();
+    _followTimer?.cancel();
+    unawaited(_hub?.stop());
     unawaited(_positionSub?.cancel());
     unawaited(_durationSub?.cancel());
     unawaited(_stateSub?.cancel());

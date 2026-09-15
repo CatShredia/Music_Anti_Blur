@@ -107,7 +107,9 @@ class MiniPlayerBar extends StatelessWidget {
                     ),
                   ),
                   IconButton(
-                    tooltip: player.playing ? 'Пауза' : 'Play',
+                    tooltip: player.followingRemote
+                        ? 'Играть здесь'
+                        : (player.playing ? 'Пауза' : 'Play'),
                     onPressed: () => player.togglePlay(),
                     icon: Icon(
                       player.playing ? Icons.pause : Icons.play_arrow,

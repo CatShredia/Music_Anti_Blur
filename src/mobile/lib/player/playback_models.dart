@@ -11,6 +11,7 @@ class PlaybackSnapshot {
     this.trackId,
     this.qualityCode,
     this.source,
+    this.updatedAt,
   });
 
   final int revision;
@@ -22,20 +23,36 @@ class PlaybackSnapshot {
   final String? qualityCode;
   final String? source;
   final PlayerQueue queue;
+  final DateTime? updatedAt;
 
   factory PlaybackSnapshot.fromJson(Map<String, dynamic> json) => PlaybackSnapshot(
         revision: (json['revision'] as num?)?.toInt() ?? 0,
-        writerSessionId: json['writerSessionId'] as String?,
-        deviceId: json['deviceId'] as String?,
-        trackId: json['trackId'] as String?,
+        writerSessionId: json['writerSessionId']?.toString(),
+        deviceId: json['deviceId']?.toString(),
+        trackId: json['trackId']?.toString(),
         positionMs: (json['positionMs'] as num?)?.toInt() ?? 0,
         isPlaying: json['isPlaying'] as bool? ?? false,
         qualityCode: json['qualityCode'] as String?,
         source: json['source'] as String?,
-        queue: json['queue'] is Map<String, dynamic>
-            ? PlayerQueue.fromJson(json['queue'] as Map<String, dynamic>)
+        queue: json['queue'] is Map
+            ? PlayerQueue.fromJson(_stringKeyMap(json['queue'] as Map))
             : PlayerQueue.empty,
+        updatedAt: _parseTime(json['updatedAt']),
       );
+}
+
+Map<String, dynamic> _stringKeyMap(Map<dynamic, dynamic> value) => {
+      for (final entry in value.entries) entry.key.toString(): entry.value,
+    };
+
+DateTime? _parseTime(Object? value) {
+  if (value is DateTime) {
+    return value.toUtc();
+  }
+  if (value == null) {
+    return null;
+  }
+  return DateTime.tryParse(value.toString())?.toUtc();
 }
 
 class CreatePlaybackSession {

@@ -18,8 +18,8 @@ class QueueItem {
       };
 
   factory QueueItem.fromJson(Map<String, dynamic> json) => QueueItem(
-        itemId: json['itemId'] as String,
-        trackId: json['trackId'] as String,
+        itemId: json['itemId']?.toString() ?? '',
+        trackId: json['trackId']?.toString() ?? '',
         sourcePreference: json['sourcePreference'] as String? ?? 'auto',
       );
 }
@@ -260,10 +260,13 @@ class PlayerQueue {
     return PlayerQueue(
       repeat: json['repeat'] as String? ?? 'off',
       shuffle: json['shuffle'] as bool? ?? false,
-      currentItemId: json['currentItemId'] as String?,
+      currentItemId: json['currentItemId']?.toString(),
       items: [
         for (final item in rawItems)
-          if (item is Map<String, dynamic>) QueueItem.fromJson(item),
+          if (item is Map)
+            QueueItem.fromJson({
+              for (final entry in item.entries) entry.key.toString(): entry.value,
+            }),
       ],
     );
   }

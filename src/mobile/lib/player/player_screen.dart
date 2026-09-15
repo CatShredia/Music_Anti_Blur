@@ -87,7 +87,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         showBack: true,
         onBack: () => popOrGo(context, '/home'),
       ),
-      body: track == null
+      body: track == null && !player.hasQueue
           ? const Center(
               child: Text(
                 'Ничего не играет',
@@ -99,11 +99,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
               children: [
                 CatalogCover(coverObjectKey: player.coverObjectKey),
                 const SizedBox(height: 16),
-                Text(track.title, style: Theme.of(context).textTheme.headlineMedium),
+                Text(track?.title ?? 'Трек', style: Theme.of(context).textTheme.headlineMedium),
                 const SizedBox(height: 4),
-                Text(track.artist.name, style: Theme.of(context).textTheme.titleMedium),
+                Text(track?.artist.name ?? '', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 4),
-                Text(track.album.title, style: Theme.of(context).textTheme.bodySmall),
+                Text(track?.album.title ?? '', style: Theme.of(context).textTheme.bodySmall),
                 if (player.resolvedSource != null) ...[
                   const SizedBox(height: 4),
                   Text(
@@ -116,13 +116,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   min: 0,
                   max: maxMs <= 0 ? 1 : maxMs,
                   value: maxMs <= 0 ? 0 : valueMs.clamp(0, maxMs),
-                  onChanged: maxMs <= 0
+                  onChanged: maxMs <= 0 || player.followingRemote
                       ? null
                       : (value) => setState(() {
                             _dragging = true;
                             _dragMs = value;
                           }),
-                  onChangeEnd: maxMs <= 0
+                  onChangeEnd: maxMs <= 0 || player.followingRemote
                       ? null
                       : (value) async {
                           setState(() => _dragging = false);
@@ -204,6 +204,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                   ],
                 ),
+                if (player.followingRemote) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    player.playing ? 'Играет на другом устройстве' : 'На другом устройстве на паузе',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 12),
+                  VizePrimaryButton(
+                    label: 'Играть здесь',
+                    onPressed: () => _run(player.playHere),
+                  ),
+                ],
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
