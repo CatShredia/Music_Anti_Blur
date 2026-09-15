@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../catalog/catalog_screens.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import 'player_controller.dart';
+import 'player_queue.dart';
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({super.key, required this.player});
@@ -17,6 +20,8 @@ class PlayerScreen extends StatefulWidget {
 class _PlayerScreenState extends State<PlayerScreen> {
   bool _dragging = false;
   double _dragMs = 0;
+  bool _draggingVolume = false;
+  double _dragVolume = 1;
 
   PlayerController get player => widget.player;
 
@@ -58,6 +63,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  String get _repeatTooltip => switch (player.queue.repeat) {
+        'all' => 'Повтор очереди',
+        'one' => 'Повтор трека',
+        _ => 'Повтор выключен',
+      };
+
   @override
   Widget build(BuildContext context) {
     final track = player.track;
@@ -66,10 +77,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ? _dragMs
         : player.position.inMilliseconds.clamp(0, maxMs.isNaN ? 0 : maxMs.toInt()).toDouble();
     final qualities = track?.availableQualities ?? const [];
+    final volume = _draggingVolume ? _dragVolume : player.volume;
 
     return VizeScaffold(
       showMiniPlayer: false,
-      header: VizeHeader(title: track?.title ?? 'Плеер'),
+      header: VizeHeader(
+        title: track?.title ?? 'Плеер',
+        showBack: true,
+        onBack: () => popOrGo(context, '/home'),
+      ),
       body: track == null
           ? const Center(
               child: Text(
@@ -80,7 +96,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
               children: [
-                const CatalogCover(coverObjectKey: null),
+                CatalogCover(coverObjectKey: player.coverObjectKey),
                 const SizedBox(height: 16),
                 Text(track.title, style: Theme.of(context).textTheme.headlineMedium),
                 const SizedBox(height: 4),
@@ -118,25 +134,65 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(
+                      volume <= 0 ? Icons.volume_off : Icons.volume_up,
+                      color: VizeColors.accentMuted,
+                      size: 22,
+                    ),
+                    Expanded(
+                      child: Slider(
+                        min: 0,
+                        max: 1,
+                        value: volume.clamp(0, 1),
+                        onChanged: (value) {
+                          setState(() {
+                            _draggingVolume = true;
+                            _dragVolume = value;
+                          });
+                          unawaited(player.setVolume(value));
+                        },
+                        onChangeEnd: (value) async {
+                          setState(() => _draggingVolume = false);
+                          await player.setVolume(value);
+                        },
+                      ),
+                    ),
+                    Text(
+                      '${(volume * 100).round()}%',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     IconButton(
                       tooltip: 'Предыдущий',
-                      onPressed: player.loading ? null : () => _run(player.previous),
-                      icon: const Icon(Icons.skip_previous, color: VizeColors.accent, size: 36),
+                      onPressed: player.canSkipPrevious ? () => _run(player.previous) : null,
+                      icon: Icon(
+                        Icons.skip_previous,
+                        color: player.canSkipPrevious ? VizeColors.accent : VizeColors.accentDim,
+                        size: 36,
+                      ),
                     ),
                     IconButton(
                       iconSize: 56,
                       color: VizeColors.accent,
-                      onPressed: player.loading ? null : () => _run(player.togglePlay),
+                      onPressed: () => _run(player.togglePlay),
                       icon: Icon(player.playing ? Icons.pause_circle_filled : Icons.play_circle_filled),
                     ),
                     IconButton(
                       tooltip: 'Следующий',
-                      onPressed: player.loading ? null : () => _run(player.next),
-                      icon: const Icon(Icons.skip_next, color: VizeColors.accent, size: 36),
+                      onPressed: player.canSkipNext ? () => _run(player.next) : null,
+                      icon: Icon(
+                        Icons.skip_next,
+                        color: player.canSkipNext ? VizeColors.accent : VizeColors.accentDim,
+                        size: 36,
+                      ),
                     ),
                   ],
                 ),
@@ -144,7 +200,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     IconButton(
-                      tooltip: 'Повтор',
+                      tooltip: _repeatTooltip,
                       onPressed: () => player.cycleRepeat(),
                       icon: Icon(
                         player.queue.repeat == 'one' ? Icons.repeat_one : Icons.repeat,
@@ -152,16 +208,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       ),
                     ),
                     IconButton(
-                      tooltip: 'Перемешать',
-                      onPressed: () => player.toggleShuffle(),
+                      tooltip: player.queue.shuffle ? 'Перемешивание включено' : 'Перемешать',
+                      onPressed: () => _run(player.toggleShuffle),
+                      style: IconButton.styleFrom(
+                        backgroundColor: player.queue.shuffle ? VizeColors.surface : Colors.transparent,
+                      ),
                       icon: Icon(
                         Icons.shuffle,
-                        color: player.queue.shuffle ? VizeColors.accent : VizeColors.accentMuted,
+                        color: player.queue.shuffle ? VizeColors.accent : VizeColors.accentDim,
                       ),
                     ),
                   ],
                 ),
-                if (player.loading) ...[
+                if (player.loading && !player.playing) ...[
                   const SizedBox(height: 12),
                   const Center(child: CircularProgressIndicator()),
                 ],
@@ -193,8 +252,88 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       style: TextStyle(color: VizeColors.accentMuted, fontSize: 14),
                     ),
                   ),
+                const SizedBox(height: 28),
+                Text(
+                  'Очередь · ${player.queue.items.length}',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 12),
+                if (player.queue.items.isEmpty)
+                  const Text(
+                    'Очередь пуста.',
+                    style: TextStyle(color: VizeColors.accentMuted, fontSize: 14),
+                  )
+                else
+                  for (final item in player.queue.items) _QueueTile(player: player, item: item, onTap: _run),
               ],
             ),
+    );
+  }
+}
+
+class _QueueTile extends StatelessWidget {
+  const _QueueTile({
+    required this.player,
+    required this.item,
+    required this.onTap,
+  });
+
+  final PlayerController player;
+  final QueueItem item;
+  final Future<void> Function(Future<void> Function() action) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = item.itemId == player.queue.currentItemId;
+    final label = player.labelFor(item);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: current ? VizeColors.surface : VizeColors.bgElevated,
+        borderRadius: BorderRadius.circular(VizeRadii.card),
+        child: InkWell(
+          onTap: current ? null : () => onTap(() => player.playQueueItem(item.itemId)),
+          borderRadius: BorderRadius.circular(VizeRadii.card),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Icon(
+                  current && player.playing ? Icons.volume_up : Icons.audiotrack_outlined,
+                  color: current ? VizeColors.accent : VizeColors.accentMuted,
+                  size: 20,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: VizeColors.text,
+                          fontWeight: current ? FontWeight.w700 : FontWeight.w600,
+                        ),
+                      ),
+                      if (label.subtitle.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          label.subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

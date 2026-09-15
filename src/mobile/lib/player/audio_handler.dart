@@ -57,11 +57,18 @@ class MusicAudioHandler extends BaseAudioHandler with SeekHandler {
     }
   }
 
+  /// just_audio's [AudioPlayer.play] Future completes on pause/stop/end, not on start.
   @override
-  Future<void> play() => _player.play();
+  Future<void> play() async {
+    unawaited(_player.play());
+  }
 
   @override
   Future<void> pause() => _player.pause();
+
+  Future<void> setVolume(double volume) => _player.setVolume(volume.clamp(0, 1));
+
+  double get volume => _player.volume;
 
   @override
   Future<void> seek(Duration position) => _player.seek(position);

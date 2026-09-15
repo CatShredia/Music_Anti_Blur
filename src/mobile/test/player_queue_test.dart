@@ -50,6 +50,32 @@ void main() {
     expect(shuffled.shuffle, isTrue);
     expect(shuffled.items.first.itemId, 'i2');
     expect(shuffled.items.map((e) => e.itemId).toList(), ['i2', 'i3', 'i1']);
+    final restored = shuffled.withOrder(const [a, b, c], shuffle: false);
+    expect(restored.shuffle, isFalse);
+    expect(restored.currentItemId, 'i2');
+    expect(restored.items.map((e) => e.itemId).toList(), ['i1', 'i2', 'i3']);
+  });
+
+  test('withShuffle rotates rest when mix keeps the same order', () {
+    final queue = PlayerQueue(currentItemId: 'i1', items: const [a, b, c]);
+    final shuffled = queue.withShuffle(true, shuffleItems: (items) => items);
+    expect(shuffled.items.map((e) => e.itemId).toList(), ['i1', 'i3', 'i2']);
+  });
+
+  test('replacingWithAlbum keeps current itemId and fills the rest', () {
+    final queue = PlayerQueue.single('t2', itemId: 'keep');
+    final expanded = queue.replacingWithAlbum(
+      ['t1', 't2', 't3'],
+      newId: () {
+        var n = 0;
+        return () => 'n-${n++}';
+      }(),
+    );
+    expect(expanded.currentItemId, 'keep');
+    expect(expanded.current?.trackId, 't2');
+    expect(expanded.items.map((e) => e.trackId).toList(), ['t1', 't2', 't3']);
+    expect(expanded.hasNext, isTrue);
+    expect(expanded.hasPrevious, isTrue);
   });
 
   test('json keeps currentItemId null', () {

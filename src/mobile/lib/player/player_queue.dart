@@ -96,6 +96,35 @@ class PlayerQueue {
         items: items ?? this.items,
       );
 
+  bool get hasNext => skipNext().currentItemId != currentItemId;
+
+  bool get hasPrevious => skipPrevious().currentItemId != currentItemId;
+
+  /// Keep the playing item's [itemId] so persist/progress stay consistent.
+  PlayerQueue replacingWithAlbum(
+    Iterable<String> trackIds, {
+    String source = 'catalog',
+    String Function()? newId,
+  }) {
+    final currentItem = current;
+    final idOf = newId ?? const Uuid().v4;
+    final items = <QueueItem>[];
+    for (final trackId in trackIds) {
+      if (currentItem != null && trackId == currentItem.trackId) {
+        items.add(currentItem);
+      } else {
+        items.add(QueueItem(itemId: idOf(), trackId: trackId, sourcePreference: source));
+      }
+    }
+    if (items.isEmpty) {
+      return this;
+    }
+    return copyWith(
+      items: items,
+      currentItemId: currentItem?.itemId ?? items.first.itemId,
+    );
+  }
+
   PlayerQueue skipNext() {
     if (items.isEmpty) {
       return this;
@@ -161,12 +190,51 @@ class PlayerQueue {
     }
     final currentItem = current;
     final rest = items.where((item) => item.itemId != currentItemId).toList();
-    final shuffled = shuffleItems(rest);
+    var shuffled = shuffleItems(rest);
+    if (rest.length > 1 && _sameItemIds(shuffled, rest) && shuffled.isNotEmpty) {
+      shuffled = [...shuffled.skip(1), shuffled.first];
+    }
     return copyWith(
       shuffle: true,
-      items: [?currentItem, ...shuffled],
+      items: [
+        if (currentItem != null) currentItem,
+        ...shuffled,
+      ],
       currentItemId: currentItem?.itemId,
     );
+  }
+
+  PlayerQueue withOrder(List<QueueItem> ordered, {bool shuffle = false}) {
+    if (ordered.isEmpty) {
+      return copyWith(shuffle: shuffle);
+    }
+    final known = {for (final item in items) item.itemId: item};
+    final result = <QueueItem>[];
+    final seen = <String>{};
+    for (final item in ordered) {
+      final live = known[item.itemId] ?? item;
+      if (seen.add(live.itemId)) {
+        result.add(live);
+      }
+    }
+    for (final item in items) {
+      if (seen.add(item.itemId)) {
+        result.add(item);
+      }
+    }
+    return copyWith(shuffle: shuffle, items: result, currentItemId: currentItemId);
+  }
+
+  static bool _sameItemIds(List<QueueItem> a, List<QueueItem> b) {
+    if (a.length != b.length) {
+      return false;
+    }
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].itemId != b[i].itemId) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Map<String, dynamic> toJson() => {

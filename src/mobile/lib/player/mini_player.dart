@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../theme.dart';
 import 'player_controller.dart';
+import 'player_nav.dart';
 
 class PlayerNoticeHost extends StatefulWidget {
   const PlayerNoticeHost({
@@ -71,7 +71,7 @@ class MiniPlayerBar extends StatelessWidget {
         return Material(
           color: VizeColors.bgElevated,
           child: InkWell(
-            onTap: () => context.push('/player'),
+            onTap: () => openPlayer(context),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
               child: Row(
@@ -97,7 +97,7 @@ class MiniPlayerBar extends StatelessWidget {
                   ),
                   IconButton(
                     tooltip: player.playing ? 'Пауза' : 'Play',
-                    onPressed: player.loading ? null : () => player.togglePlay(),
+                    onPressed: () => player.togglePlay(),
                     icon: Icon(
                       player.playing ? Icons.pause : Icons.play_arrow,
                       color: VizeColors.accent,
@@ -105,8 +105,11 @@ class MiniPlayerBar extends StatelessWidget {
                   ),
                   IconButton(
                     tooltip: 'Следующий',
-                    onPressed: player.loading ? null : () => _next(context, player),
-                    icon: const Icon(Icons.skip_next, color: VizeColors.accent),
+                    onPressed: player.canSkipNext ? () => _next(context, player) : null,
+                    icon: Icon(
+                      Icons.skip_next,
+                      color: player.canSkipNext ? VizeColors.accent : VizeColors.accentDim,
+                    ),
                   ),
                 ],
               ),

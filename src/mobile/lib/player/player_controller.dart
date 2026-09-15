@@ -36,6 +36,9 @@ class PlayerController extends ChangeNotifier {
   int noticeEpoch = 0;
   bool loading = false;
   bool playing = false;
+  double volume = 1;
+  String? coverObjectKey;
+  final Map<String, QueueTrackLabel> queueLabels = {};
   Duration position = Duration.zero;
   Duration duration = Duration.zero;
 
@@ -50,6 +53,8 @@ class PlayerController extends ChangeNotifier {
   int _playGen = 0;
   Timer? _progressTimer;
   Future<void> _writes = Future.value();
+  Future<void>? _expanding;
+  List<QueueItem>? _orderBeforeShuffle;
   DateTime? _lastStateWrite;
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration?>? _durationSub;
@@ -107,8 +112,12 @@ class PlayerController extends ChangeNotifier {
     String? quality,
   }) async {
     requestedQuality = quality;
-    queue = PlayerQueue.single(trackId, source: source).copyWith(repeat: queue.repeat);
+    queue = PlayerQueue.single(trackId, source: source).copyWith(
+      repeat: queue.repeat,
+      shuffle: queue.shuffle,
+    );
     await _playAndPersist(resumeIfSame: true);
+    unawaited(_expandQueueFromAlbum());
   }
 
   Future<void> playAlbum(
@@ -121,7 +130,12 @@ class PlayerController extends ChangeNotifier {
     queue = PlayerQueue.album(
       ordered.map((item) => item.id),
       startTrackId: startTrackId,
-    ).copyWith(repeat: queue.repeat);
+    ).copyWith(repeat: queue.repeat, shuffle: queue.shuffle);
+    _rememberAlbum(album);
+    _orderBeforeShuffle = [...queue.items];
+    if (queue.shuffle) {
+      queue = _shuffleQueue(queue);
+    }
     await _playAndPersist(resumeIfSame: false);
   }
 
@@ -170,11 +184,30 @@ class PlayerController extends ChangeNotifier {
     final before = queue.currentItemId;
     final nextQueue = queue.skipNext();
     if (nextQueue.currentItemId == before) {
+      _emitNotice(queue.repeat == 'off' ? 'Это последний трек очереди' : 'В очереди один трек');
       return;
     }
     queue = nextQueue;
     notifyListeners();
     await _playAndPersist(resumeIfSame: false);
+  }
+
+  Future<void> playQueueItem(String itemId) async {
+    if (queue.currentItemId == itemId) {
+      return;
+    }
+    if (!queue.items.any((item) => item.itemId == itemId)) {
+      return;
+    }
+    queue = queue.copyWith(currentItemId: itemId);
+    notifyListeners();
+    await _playAndPersist(resumeIfSame: false);
+  }
+
+  Future<void> setVolume(double value) async {
+    volume = value.clamp(0, 1);
+    await handler.setVolume(volume);
+    notifyListeners();
   }
 
   Future<void> previous() async {
@@ -200,14 +233,29 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> toggleShuffle() async {
-    queue = queue.withShuffle(
-      !queue.shuffle,
-      shuffleItems: (items) {
-        final copy = [...items]..shuffle();
-        return copy;
-      },
-    );
+    if (queue.shuffle) {
+      final restored = _orderBeforeShuffle;
+      _orderBeforeShuffle = null;
+      queue = restored == null || restored.isEmpty
+          ? queue.copyWith(shuffle: false)
+          : queue.withOrder(restored, shuffle: false);
+      notifyListeners();
+      await _persistCommand(playing: playing);
+      return;
+    }
+
+    if (queue.items.length <= 1) {
+      await _expandQueueFromAlbum();
+    }
+    if (queue.items.length <= 1) {
+      _emitNotice('В очереди один трек — перемешивать нечего');
+      return;
+    }
+
+    _orderBeforeShuffle = [...queue.items];
+    queue = _shuffleQueue(queue);
     notifyListeners();
+    _emitNotice('Очередь перемешана');
     await _persistCommand(playing: playing);
   }
 
@@ -226,12 +274,30 @@ class PlayerController extends ChangeNotifier {
     _progressTimer?.cancel();
     queue = PlayerQueue.empty;
     track = null;
+    coverObjectKey = null;
+    queueLabels.clear();
+    _orderBeforeShuffle = null;
     await stop();
   }
 
   bool get followsSettings => requestedQuality == null || requestedQuality == 'auto';
 
   bool get hasQueue => queue.current != null;
+
+  bool get canSkipNext => queue.hasNext;
+
+  bool get canSkipPrevious => queue.hasPrevious || position > Duration.zero;
+
+  QueueTrackLabel labelFor(QueueItem item) {
+    final cached = queueLabels[item.trackId];
+    if (cached != null) {
+      return cached;
+    }
+    if (track?.id == item.trackId) {
+      return QueueTrackLabel(title: track!.title, subtitle: track!.artist.name);
+    }
+    return const QueueTrackLabel(title: 'Трек', subtitle: '');
+  }
 
   Future<void> _playAndPersist({required bool resumeIfSame}) async {
     _starting = true;
@@ -282,6 +348,7 @@ class PlayerController extends ChangeNotifier {
         return;
       }
       track = detail;
+      queueLabels[detail.id] = QueueTrackLabel(title: detail.title, subtitle: detail.artist.name);
       resolvedQuality = url.resolvedQuality;
       qualityFallbackFrom = url.qualityFallbackFrom;
       _expiresAt = url.expiresAt.toUtc();
@@ -303,6 +370,10 @@ class PlayerController extends ChangeNotifier {
       }
       if (resume > Duration.zero) {
         await _seekPreservingSeconds(resume);
+      }
+      if (gen == _playGen) {
+        loading = false;
+        notifyListeners();
       }
       if (autoplay) {
         await handler.play();
@@ -373,6 +444,7 @@ class PlayerController extends ChangeNotifier {
       return;
     }
     notifyListeners();
+    unawaited(_hydrateQueueLabels());
     try {
       await _playCurrent(
         resumeIfSame: false,
@@ -381,6 +453,76 @@ class PlayerController extends ChangeNotifier {
       );
     } on ApiException catch (e) {
       debugPrint('playback restore track failed: $e');
+    }
+  }
+
+  Future<void> _expandQueueFromAlbum() {
+    return _expanding ??= _expandQueueFromAlbumBody().whenComplete(() {
+      _expanding = null;
+    });
+  }
+
+  Future<void> _expandQueueFromAlbumBody() async {
+    final current = track;
+    if (current == null || queue.current == null) {
+      return;
+    }
+    try {
+      final album = await api.album(current.album.id);
+      if (queue.current?.trackId != current.id) {
+        return;
+      }
+      _rememberAlbum(album);
+      if (album.tracks.length <= 1) {
+        return;
+      }
+      final ordered = [...album.tracks]..sort((a, b) => a.trackNumber.compareTo(b.trackNumber));
+      queue = queue.replacingWithAlbum(ordered.map((item) => item.id));
+      _orderBeforeShuffle = [...queue.items];
+      if (queue.shuffle) {
+        queue = _shuffleQueue(queue);
+      }
+      notifyListeners();
+      await _persistCommand(playing: playing);
+    } catch (e) {
+      debugPrint('playback album queue expand failed: $e');
+    }
+  }
+
+  PlayerQueue _shuffleQueue(PlayerQueue source) => source.withShuffle(
+        true,
+        shuffleItems: (items) {
+          if (items.length <= 1) {
+            return [...items];
+          }
+          final copy = [...items]..shuffle();
+          if (copy.length > 1 && copy.first.itemId == items.first.itemId) {
+            copy.add(copy.removeAt(0));
+          }
+          return copy;
+        },
+      );
+
+  void _rememberAlbum(AlbumDetail album) {
+    coverObjectKey = album.coverObjectKey;
+    for (final item in album.tracks) {
+      queueLabels[item.id] = QueueTrackLabel(title: item.title, subtitle: album.artist.name);
+    }
+  }
+
+  Future<void> _hydrateQueueLabels() async {
+    final missing = [
+      for (final item in queue.items)
+        if (!queueLabels.containsKey(item.trackId)) item.trackId,
+    ];
+    for (final trackId in missing.take(40)) {
+      try {
+        final detail = await api.track(trackId);
+        queueLabels[trackId] = QueueTrackLabel(title: detail.title, subtitle: detail.artist.name);
+        notifyListeners();
+      } catch (e) {
+        debugPrint('playback queue label failed: $e');
+      }
     }
   }
 
@@ -571,11 +713,11 @@ class PlayerController extends ChangeNotifier {
       await handler.setUrl(url.url);
       try {
         await _seekPreservingSeconds(resume);
-        await handler.play();
+        unawaited(handler.play());
       } catch (e) {
         debugPrint('playback re-resolve seek failed, restarting at 0: $e');
         await handler.seek(Duration.zero);
-        await handler.play();
+        unawaited(handler.play());
       }
     } catch (e) {
       debugPrint('playback re-resolve failed: $e');
@@ -617,4 +759,11 @@ class PlayerController extends ChangeNotifier {
     unawaited(handler.release());
     super.dispose();
   }
+}
+
+class QueueTrackLabel {
+  const QueueTrackLabel({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
 }

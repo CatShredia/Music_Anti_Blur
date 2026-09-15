@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../api/api_client.dart';
 import '../player/player_controller.dart';
+import '../player/player_nav.dart';
 import '../theme.dart';
 import '../validation/catalog_rules.dart';
 import '../widgets.dart';
@@ -385,7 +386,7 @@ class _AlbumScreenState extends State<AlbumScreen> {
                               try {
                                 await player.playAlbum(album);
                                 if (context.mounted) {
-                                  context.push('/player');
+                                  openPlayer(context);
                                 }
                               } catch (e) {
                                 if (context.mounted) {
@@ -500,7 +501,7 @@ class _TrackScreenState extends State<TrackScreen> {
                               try {
                                 await player.playTrack(track.id);
                                 if (context.mounted) {
-                                  context.push('/player');
+                                  openPlayer(context);
                                 }
                               } catch (e) {
                                 if (context.mounted) {

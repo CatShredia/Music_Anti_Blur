@@ -118,10 +118,11 @@ class VizeTextField extends StatelessWidget {
 }
 
 void popOrGo(BuildContext context, String location) {
-  if (context.canPop()) {
-    context.pop();
+  final router = GoRouter.of(context);
+  if (router.canPop()) {
+    router.pop();
   } else {
-    context.go(location);
+    router.go(location);
   }
 }
 
@@ -150,16 +151,21 @@ class VizeHeader extends StatelessWidget {
     super.key,
     this.title,
     this.showLogo = false,
+    this.showBack,
+    this.onBack,
     this.trailing,
   });
 
   final String? title;
   final bool showLogo;
+  final bool? showBack;
+  final VoidCallback? onBack;
   final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
-    final canPop = context.canPop();
+    final canPop = GoRouter.of(context).canPop();
+    final backVisible = showBack ?? (canPop && !showLogo);
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
       child: Column(
@@ -167,10 +173,10 @@ class VizeHeader extends StatelessWidget {
         children: [
           Row(
             children: [
-              if (canPop && !showLogo)
+              if (backVisible)
                 IconButton(
                   tooltip: 'Назад',
-                  onPressed: () => context.pop(),
+                  onPressed: onBack ?? () => popOrGo(context, '/home'),
                   icon: const Icon(Icons.chevron_left, size: 28, color: VizeColors.accentMuted),
                 )
               else if (showLogo)
