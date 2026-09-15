@@ -54,7 +54,7 @@ public sealed class PlaybackStateService(
 
     public async Task<PlaybackSnapshotDto> ClaimAsync(Guid userId, Guid sessionId, long? expectedRevision, CancellationToken ct)
     {
-        await HitStateLimitAsync(userId, ct);
+        await HitStateLimitAsync(userId, "claim", ct);
         if (expectedRevision is null)
         {
             throw new ApiException(400, "validation_failed", "Validation failed.",
@@ -90,7 +90,7 @@ public sealed class PlaybackStateService(
 
     public async Task<PlaybackSnapshotDto> PutAsync(Guid userId, PutPlaybackStateRequest req, CancellationToken ct)
     {
-        await HitStateLimitAsync(userId, ct);
+        await HitStateLimitAsync(userId, req.Kind ?? "", ct);
         if (req.ExpectedRevision is null || req.WriterSessionId is null || string.IsNullOrWhiteSpace(req.Kind))
         {
             throw new ApiException(400, "validation_failed", "Validation failed.",
@@ -178,11 +178,19 @@ public sealed class PlaybackStateService(
         return snapshot;
     }
 
-    private async Task HitStateLimitAsync(Guid userId, CancellationToken ct)
+    private async Task HitStateLimitAsync(Guid userId, string kind, CancellationToken ct)
     {
-        var bucket = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        await limiter.HitAsync($"rl:playback-state-burst:{userId:D}", 10, TimeSpan.FromSeconds(5), ct);
-        await limiter.HitAsync($"rl:playback-state:{userId:D}:{bucket}", 2, TimeSpan.FromSeconds(1), ct);
+        if (kind.Equals("progress", StringComparison.OrdinalIgnoreCase))
+        {
+            var bucket = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            await limiter.HitAsync($"rl:playback-state-burst:{userId:D}", 10, TimeSpan.FromSeconds(5), ct);
+            await limiter.HitAsync($"rl:playback-state:{userId:D}:{bucket}", 2, TimeSpan.FromSeconds(1), ct);
+            return;
+        }
+
+        // Claim/command are user intent. Do not share the progress 2/s bucket or
+        // "Play here" loses to the current writer's periodic PUTs.
+        await limiter.HitAsync($"rl:playback-command:{userId:D}", 20, TimeSpan.FromSeconds(10), ct);
     }
 
     private async Task<PlaybackState> EnsureRowAsync(Guid userId, CancellationToken ct)

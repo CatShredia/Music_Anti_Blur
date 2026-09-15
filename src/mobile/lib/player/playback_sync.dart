@@ -53,13 +53,14 @@ bool shouldIgnoreRemoteSnapshot({
   required String? localDeviceId,
   required String? incomingDeviceId,
 }) {
-  if (incomingRevision <= localRevision) {
-    return true;
-  }
   if (localDeviceId != null &&
       localDeviceId.isNotEmpty &&
       incomingDeviceId != null &&
       incomingDeviceId == localDeviceId) {
+    return true;
+  }
+  // Same revision from another device is a writer handoff, not a stale echo.
+  if (incomingRevision < localRevision) {
     return true;
   }
   return false;

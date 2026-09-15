@@ -132,12 +132,12 @@ class MiniPlayerBar extends StatelessWidget {
                     tooltip: idle
                         ? 'Нет трека'
                         : player.followingRemote
-                            ? 'Играть здесь'
+                            ? 'Управляется на другом устройстве'
                             : (player.playing ? 'Пауза' : 'Play'),
-                    onPressed: idle ? null : () => player.togglePlay(),
+                    onPressed: player.canTogglePlay ? () => player.togglePlay() : null,
                     icon: Icon(
                       player.playing ? Icons.pause : Icons.play_arrow,
-                      color: idle ? VizeColors.accentDim : VizeColors.accent,
+                      color: player.canTogglePlay ? VizeColors.accent : VizeColors.accentDim,
                     ),
                   ),
                   IconButton(

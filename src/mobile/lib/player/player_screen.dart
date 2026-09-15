@@ -189,8 +189,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                     IconButton(
                       iconSize: 56,
-                      color: VizeColors.accent,
-                      onPressed: () => _run(player.togglePlay),
+                      tooltip: player.followingRemote
+                          ? 'Управляется на другом устройстве'
+                          : (player.playing ? 'Пауза' : 'Play'),
+                      color: player.canTogglePlay ? VizeColors.accent : VizeColors.accentDim,
+                      onPressed: player.canTogglePlay ? () => _run(player.togglePlay) : null,
                       icon: Icon(player.playing ? Icons.pause_circle_filled : Icons.play_circle_filled),
                     ),
                     IconButton(

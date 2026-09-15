@@ -242,6 +242,7 @@ Admin catalog использует идентичные routes/DTO под рол
 | part URL | 120/мин/user |
 | admin import | 10/час/admin |
 | SignalR connect | 20/5 мин/user+IP |
-| state update | 2/сек sustained, burst 10/user |
+| playback progress (`kind=progress`) | 2/сек sustained, burst 10/user |
+| playback claim + command | 20/10 сек/user |
 
 При отказе Redis auth/upload/admin/private URL, создание/claim writer session и `PUT /playback-state` fail closed с `503 dependency_unavailable`. `GET /playback-state` и catalog read могут работать degraded. OpenAPI генерируется и проверяется diff в CI; breaking changes требуют новой API version.

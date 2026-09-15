@@ -75,6 +75,8 @@ class PlayerController extends ChangeNotifier {
   int _remotePositionMs = 0;
   PlaybackHubClient? _hub;
   bool _followingRemote = false;
+  bool _takingOver = false;
+  bool _writerClaimed = false;
   bool _remoteLocalFallbackNotice = false;
   bool _audioReady = false;
   StreamSubscription<Duration>? _positionSub;
@@ -219,17 +221,17 @@ class PlayerController extends ChangeNotifier {
       'track': SyncLog.shortId(queue.current?.trackId),
     });
     _remoteLocalFallbackNotice = resolvedSource == 'local';
-    _stopFollowing();
+    _beginTakeover();
     _starting = true;
     try {
       await _playCurrent(resumeIfSame: false, autoplay: true, seekTo: position);
+      await _persistCommand(playing: true);
     } catch (_) {
       unawaited(_persistCommand(playing: false));
       rethrow;
     } finally {
-      _starting = false;
+      _endTakeover();
     }
-    await _persistCommand(playing: true);
   }
 
   Future<void> seek(Duration value) async {
@@ -357,7 +359,8 @@ class PlayerController extends ChangeNotifier {
     await _hub?.stop();
     _hub = null;
     _stopFollowing();
-    _sessionId = null;
+    _dropWriter();
+    _takingOver = false;
     _revision = 0;
     _progressTimer?.cancel();
     _statePoll?.cancel();
@@ -380,6 +383,8 @@ class PlayerController extends ChangeNotifier {
 
   bool get followingRemote => _followingRemote;
 
+  bool get canTogglePlay => !_followingRemote && hasLastTrack;
+
   bool get canSkipNext => !_followingRemote && queue.hasNext;
 
   bool get canSkipPrevious => !_followingRemote && (queue.hasPrevious || position > Duration.zero);
@@ -397,7 +402,7 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> _playAndPersist({required bool resumeIfSame}) async {
     _remoteLocalFallbackNotice = false;
-    _stopFollowing();
+    _beginTakeover();
     _starting = true;
     SyncLog.stage('play', {
       'me': SyncLog.shortId(myDeviceId ?? await api.deviceId()),
@@ -406,14 +411,14 @@ class PlayerController extends ChangeNotifier {
     });
     try {
       await _playCurrent(resumeIfSame: resumeIfSame, autoplay: true);
+      await _persistCommand(playing: true);
     } catch (e) {
       SyncLog.stage('play-fail', {'error': '$e'});
       unawaited(_persistCommand(playing: false));
       rethrow;
     } finally {
-      _starting = false;
+      _endTakeover();
     }
-    await _persistCommand(playing: true);
   }
 
   static String qualityLabel(String code) => switch (code) {
@@ -541,12 +546,18 @@ class PlayerController extends ChangeNotifier {
       if (resume > Duration.zero) {
         await _seekPreservingSeconds(resume);
       }
-      if (gen == _playGen) {
-        loading = false;
-        notifyListeners();
+      if (gen != _playGen || _followingRemote) {
+        if (_followingRemote) {
+          await _silenceLocalAudio();
+        }
+        return;
       }
       if (autoplay) {
         await handler.play();
+      }
+      if (gen != _playGen || _followingRemote) {
+        await _silenceLocalAudio();
+        return;
       }
       _audioReady = true;
       if (qualityFallbackFrom != null) {
@@ -709,8 +720,8 @@ class PlayerController extends ChangeNotifier {
   Future<void> _onHubSnapshot(PlaybackSnapshot snapshot) => _applyAuthoritativeSnapshot(snapshot);
 
   Future<void> _resyncFromServer({String via = 'get'}) async {
-    if (_starting) {
-      SyncLog.stage('resync-skip', {'via': via, 'why': 'starting'});
+    if (_starting || _takingOver) {
+      SyncLog.stage('resync-skip', {'via': via, 'why': _takingOver ? 'taking-over' : 'starting'});
       return;
     }
     if (_resyncBusy) {
@@ -747,15 +758,12 @@ class PlayerController extends ChangeNotifier {
       'writer': _sessionId != null,
       ...SyncLog.snapshot(snapshot),
     };
-    if (_sessionId != null && !_followingRemote) {
-      SyncLog.stage('apply-ignore', extra..['why'] = 'local-writer');
-      if (snapshot.revision > _revision) {
-        _revision = snapshot.revision;
-      }
-      return;
-    }
     final otherDevice = snapshot.deviceId != null && snapshot.deviceId != myDevice;
     final orphanRemote = snapshot.deviceId == null && snapshot.trackId != null && _sessionId == null;
+    if ((_takingOver || _starting) && (otherDevice || orphanRemote)) {
+      SyncLog.stage('apply-ignore', extra..['why'] = 'taking-over');
+      return;
+    }
     if (otherDevice || orphanRemote) {
       if (shouldIgnoreRemoteSnapshot(
         localRevision: _revision,
@@ -810,12 +818,10 @@ class PlayerController extends ChangeNotifier {
   void _startStatePoll() {
     _statePoll?.cancel();
     _statePoll = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (_starting) {
+      if (_starting || _takingOver) {
         return;
       }
-      if (_followingRemote || (_sessionId == null && !playing)) {
-        unawaited(_resyncFromServer(via: 'poll'));
-      }
+      unawaited(_resyncFromServer(via: 'poll'));
     });
   }
 
@@ -843,9 +849,10 @@ class PlayerController extends ChangeNotifier {
     _playGen++;
     _starting = false;
     _progressTimer?.cancel();
-    _sessionId = null;
+    _dropWriter();
     _followingRemote = true;
     _audioReady = false;
+    unawaited(_silenceLocalAudio());
     _revision = snapshot.revision;
     _remoteUpdatedAt = snapshot.updatedAt ?? DateTime.now().toUtc();
     _remotePositionMs = snapshot.positionMs;
@@ -964,6 +971,21 @@ class PlayerController extends ChangeNotifier {
     _remotePositionMs = 0;
   }
 
+  void _beginTakeover() {
+    _takingOver = true;
+    _stopFollowing();
+  }
+
+  void _endTakeover() {
+    _takingOver = false;
+    _starting = false;
+  }
+
+  void _dropWriter() {
+    _sessionId = null;
+    _writerClaimed = false;
+  }
+
   void _syncFollowClock() {
     _followTimer?.cancel();
     if (!_followingRemote || !playing) {
@@ -1058,75 +1080,95 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _ensureWriter() async {
-    if (_followingRemote) {
+    if (_takingOver) {
+      _followingRemote = false;
+    } else if (_followingRemote) {
       SyncLog.stage('writer-skip', {'why': 'following'});
       return;
     }
-    if (_sessionId != null) {
+    if (_sessionId != null && _writerClaimed) {
       return;
     }
     final me = await api.deviceId();
-    SyncLog.stage('writer-create', {'me': SyncLog.shortId(me)});
-    final created = await api.createPlaybackSession(deviceId: me);
-    if (_followingRemote) {
-      SyncLog.stage('writer-abort', {'why': 'became-follow'});
-      return;
-    }
-    _sessionId = created.writerSessionId;
-    _revision = created.snapshot.revision;
-    SyncLog.stage('writer-created', {
-      'me': SyncLog.shortId(me),
-      'session': SyncLog.shortId(_sessionId),
-      ...SyncLog.snapshot(created.snapshot),
-    });
-    try {
-      await _paceStateWrite();
-      if (_followingRemote) {
-        _sessionId = null;
+    for (var attempt = 0; attempt < 8; attempt++) {
+      if (_takingOver) {
+        _followingRemote = false;
+      } else if (_followingRemote) {
+        _dropWriter();
         SyncLog.stage('writer-abort', {'why': 'became-follow-before-claim'});
         return;
       }
-      SyncLog.stage('writer-claim', {'me': SyncLog.shortId(me), 'rev': _revision, 'session': SyncLog.shortId(_sessionId)});
-      final claimed = await api.claimPlaybackSession(_sessionId!, expectedRevision: _revision);
-      _revision = claimed.revision;
-      SyncLog.stage('writer-claimed', {'me': SyncLog.shortId(me), ...SyncLog.snapshot(claimed)});
-    } on ApiException catch (e) {
-      SyncLog.stage('writer-claim-fail', {
-        'code': e.code,
-        'status': e.status,
-        if (e.snapshot != null) ...SyncLog.snapshot(e.snapshot!),
-      });
-      final snapshot = e.snapshot;
-      if (snapshot != null) {
-        final myDevice = await api.deviceId();
-        if (snapshot.deviceId != null && snapshot.deviceId != myDevice) {
-          _sessionId = null;
-          await _applyRemoteSnapshot(snapshot);
+      if (_sessionId == null) {
+        SyncLog.stage('writer-create', {'me': SyncLog.shortId(me), 'attempt': attempt + 1});
+        final created = await api.createPlaybackSession(deviceId: me);
+        if (_followingRemote && !_takingOver) {
+          SyncLog.stage('writer-abort', {'why': 'became-follow'});
           return;
         }
-        _revision = snapshot.revision;
+        _sessionId = created.writerSessionId;
+        _writerClaimed = false;
+        _revision = created.snapshot.revision;
+        SyncLog.stage('writer-created', {
+          'me': SyncLog.shortId(me),
+          'session': SyncLog.shortId(_sessionId),
+          ...SyncLog.snapshot(created.snapshot),
+        });
       }
-      if (e.code == 'revision_conflict' && _sessionId != null && !_followingRemote) {
-        await _paceStateWrite();
-        final claimed = await api.claimPlaybackSession(_sessionId!, expectedRevision: _revision);
+      final sessionId = _sessionId;
+      if (sessionId == null) {
+        return;
+      }
+      try {
+        SyncLog.stage('writer-claim', {
+          'me': SyncLog.shortId(me),
+          'rev': _revision,
+          'session': SyncLog.shortId(sessionId),
+          'attempt': attempt + 1,
+        });
+        final claimed = await api.claimPlaybackSession(sessionId, expectedRevision: _revision);
         _revision = claimed.revision;
+        _writerClaimed = true;
+        SyncLog.stage('writer-claimed', {'me': SyncLog.shortId(me), ...SyncLog.snapshot(claimed)});
         return;
-      }
-      if (e.code == 'not_writer') {
-        _sessionId = null;
-        if (e.snapshot != null) {
-          await _applyRemoteSnapshot(e.snapshot!);
+      } on ApiException catch (e) {
+        SyncLog.stage('writer-claim-fail', {
+          'code': e.code,
+          'status': e.status,
+          'attempt': attempt + 1,
+          if (e.snapshot != null) ...SyncLog.snapshot(e.snapshot!),
+        });
+        if (e.code == 'rate_limited') {
+          await Future<void>.delayed(_retryAfter(e));
+          continue;
         }
-        return;
+        if (e.code == 'revision_conflict') {
+          if (e.snapshot != null) {
+            _revision = e.snapshot!.revision;
+          }
+          continue;
+        }
+        if (e.code == 'not_writer') {
+          _dropWriter();
+          if (_takingOver) {
+            continue;
+          }
+          if (e.snapshot != null) {
+            await _applyRemoteSnapshot(e.snapshot!);
+          } else {
+            await _resyncFromServer(via: 'claim-not-writer');
+          }
+          return;
+        }
+        rethrow;
       }
-      rethrow;
     }
+    SyncLog.stage('writer-claim-fail', {'why': 'retries-exhausted'});
   }
 
   Future<void> _persistCommand({required bool playing}) async {
     _progressTimer?.cancel();
     await _enqueueWrite(() async {
-      if (_followingRemote) {
+      if (_followingRemote && !_takingOver) {
         SyncLog.stage('persist-skip', {'kind': 'command', 'why': 'following'});
         return;
       }
@@ -1190,91 +1232,101 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _putState({required String kind, required Map<String, dynamic> state}) async {
-    if (_followingRemote) {
-      SyncLog.stage('put-skip', {'kind': kind, 'why': 'following'});
-      return;
-    }
-    try {
-      await _ensureWriter();
-      if (_followingRemote) {
-        SyncLog.stage('put-skip', {'kind': kind, 'why': 'became-follow'});
+    final retries = kind == 'command' || _takingOver ? 8 : 1;
+    for (var attempt = 0; attempt < retries; attempt++) {
+      if (_followingRemote && !_takingOver) {
+        SyncLog.stage('put-skip', {'kind': kind, 'why': 'following'});
         return;
       }
-      final sessionId = _sessionId;
-      if (sessionId == null) {
-        SyncLog.stage('put-skip', {'kind': kind, 'why': 'no-session-id'});
-        return;
-      }
-      await _paceStateWrite();
-      SyncLog.stage('put', {
-        'kind': kind,
-        'me': SyncLog.shortId(myDeviceId),
-        'session': SyncLog.shortId(sessionId),
-        'rev': _revision,
-        'track': SyncLog.shortId(state['trackId']?.toString()),
-        'playing': state['isPlaying'],
-        'posMs': state['positionMs'],
-      });
-      final snapshot = await api.putPlaybackState(
-        expectedRevision: _revision,
-        writerSessionId: sessionId,
-        kind: kind,
-        state: state,
-      );
-      _revision = snapshot.revision;
-      if (kind == 'command') {
-        SyncLog.stage('put-ok', {'kind': kind, 'me': SyncLog.shortId(myDeviceId), ...SyncLog.snapshot(snapshot)});
-      }
-    } on ApiException catch (e) {
-      SyncLog.stage('put-fail', {
-        'kind': kind,
-        'code': e.code,
-        'status': e.status,
-        if (e.snapshot != null) ...SyncLog.snapshot(e.snapshot!),
-      });
-      if (e.code == 'not_writer') {
-        _sessionId = null;
-        if (e.snapshot != null) {
-          await _applyRemoteSnapshot(e.snapshot!);
+      try {
+        await _ensureWriter();
+        if (_followingRemote && !_takingOver) {
+          SyncLog.stage('put-skip', {'kind': kind, 'why': 'became-follow'});
+          return;
         }
-        return;
-      }
-      if (e.code == 'revision_conflict') {
-        final snapshot = e.snapshot;
-        if (snapshot != null) {
-          final myDevice = await api.deviceId();
-          if (snapshot.deviceId != null && snapshot.deviceId != myDevice) {
-            _sessionId = null;
-            await _applyRemoteSnapshot(snapshot);
-            return;
+        final sessionId = _sessionId;
+        if (sessionId == null || !_writerClaimed) {
+          if (attempt < retries - 1) {
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+            continue;
           }
-          _revision = snapshot.revision;
+          SyncLog.stage('put-skip', {'kind': kind, 'why': 'no-session-id'});
+          return;
         }
+        if (kind == 'progress' || attempt == 0) {
+          await _paceStateWrite();
+        }
+        SyncLog.stage('put', {
+          'kind': kind,
+          'me': SyncLog.shortId(myDeviceId),
+          'session': SyncLog.shortId(sessionId),
+          'rev': _revision,
+          'track': SyncLog.shortId(state['trackId']?.toString()),
+          'playing': state['isPlaying'],
+          'posMs': state['positionMs'],
+          'attempt': attempt + 1,
+        });
+        final snapshot = await api.putPlaybackState(
+          expectedRevision: _revision,
+          writerSessionId: sessionId,
+          kind: kind,
+          state: state,
+        );
+        _revision = snapshot.revision;
         if (kind == 'command') {
-          try {
-            await _ensureWriter();
-            final sessionId = _sessionId;
-            if (sessionId == null) {
+          SyncLog.stage('put-ok', {'kind': kind, 'me': SyncLog.shortId(myDeviceId), ...SyncLog.snapshot(snapshot)});
+        }
+        return;
+      } on ApiException catch (e) {
+        SyncLog.stage('put-fail', {
+          'kind': kind,
+          'code': e.code,
+          'status': e.status,
+          'attempt': attempt + 1,
+          if (e.snapshot != null) ...SyncLog.snapshot(e.snapshot!),
+        });
+        if (e.code == 'rate_limited') {
+          await Future<void>.delayed(_retryAfter(e));
+          continue;
+        }
+        if (e.code == 'revision_conflict') {
+          if (e.snapshot != null) {
+            _revision = e.snapshot!.revision;
+          }
+          if (!_takingOver && e.snapshot != null) {
+            final myDevice = await api.deviceId();
+            if (e.snapshot!.deviceId != null && e.snapshot!.deviceId != myDevice) {
+              _dropWriter();
+              await _applyRemoteSnapshot(e.snapshot!);
               return;
             }
-            await _paceStateWrite();
-            final retried = await api.putPlaybackState(
-              expectedRevision: _revision,
-              writerSessionId: sessionId,
-              kind: kind,
-              state: state,
-            );
-            _revision = retried.revision;
-          } catch (retryError) {
-            debugPrint('playback persist retry failed: $retryError');
           }
+          _writerClaimed = false;
+          continue;
+        }
+        if (e.code == 'not_writer') {
+          _dropWriter();
+          if (_takingOver) {
+            continue;
+          }
+          if (e.snapshot != null) {
+            await _applyRemoteSnapshot(e.snapshot!);
+          } else {
+            await _resyncFromServer(via: 'not-writer');
+          }
+          return;
+        }
+        if (e.code != 'dependency_unavailable') {
+          debugPrint('playback persist failed: $e');
         }
         return;
       }
-      if (e.code != 'dependency_unavailable' && e.code != 'rate_limited') {
-        debugPrint('playback persist failed: $e');
-      }
     }
+  }
+
+  Duration _retryAfter(ApiException e) {
+    final ms = ((e.retryAfterSeconds ?? 1) * 1000).clamp(200, 1200);
+    return Duration(milliseconds: ms);
   }
 
   Future<void> _paceStateWrite() async {

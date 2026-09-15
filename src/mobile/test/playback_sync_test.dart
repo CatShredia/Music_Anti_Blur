@@ -2,16 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:music_anti_blur/player/playback_sync.dart';
 
 void main() {
-  test('stale revision is ignored', () {
-    expect(
-      shouldIgnoreRemoteSnapshot(
-        localRevision: 4,
-        incomingRevision: 4,
-        localDeviceId: 'a',
-        incomingDeviceId: 'b',
-      ),
-      isTrue,
-    );
+  test('older revision from another device is ignored', () {
     expect(
       shouldIgnoreRemoteSnapshot(
         localRevision: 5,
@@ -20,6 +11,18 @@ void main() {
         incomingDeviceId: 'b',
       ),
       isTrue,
+    );
+  });
+
+  test('same revision from another device is a writer handoff', () {
+    expect(
+      shouldIgnoreRemoteSnapshot(
+        localRevision: 4,
+        incomingRevision: 4,
+        localDeviceId: 'a',
+        incomingDeviceId: 'b',
+      ),
+      isFalse,
     );
   });
 
