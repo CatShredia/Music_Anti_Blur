@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:just_audio/just_audio.dart';
 
@@ -9,8 +10,11 @@ import '../catalog/catalog_models.dart';
 import '../overrides/local_binding_store.dart';
 import '../overrides/override_models.dart';
 import 'audio_handler.dart';
+import 'playback_hub.dart';
 import 'playback_models.dart';
+import 'playback_sync.dart';
 import 'player_queue.dart';
+import 'sync_log.dart';
 
 class PlayerScope extends InheritedNotifier<PlayerController> {
   const PlayerScope({
@@ -46,21 +50,35 @@ class PlayerController extends ChangeNotifier {
   final Map<String, QueueTrackLabel> queueLabels = {};
   Duration position = Duration.zero;
   Duration duration = Duration.zero;
+  String? myDeviceId;
+  List<DevicePresenceItem> devices = const [];
+  RenditionReady? lastRenditionReady;
+  int renditionEpoch = 0;
 
   DateTime? _expiresAt;
   bool _refreshUsed = false;
   bool _refreshing = false;
   bool _completing = false;
-  bool _restored = false;
   bool _starting = false;
   String? _sessionId;
   int _revision = 0;
   int _playGen = 0;
   Timer? _progressTimer;
+  Timer? _followTimer;
+  Timer? _statePoll;
   Future<void> _writes = Future.value();
   Future<void>? _expanding;
+  bool _resyncBusy = false;
   List<QueueItem>? _orderBeforeShuffle;
   DateTime? _lastStateWrite;
+  DateTime? _remoteUpdatedAt;
+  int _remotePositionMs = 0;
+  PlaybackHubClient? _hub;
+  bool _followingRemote = false;
+  bool _takingOver = false;
+  bool _writerClaimed = false;
+  bool _remoteLocalFallbackNotice = false;
+  bool _audioReady = false;
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration?>? _durationSub;
   StreamSubscription<PlayerState>? _stateSub;
@@ -72,6 +90,9 @@ class PlayerController extends ChangeNotifier {
     handler.onSkipPrevious = () => unawaited(previous());
     handler.onCompleted = () => unawaited(_onCompleted());
     _positionSub = handler.positionStream.listen((value) {
+      if (_followingRemote) {
+        return;
+      }
       position = value;
       unawaited(_maybeRefreshNearExpiry());
       _scheduleProgress();
@@ -84,6 +105,9 @@ class PlayerController extends ChangeNotifier {
       }
     });
     _stateSub = handler.playerStateStream.listen((state) {
+      if (_followingRemote) {
+        return;
+      }
       playing = state.playing;
       notifyListeners();
     });
@@ -95,20 +119,17 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> restoreIfNeeded() async {
-    if (_restored || !await api.hasSession()) {
+    if (!await api.hasSession()) {
+      SyncLog.stage('restore-skip', {'why': 'no-session'});
       return;
     }
-    _restored = true;
-    final gen = _playGen;
-    try {
-      final snapshot = await api.playbackState();
-      if (gen != _playGen || _starting || playing) {
-        return;
-      }
-      await _applySnapshot(snapshot, autoplay: false);
-    } catch (e) {
-      debugPrint('playback restore failed: $e');
-    }
+    SyncLog.stage('restore', {
+      'me': SyncLog.shortId(await api.deviceId()),
+      'web': kIsWeb,
+      'platform': defaultTargetPlatform.name,
+    });
+    unawaited(_connectHub());
+    await _resyncFromServer(via: 'restore');
   }
 
   Future<void> playTrack(
@@ -145,6 +166,9 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> setItemSource(String sourcePreference) async {
+    if (_followingRemote) {
+      return;
+    }
     final current = queue.current;
     if (current == null) {
       return;
@@ -155,7 +179,7 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> setQuality(String quality) async {
-    if (queue.current == null) {
+    if (_followingRemote || queue.current == null) {
       return;
     }
     requestedQuality = quality;
@@ -163,6 +187,10 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> togglePlay() async {
+    if (_followingRemote) {
+      await playHere();
+      return;
+    }
     if (track == null && queue.current != null) {
       await _playCurrent(resumeIfSame: false, autoplay: true, seekTo: position);
       await _persistCommand(playing: true);
@@ -174,13 +202,42 @@ class PlayerController extends ChangeNotifier {
     if (handler.playing) {
       await handler.pause();
       await _persistCommand(playing: false);
+    } else if (!_audioReady) {
+      await _playCurrent(resumeIfSame: false, autoplay: true, seekTo: position);
+      await _persistCommand(playing: true);
     } else {
       await handler.play();
       await _persistCommand(playing: true);
     }
   }
 
+  Future<void> playHere() async {
+    if (queue.current == null) {
+      SyncLog.stage('play-here-skip', {'why': 'no-queue'});
+      return;
+    }
+    SyncLog.stage('play-here', {
+      'me': SyncLog.shortId(myDeviceId),
+      'track': SyncLog.shortId(queue.current?.trackId),
+    });
+    _remoteLocalFallbackNotice = resolvedSource == 'local';
+    _beginTakeover();
+    _starting = true;
+    try {
+      await _playCurrent(resumeIfSame: false, autoplay: true, seekTo: position);
+      await _persistCommand(playing: true);
+    } catch (_) {
+      unawaited(_persistCommand(playing: false));
+      rethrow;
+    } finally {
+      _endTakeover();
+    }
+  }
+
   Future<void> seek(Duration value) async {
+    if (_followingRemote) {
+      return;
+    }
     var target = value;
     if (target.isNegative) {
       target = Duration.zero;
@@ -196,6 +253,9 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> next() async {
+    if (_followingRemote) {
+      return;
+    }
     final before = queue.currentItemId;
     final nextQueue = queue.skipNext();
     if (nextQueue.currentItemId == before) {
@@ -208,6 +268,9 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> playQueueItem(String itemId) async {
+    if (_followingRemote) {
+      return;
+    }
     if (queue.currentItemId == itemId) {
       return;
     }
@@ -226,6 +289,9 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> previous() async {
+    if (_followingRemote) {
+      return;
+    }
     if (position > const Duration(seconds: 3)) {
       await seek(Duration.zero);
       return;
@@ -242,12 +308,18 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> cycleRepeat() async {
+    if (_followingRemote) {
+      return;
+    }
     queue = queue.cycleRepeat();
     notifyListeners();
     await _persistCommand(playing: playing);
   }
 
   Future<void> toggleShuffle() async {
+    if (_followingRemote) {
+      return;
+    }
     if (queue.shuffle) {
       final restored = _orderBeforeShuffle;
       _orderBeforeShuffle = null;
@@ -279,19 +351,27 @@ class PlayerController extends ChangeNotifier {
     _progressTimer?.cancel();
     await handler.stop();
     playing = false;
+    _audioReady = false;
     notifyListeners();
   }
 
   Future<void> resetLocal() async {
-    _sessionId = null;
+    await _hub?.stop();
+    _hub = null;
+    _stopFollowing();
+    _dropWriter();
+    _takingOver = false;
     _revision = 0;
-    _restored = false;
     _progressTimer?.cancel();
+    _statePoll?.cancel();
     queue = PlayerQueue.empty;
     track = null;
     coverObjectKey = null;
     queueLabels.clear();
     _orderBeforeShuffle = null;
+    devices = const [];
+    lastRenditionReady = null;
+    renditionEpoch = 0;
     await stop();
   }
 
@@ -299,9 +379,15 @@ class PlayerController extends ChangeNotifier {
 
   bool get hasQueue => queue.current != null;
 
-  bool get canSkipNext => queue.hasNext;
+  bool get hasLastTrack => track != null || hasQueue;
 
-  bool get canSkipPrevious => queue.hasPrevious || position > Duration.zero;
+  bool get followingRemote => _followingRemote;
+
+  bool get canTogglePlay => !_followingRemote && hasLastTrack;
+
+  bool get canSkipNext => !_followingRemote && queue.hasNext;
+
+  bool get canSkipPrevious => !_followingRemote && (queue.hasPrevious || position > Duration.zero);
 
   QueueTrackLabel labelFor(QueueItem item) {
     final cached = queueLabels[item.trackId];
@@ -315,16 +401,24 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _playAndPersist({required bool resumeIfSame}) async {
+    _remoteLocalFallbackNotice = false;
+    _beginTakeover();
     _starting = true;
+    SyncLog.stage('play', {
+      'me': SyncLog.shortId(myDeviceId ?? await api.deviceId()),
+      'track': SyncLog.shortId(queue.current?.trackId ?? track?.id),
+      'resume': resumeIfSame,
+    });
     try {
       await _playCurrent(resumeIfSame: resumeIfSame, autoplay: true);
-    } catch (_) {
+      await _persistCommand(playing: true);
+    } catch (e) {
+      SyncLog.stage('play-fail', {'error': '$e'});
       unawaited(_persistCommand(playing: false));
       rethrow;
     } finally {
-      _starting = false;
+      _endTakeover();
     }
-    await _persistCommand(playing: true);
   }
 
   static String qualityLabel(String code) => switch (code) {
@@ -349,11 +443,19 @@ class PlayerController extends ChangeNotifier {
         (resumeIfSame && previousId == item.trackId ? handler.position : Duration.zero);
     loading = true;
     qualityFallbackFrom = null;
+    _audioReady = false;
     notifyListeners();
     final gen = ++_playGen;
     try {
-      final local = await bindings.get(item.trackId);
+      LocalTrackBinding? local;
+      try {
+        local = await bindings.get(item.trackId);
+      } catch (e) {
+        SyncLog.stage('local-bind-skip', {'track': SyncLog.shortId(item.trackId), 'error': '$e'});
+      }
       final localOk = local != null;
+      final remoteLocalOnly = _remoteLocalFallbackNotice && !localOk;
+      _remoteLocalFallbackNotice = false;
       final wantsLocal = item.sourcePreference == 'auto' || item.sourcePreference == 'local';
       TrackDetail? detail = track?.id == item.trackId ? track : null;
       try {
@@ -417,6 +519,8 @@ class PlayerController extends ChangeNotifier {
         final fallback = fallbackNotice(url.fallbackReason);
         if (fallback.isNotEmpty) {
           _emitNotice(fallback);
+        } else if (remoteLocalOnly && resolvedSource != 'local') {
+          _emitNotice('Локальный файл на другом устройстве');
         }
       }
 
@@ -442,13 +546,20 @@ class PlayerController extends ChangeNotifier {
       if (resume > Duration.zero) {
         await _seekPreservingSeconds(resume);
       }
-      if (gen == _playGen) {
-        loading = false;
-        notifyListeners();
+      if (gen != _playGen || _followingRemote) {
+        if (_followingRemote) {
+          await _silenceLocalAudio();
+        }
+        return;
       }
       if (autoplay) {
         await handler.play();
       }
+      if (gen != _playGen || _followingRemote) {
+        await _silenceLocalAudio();
+        return;
+      }
+      _audioReady = true;
       if (qualityFallbackFrom != null) {
         _emitNotice('Включено ${resolvedQuality ?? qualityFallbackFrom}');
       }
@@ -481,7 +592,7 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _onCompleted() async {
-    if (_completing) {
+    if (_followingRemote || _completing) {
       return;
     }
     _completing = true;
@@ -512,20 +623,43 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _applySnapshot(PlaybackSnapshot snapshot, {required bool autoplay}) async {
-    if (_starting || playing) {
+    if (_starting || _followingRemote) {
+      return;
+    }
+    final incomingEmpty = snapshot.trackId == null && snapshot.queue.isEmpty;
+    final haveLocal = track != null || !queue.isEmpty;
+    if (incomingEmpty && haveLocal) {
+      if (snapshot.revision > _revision) {
+        _revision = snapshot.revision;
+      }
+      SyncLog.stage('apply-own-keep', {'why': 'empty-snapshot', 'rev': snapshot.revision});
       return;
     }
     _revision = snapshot.revision;
-    queue = snapshot.queue;
-    requestedQuality = snapshot.qualityCode;
-    position = Duration(milliseconds: snapshot.positionMs);
-    if (snapshot.trackId == null || queue.current == null) {
-      track = null;
+    if (snapshot.queue.isEmpty && !queue.isEmpty) {
+      requestedQuality = snapshot.qualityCode;
+      resolvedSource = snapshot.source;
+      position = Duration(milliseconds: snapshot.positionMs);
+      _adoptSnapshotTrack(snapshot);
       notifyListeners();
+      SyncLog.stage('apply-own-keep', {'why': 'keep-queue', 'rev': snapshot.revision});
       return;
     }
-    notifyListeners();
+    if (!incomingEmpty || !haveLocal) {
+      queue = snapshot.queue;
+      requestedQuality = snapshot.qualityCode;
+      resolvedSource = snapshot.source;
+      position = Duration(milliseconds: snapshot.positionMs);
+      _adoptSnapshotTrack(snapshot);
+      notifyListeners();
+    }
+    if (snapshot.trackId == null || queue.current == null) {
+      return;
+    }
     unawaited(_hydrateQueueLabels());
+    if (!autoplay) {
+      return;
+    }
     try {
       await _playCurrent(
         resumeIfSame: false,
@@ -535,6 +669,344 @@ class PlayerController extends ChangeNotifier {
     } on ApiException catch (e) {
       debugPrint('playback restore track failed: $e');
     }
+  }
+
+  Future<void> _connectHub() async {
+    if (!await api.hasSession()) {
+      SyncLog.stage('hub-connect-skip', {'why': 'no-session'});
+      return;
+    }
+    final deviceId = await api.deviceId();
+    myDeviceId = deviceId;
+    SyncLog.stage('hub-connect', {'me': SyncLog.shortId(deviceId), 'url': api.hubUrl});
+    _hub ??= PlaybackHubClient(
+      url: api.hubUrl,
+      deviceId: deviceId,
+      tokenFactory: _hubToken,
+      onSnapshot: (snapshot) {
+        SyncLog.stage('hub-snapshot', SyncLog.snapshot(snapshot)..addAll({'me': SyncLog.shortId(deviceId)}));
+        unawaited(_onHubSnapshot(snapshot));
+      },
+      onPresence: _onPresence,
+      onRenditionReady: _onRenditionReady,
+      onReconnecting: () async {
+        SyncLog.stage('hub-reconnecting', {'me': SyncLog.shortId(deviceId)});
+        await api.refresh();
+      },
+      onReconnected: () async {
+        SyncLog.stage('hub-reconnected', {'me': SyncLog.shortId(deviceId)});
+        await _resyncFromServer(via: 'reconnect');
+      },
+    );
+    try {
+      await _hub!.start();
+      SyncLog.stage('hub-connected', {'me': SyncLog.shortId(deviceId)});
+      _startStatePoll();
+      await _resyncFromServer(via: 'hub-start');
+    } catch (e) {
+      SyncLog.stage('hub-connect-failed', {'me': SyncLog.shortId(deviceId), 'error': '$e'});
+    }
+  }
+
+  Future<String> _hubToken() async {
+    var token = await api.accessToken();
+    if (token != null && token.isNotEmpty) {
+      return token;
+    }
+    await api.refresh();
+    return await api.accessToken() ?? '';
+  }
+
+  Future<void> _onHubSnapshot(PlaybackSnapshot snapshot) => _applyAuthoritativeSnapshot(snapshot);
+
+  Future<void> _resyncFromServer({String via = 'get'}) async {
+    if (_starting || _takingOver) {
+      SyncLog.stage('resync-skip', {'via': via, 'why': _takingOver ? 'taking-over' : 'starting'});
+      return;
+    }
+    if (_resyncBusy) {
+      return;
+    }
+    if (!await api.hasSession()) {
+      SyncLog.stage('resync-skip', {'via': via, 'why': 'no-session'});
+      return;
+    }
+    _resyncBusy = true;
+    try {
+      final snapshot = await api.playbackState();
+      SyncLog.stage('resync', {
+        'via': via,
+        'me': SyncLog.shortId(myDeviceId),
+        ...SyncLog.snapshot(snapshot),
+      });
+      await _applyAuthoritativeSnapshot(snapshot, via: via);
+    } catch (e) {
+      SyncLog.stage('resync-fail', {'via': via, 'error': '$e'});
+    } finally {
+      _resyncBusy = false;
+    }
+  }
+
+  Future<void> _applyAuthoritativeSnapshot(PlaybackSnapshot snapshot, {String via = 'hub'}) async {
+    final myDevice = await api.deviceId();
+    final extra = {
+      'via': via,
+      'me': SyncLog.shortId(myDevice),
+      'follow': _followingRemote,
+      'localRev': _revision,
+      'playing': playing,
+      'writer': _sessionId != null,
+      ...SyncLog.snapshot(snapshot),
+    };
+    final otherDevice = snapshot.deviceId != null && snapshot.deviceId != myDevice;
+    final orphanRemote = snapshot.deviceId == null && snapshot.trackId != null && _sessionId == null;
+    if ((_takingOver || _starting) && (otherDevice || orphanRemote)) {
+      SyncLog.stage('apply-ignore', extra..['why'] = 'taking-over');
+      return;
+    }
+    if (otherDevice || orphanRemote) {
+      if (shouldIgnoreRemoteSnapshot(
+        localRevision: _revision,
+        incomingRevision: snapshot.revision,
+        localDeviceId: myDevice,
+        incomingDeviceId: snapshot.deviceId,
+      ) && !orphanRemote) {
+        SyncLog.stage('apply-ignore', extra..['why'] = snapshot.revision <= _revision ? 'stale-rev' : 'own-echo');
+        if (snapshot.revision > _revision) {
+          _revision = snapshot.revision;
+        }
+        return;
+      }
+      if (orphanRemote && snapshot.revision <= _revision && _followingRemote) {
+        SyncLog.stage('apply-ignore', extra..['why'] = 'stale-orphan');
+        return;
+      }
+      if (snapshot.trackId == null && snapshot.queue.isEmpty) {
+        if (snapshot.revision > _revision) {
+          _revision = snapshot.revision;
+        }
+        SyncLog.stage('apply-ignore', extra..['why'] = 'empty-remote');
+        return;
+      }
+      SyncLog.stage('apply-follow', extra);
+      await _applyRemoteSnapshot(snapshot);
+      return;
+    }
+    if (snapshot.revision < _revision) {
+      SyncLog.stage('apply-ignore', extra..['why'] = 'older-own');
+      return;
+    }
+    if (_followingRemote) {
+      if (snapshot.deviceId == null && snapshot.trackId == null) {
+        SyncLog.stage('apply-ignore', extra..['why'] = 'empty-while-follow');
+        return;
+      }
+      SyncLog.stage('apply-unfollow', extra);
+      _stopFollowing();
+    }
+    if (playing || _starting) {
+      SyncLog.stage('apply-keep-local', extra..['why'] = _starting ? 'starting' : 'local-playing');
+      if (snapshot.revision > _revision) {
+        _revision = snapshot.revision;
+      }
+      return;
+    }
+    SyncLog.stage('apply-own', extra);
+    await _applySnapshot(snapshot, autoplay: false);
+  }
+
+  void _startStatePoll() {
+    _statePoll?.cancel();
+    _statePoll = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_starting || _takingOver) {
+        return;
+      }
+      unawaited(_resyncFromServer(via: 'poll'));
+    });
+  }
+
+  void _onPresence(DevicePresence presence) {
+    devices = presence.devices;
+    notifyListeners();
+    SyncLog.stage('hub-presence', {
+      'me': SyncLog.shortId(myDeviceId),
+      'count': presence.devices.length,
+      'ids': presence.devices.map((item) => SyncLog.shortId(item.deviceId)).join(','),
+    });
+    unawaited(_resyncFromServer(via: 'presence'));
+  }
+
+  void _onRenditionReady(RenditionReady ready) {
+    lastRenditionReady = ready;
+    renditionEpoch++;
+    notifyListeners();
+    if (ready.scope == 'private') {
+      _emitNotice('Private-копия готова');
+    }
+  }
+
+  Future<void> _applyRemoteSnapshot(PlaybackSnapshot snapshot) async {
+    _playGen++;
+    _starting = false;
+    _progressTimer?.cancel();
+    _dropWriter();
+    _followingRemote = true;
+    _audioReady = false;
+    unawaited(_silenceLocalAudio());
+    _revision = snapshot.revision;
+    _remoteUpdatedAt = snapshot.updatedAt ?? DateTime.now().toUtc();
+    _remotePositionMs = snapshot.positionMs;
+    queue = snapshot.queue;
+    requestedQuality = snapshot.qualityCode;
+    resolvedSource = snapshot.source;
+    resolvedQuality = snapshot.qualityCode;
+    playing = snapshot.isPlaying;
+    loading = false;
+    position = Duration(
+      milliseconds: interpolatePositionMs(
+        positionMs: snapshot.positionMs,
+        isPlaying: snapshot.isPlaying,
+        updatedAt: _remoteUpdatedAt!,
+        now: DateTime.now().toUtc(),
+        durationMs: duration.inMilliseconds > 0 ? duration.inMilliseconds : null,
+      ),
+    );
+    _adoptSnapshotTrack(snapshot);
+    SyncLog.stage('follow', {
+      'me': SyncLog.shortId(myDeviceId),
+      ...SyncLog.snapshot(snapshot),
+      'uiTrack': track?.title ?? '-',
+    });
+    notifyListeners();
+    await _silenceLocalAudio();
+    _syncFollowClock();
+    unawaited(_hydrateFollowedTrack(snapshot));
+  }
+
+  void _adoptSnapshotTrack(PlaybackSnapshot snapshot) {
+    final id = snapshot.trackId ?? queue.current?.trackId;
+    if (id == null) {
+      track = null;
+      return;
+    }
+    if (track?.id == id) {
+      return;
+    }
+    final item = queue.current;
+    final label = item != null ? labelFor(item) : null;
+    track = TrackDetail(
+      id: id,
+      title: label?.title ?? 'Трек',
+      trackNumber: 1,
+      artist: ArtistRef(id: '', name: label?.subtitle ?? ''),
+      album: AlbumRef(id: '', title: ''),
+      availableQualities: const [],
+    );
+  }
+
+  Future<void> _silenceLocalAudio() async {
+    try {
+      await handler.pause();
+    } catch (e) {
+      debugPrint('playback interrupt pause failed: $e');
+    }
+    try {
+      await handler.stop();
+    } catch (e) {
+      debugPrint('playback interrupt stop failed: $e');
+    }
+  }
+
+  Future<void> _hydrateFollowedTrack(PlaybackSnapshot snapshot) async {
+    final id = snapshot.trackId ?? queue.current?.trackId;
+    if (id == null) {
+      track = null;
+      notifyListeners();
+      return;
+    }
+    try {
+      final detail = await api.track(id);
+      if (!_followingRemote) {
+        return;
+      }
+      track = detail;
+      queueLabels[detail.id] = QueueTrackLabel(title: detail.title, subtitle: detail.artist.name);
+      if (detail.durationMs != null && detail.durationMs! > 0) {
+        duration = Duration(milliseconds: detail.durationMs!);
+        _syncFollowClock();
+      }
+      notifyListeners();
+      if (detail.album.id.isNotEmpty) {
+        try {
+          final album = await api.album(detail.album.id);
+          if (_followingRemote) {
+            _rememberAlbum(album);
+            notifyListeners();
+          }
+        } catch (_) {}
+      }
+    } catch (e) {
+      debugPrint('playback follow track failed: $e');
+      if (_followingRemote && track?.id != id) {
+        final item = queue.current;
+        track = TrackDetail(
+          id: id,
+          title: item != null ? labelFor(item).title : 'Трек',
+          trackNumber: 1,
+          artist: ArtistRef(id: '', name: ''),
+          album: AlbumRef(id: '', title: ''),
+          availableQualities: const [],
+        );
+        notifyListeners();
+      }
+    }
+    unawaited(_hydrateQueueLabels());
+  }
+
+  void _stopFollowing() {
+    _followTimer?.cancel();
+    _followTimer = null;
+    _followingRemote = false;
+    _remoteUpdatedAt = null;
+    _remotePositionMs = 0;
+  }
+
+  void _beginTakeover() {
+    _takingOver = true;
+    _stopFollowing();
+  }
+
+  void _endTakeover() {
+    _takingOver = false;
+    _starting = false;
+  }
+
+  void _dropWriter() {
+    _sessionId = null;
+    _writerClaimed = false;
+  }
+
+  void _syncFollowClock() {
+    _followTimer?.cancel();
+    if (!_followingRemote || !playing) {
+      return;
+    }
+    _followTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      final started = _remoteUpdatedAt;
+      if (!_followingRemote || started == null) {
+        return;
+      }
+      position = Duration(
+        milliseconds: interpolatePositionMs(
+          positionMs: _remotePositionMs,
+          isPlaying: playing,
+          updatedAt: started,
+          now: DateTime.now().toUtc(),
+          durationMs: duration.inMilliseconds > 0 ? duration.inMilliseconds : null,
+        ),
+      );
+      notifyListeners();
+    });
   }
 
   Future<void> _expandQueueFromAlbum() {
@@ -608,39 +1080,104 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _ensureWriter() async {
-    if (_sessionId != null) {
+    if (_takingOver) {
+      _followingRemote = false;
+    } else if (_followingRemote) {
+      SyncLog.stage('writer-skip', {'why': 'following'});
       return;
     }
-    final created = await api.createPlaybackSession(deviceId: await api.deviceId());
-    _sessionId = created.writerSessionId;
-    _revision = created.snapshot.revision;
-    try {
-      await _paceStateWrite();
-      final claimed = await api.claimPlaybackSession(_sessionId!, expectedRevision: _revision);
-      _revision = claimed.revision;
-    } on ApiException catch (e) {
-      final snapshot = e.snapshot;
-      if (snapshot != null) {
-        _revision = snapshot.revision;
-      }
-      if (e.code == 'revision_conflict' && _sessionId != null) {
-        await _paceStateWrite();
-        final claimed = await api.claimPlaybackSession(_sessionId!, expectedRevision: _revision);
-        _revision = claimed.revision;
+    if (_sessionId != null && _writerClaimed) {
+      return;
+    }
+    final me = await api.deviceId();
+    for (var attempt = 0; attempt < 8; attempt++) {
+      if (_takingOver) {
+        _followingRemote = false;
+      } else if (_followingRemote) {
+        _dropWriter();
+        SyncLog.stage('writer-abort', {'why': 'became-follow-before-claim'});
         return;
       }
-      if (e.code == 'not_writer') {
-        _sessionId = null;
+      if (_sessionId == null) {
+        SyncLog.stage('writer-create', {'me': SyncLog.shortId(me), 'attempt': attempt + 1});
+        final created = await api.createPlaybackSession(deviceId: me);
+        if (_followingRemote && !_takingOver) {
+          SyncLog.stage('writer-abort', {'why': 'became-follow'});
+          return;
+        }
+        _sessionId = created.writerSessionId;
+        _writerClaimed = false;
+        _revision = created.snapshot.revision;
+        SyncLog.stage('writer-created', {
+          'me': SyncLog.shortId(me),
+          'session': SyncLog.shortId(_sessionId),
+          ...SyncLog.snapshot(created.snapshot),
+        });
+      }
+      final sessionId = _sessionId;
+      if (sessionId == null) {
+        return;
+      }
+      try {
+        SyncLog.stage('writer-claim', {
+          'me': SyncLog.shortId(me),
+          'rev': _revision,
+          'session': SyncLog.shortId(sessionId),
+          'attempt': attempt + 1,
+        });
+        final claimed = await api.claimPlaybackSession(sessionId, expectedRevision: _revision);
+        _revision = claimed.revision;
+        _writerClaimed = true;
+        SyncLog.stage('writer-claimed', {'me': SyncLog.shortId(me), ...SyncLog.snapshot(claimed)});
+        return;
+      } on ApiException catch (e) {
+        SyncLog.stage('writer-claim-fail', {
+          'code': e.code,
+          'status': e.status,
+          'attempt': attempt + 1,
+          if (e.snapshot != null) ...SyncLog.snapshot(e.snapshot!),
+        });
+        if (e.code == 'rate_limited') {
+          await Future<void>.delayed(_retryAfter(e));
+          continue;
+        }
+        if (e.code == 'revision_conflict') {
+          if (e.snapshot != null) {
+            _revision = e.snapshot!.revision;
+          }
+          continue;
+        }
+        if (e.code == 'not_writer') {
+          _dropWriter();
+          if (_takingOver) {
+            continue;
+          }
+          if (e.snapshot != null) {
+            await _applyRemoteSnapshot(e.snapshot!);
+          } else {
+            await _resyncFromServer(via: 'claim-not-writer');
+          }
+          return;
+        }
         rethrow;
       }
-      rethrow;
     }
+    SyncLog.stage('writer-claim-fail', {'why': 'retries-exhausted'});
   }
 
   Future<void> _persistCommand({required bool playing}) async {
     _progressTimer?.cancel();
     await _enqueueWrite(() async {
-      if (!await api.hasSession() || queue.isEmpty && track == null) {
+      if (_followingRemote && !_takingOver) {
+        SyncLog.stage('persist-skip', {'kind': 'command', 'why': 'following'});
+        return;
+      }
+      if (!await api.hasSession()) {
+        SyncLog.stage('persist-skip', {'kind': 'command', 'why': 'no-session'});
+        return;
+      }
+      if (queue.isEmpty && track == null) {
+        SyncLog.stage('persist-skip', {'kind': 'command', 'why': 'empty'});
         return;
       }
       await _putState(
@@ -649,8 +1186,8 @@ class PlayerController extends ChangeNotifier {
           'trackId': queue.current?.trackId ?? track?.id,
           'positionMs': position.inMilliseconds,
           'isPlaying': playing,
-          'qualityCode': requestedQuality ?? resolvedQuality ?? 'auto',
-          'source': resolvedSource ?? 'catalog',
+          'qualityCode': _commandQualityCode(),
+          'source': _commandSource(),
           'queue': queue.toJson(),
         },
       );
@@ -659,7 +1196,7 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> _persistProgress() async {
     await _enqueueWrite(() async {
-      if (!await api.hasSession() || _sessionId == null || queue.current == null) {
+      if (_followingRemote || !await api.hasSession() || _sessionId == null || queue.current == null) {
         return;
       }
       await _putState(
@@ -673,61 +1210,123 @@ class PlayerController extends ChangeNotifier {
   }
 
   void _scheduleProgress() {
-    if (_sessionId == null || !playing) {
+    if (_followingRemote || _sessionId == null || !playing) {
       return;
     }
     _progressTimer?.cancel();
-    _progressTimer = Timer(const Duration(seconds: 8), () {
+    _progressTimer = Timer(const Duration(milliseconds: 500), () {
       unawaited(_persistProgress());
     });
   }
 
+  String _commandQualityCode() {
+    const allowed = {'auto', 'aac_128', 'aac_256', 'src'};
+    final code = (requestedQuality ?? resolvedQuality ?? 'auto').toLowerCase();
+    return allowed.contains(code) ? code : 'auto';
+  }
+
+  String _commandSource() {
+    const allowed = {'catalog', 'local', 'private'};
+    final code = (resolvedSource ?? 'catalog').toLowerCase();
+    return allowed.contains(code) ? code : 'catalog';
+  }
+
   Future<void> _putState({required String kind, required Map<String, dynamic> state}) async {
-    try {
-      await _ensureWriter();
-      final sessionId = _sessionId;
-      if (sessionId == null) {
+    final retries = kind == 'command' || _takingOver ? 8 : 1;
+    for (var attempt = 0; attempt < retries; attempt++) {
+      if (_followingRemote && !_takingOver) {
+        SyncLog.stage('put-skip', {'kind': kind, 'why': 'following'});
         return;
       }
-      await _paceStateWrite();
-      final snapshot = await api.putPlaybackState(
-        expectedRevision: _revision,
-        writerSessionId: sessionId,
-        kind: kind,
-        state: state,
-      );
-      _revision = snapshot.revision;
-    } on ApiException catch (e) {
-      if (e.code == 'revision_conflict' || e.code == 'not_writer') {
-        _sessionId = null;
-        if (e.snapshot != null) {
-          _revision = e.snapshot!.revision;
+      try {
+        await _ensureWriter();
+        if (_followingRemote && !_takingOver) {
+          SyncLog.stage('put-skip', {'kind': kind, 'why': 'became-follow'});
+          return;
         }
+        final sessionId = _sessionId;
+        if (sessionId == null || !_writerClaimed) {
+          if (attempt < retries - 1) {
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+            continue;
+          }
+          SyncLog.stage('put-skip', {'kind': kind, 'why': 'no-session-id'});
+          return;
+        }
+        if (kind == 'progress' || attempt == 0) {
+          await _paceStateWrite();
+        }
+        SyncLog.stage('put', {
+          'kind': kind,
+          'me': SyncLog.shortId(myDeviceId),
+          'session': SyncLog.shortId(sessionId),
+          'rev': _revision,
+          'track': SyncLog.shortId(state['trackId']?.toString()),
+          'playing': state['isPlaying'],
+          'posMs': state['positionMs'],
+          'attempt': attempt + 1,
+        });
+        final snapshot = await api.putPlaybackState(
+          expectedRevision: _revision,
+          writerSessionId: sessionId,
+          kind: kind,
+          state: state,
+        );
+        _revision = snapshot.revision;
         if (kind == 'command') {
-          try {
-            await _ensureWriter();
-            final sessionId = _sessionId;
-            if (sessionId == null) {
+          SyncLog.stage('put-ok', {'kind': kind, 'me': SyncLog.shortId(myDeviceId), ...SyncLog.snapshot(snapshot)});
+        }
+        return;
+      } on ApiException catch (e) {
+        SyncLog.stage('put-fail', {
+          'kind': kind,
+          'code': e.code,
+          'status': e.status,
+          'attempt': attempt + 1,
+          if (e.snapshot != null) ...SyncLog.snapshot(e.snapshot!),
+        });
+        if (e.code == 'rate_limited') {
+          await Future<void>.delayed(_retryAfter(e));
+          continue;
+        }
+        if (e.code == 'revision_conflict') {
+          if (e.snapshot != null) {
+            _revision = e.snapshot!.revision;
+          }
+          if (!_takingOver && e.snapshot != null) {
+            final myDevice = await api.deviceId();
+            if (e.snapshot!.deviceId != null && e.snapshot!.deviceId != myDevice) {
+              _dropWriter();
+              await _applyRemoteSnapshot(e.snapshot!);
               return;
             }
-            await _paceStateWrite();
-            final snapshot = await api.putPlaybackState(
-              expectedRevision: _revision,
-              writerSessionId: sessionId,
-              kind: kind,
-              state: state,
-            );
-            _revision = snapshot.revision;
-          } catch (retryError) {
-            debugPrint('playback persist retry failed: $retryError');
           }
+          _writerClaimed = false;
+          continue;
+        }
+        if (e.code == 'not_writer') {
+          _dropWriter();
+          if (_takingOver) {
+            continue;
+          }
+          if (e.snapshot != null) {
+            await _applyRemoteSnapshot(e.snapshot!);
+          } else {
+            await _resyncFromServer(via: 'not-writer');
+          }
+          return;
+        }
+        if (e.code != 'dependency_unavailable') {
+          debugPrint('playback persist failed: $e');
         }
         return;
       }
-      if (e.code != 'dependency_unavailable' && e.code != 'rate_limited') {
-        debugPrint('playback persist failed: $e');
-      }
     }
+  }
+
+  Duration _retryAfter(ApiException e) {
+    final ms = ((e.retryAfterSeconds ?? 1) * 1000).clamp(200, 1200);
+    return Duration(milliseconds: ms);
   }
 
   Future<void> _paceStateWrite() async {
@@ -782,11 +1381,17 @@ class PlayerController extends ChangeNotifier {
     final gen = _playGen;
     final resume = handler.position;
     try {
+      var localAvailable = false;
+      try {
+        localAvailable = await bindings.isAvailable(current.id);
+      } catch (e) {
+        SyncLog.stage('local-bind-skip', {'track': SyncLog.shortId(current.id), 'error': '$e'});
+      }
       final url = await api.playbackUrl(
         trackId: current.id,
         sourcePreference: queue.current?.sourcePreference ?? 'auto',
         qualityPreference: quality,
-        localAvailable: await bindings.isAvailable(current.id),
+        localAvailable: localAvailable,
       );
       if (gen != _playGen) {
         return;
@@ -837,6 +1442,8 @@ class PlayerController extends ChangeNotifier {
   @override
   void dispose() {
     _progressTimer?.cancel();
+    _followTimer?.cancel();
+    unawaited(_hub?.stop());
     unawaited(_positionSub?.cancel());
     unawaited(_durationSub?.cancel());
     unawaited(_stateSub?.cancel());

@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using Hangfire;
 using Hangfire.PostgreSql;
 using MailKit.Net.Smtp;
@@ -73,6 +74,8 @@ builder.Services.AddScoped<PlaybackUrlService>();
 builder.Services.AddScoped<OverrideService>();
 builder.Services.AddScoped<PrivateUploadService>();
 builder.Services.AddSingleton<PlaybackSessionStore>();
+builder.Services.AddSingleton<PlaybackPresenceStore>();
+builder.Services.AddSingleton<IPlaybackHubPublisher, PlaybackHubPublisher>();
 builder.Services.AddScoped<PlaybackStateService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -160,6 +163,11 @@ if (builder.Environment.IsDevelopment())
 }
 
 builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
+    })
     .AddStackExchangeRedis(redisCs);
 
 builder.Services.AddHangfire(config => config

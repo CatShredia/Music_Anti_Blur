@@ -111,7 +111,7 @@ String sourceLabel(String source) => switch (source) {
     };
 
 String fallbackNotice(String? reason) => switch (reason) {
-      'local_unavailable' => 'Локальный файл недоступен — играю другую копию',
+      'local_unavailable' => 'Локальный файл на другом устройстве',
       'private_not_ready' => 'Private-копия ещё не готова — играю другую копию',
       _ => '',
     };

@@ -10,7 +10,9 @@ namespace MusicAntiBlur.Api.Playback;
 public sealed class PlaybackStateService(
     AppDbContext db,
     PlaybackSessionStore sessions,
-    RedisRateLimiter limiter)
+    RedisRateLimiter limiter,
+    IPlaybackHubPublisher hub,
+    ILogger<PlaybackStateService> logger)
 {
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -21,15 +23,20 @@ public sealed class PlaybackStateService(
     public async Task<PlaybackSnapshotDto> GetAsync(Guid userId, CancellationToken ct)
     {
         var row = await EnsureRowAsync(userId, ct);
-        var known = await KnownTracksAsync(row, ct);
-        var snapshot = PlaybackQueue.PruneSnapshot(ToSnapshot(row), known);
+        var snapshot = ToSnapshot(row);
+        var known = await KnownTracksAsync(snapshot, ct);
+        snapshot = PlaybackQueue.PruneSnapshot(snapshot, known);
         if (NeedsWrite(row, snapshot))
         {
             WriteRow(row, snapshot, row.WriterSessionId, row.DeviceId);
             await db.SaveChangesAsync(ct);
         }
 
-        return ToSnapshot(row);
+        var result = ToSnapshot(row);
+        logger.LogInformation(
+            "[sync] get user={UserId} rev={Revision} device={DeviceId} track={TrackId} playing={Playing} posMs={Pos} items={Items}",
+            userId, result.Revision, result.DeviceId, result.TrackId, result.IsPlaying, result.PositionMs, result.Queue.Items.Count);
+        return result;
     }
 
     public async Task<CreatePlaybackSessionResponse> CreateSessionAsync(Guid userId, Guid? deviceId, CancellationToken ct)
@@ -39,12 +46,15 @@ public sealed class PlaybackStateService(
         var sessionId = Guid.NewGuid();
         await sessions.CreateAsync(sessionId, userId, device, ct);
         var snapshot = await GetAsync(userId, ct);
+        logger.LogInformation(
+            "[sync] session-create user={UserId} device={DeviceId} session={SessionId} rev={Revision}",
+            userId, device, sessionId, snapshot.Revision);
         return new CreatePlaybackSessionResponse(sessionId, snapshot);
     }
 
     public async Task<PlaybackSnapshotDto> ClaimAsync(Guid userId, Guid sessionId, long? expectedRevision, CancellationToken ct)
     {
-        await HitStateLimitAsync(userId, ct);
+        await HitStateLimitAsync(userId, "claim", ct);
         if (expectedRevision is null)
         {
             throw new ApiException(400, "validation_failed", "Validation failed.",
@@ -55,11 +65,16 @@ public sealed class PlaybackStateService(
         var session = await sessions.GetAsync(sessionId, ct);
         if (session is not { } live || live.UserId != userId)
         {
+            logger.LogWarning("[sync] conflict code=not_writer op=claim user={UserId} session={SessionId} rev={Revision}",
+                userId, sessionId, row.Revision);
             throw Conflict("not_writer", "Not the playback writer.", row);
         }
 
         if (row.Revision != expectedRevision)
         {
+            logger.LogWarning(
+                "[sync] conflict code=revision_conflict op=claim user={UserId} expected={Expected} actual={Actual}",
+                userId, expectedRevision, row.Revision);
             throw Conflict("revision_conflict", "Playback revision conflict.", row);
         }
 
@@ -67,13 +82,15 @@ public sealed class PlaybackStateService(
         row.DeviceId = live.DeviceId;
         row.Revision += 1;
         row.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync(ct);
-        return ToSnapshot(row);
+        logger.LogInformation(
+            "[sync] claim user={UserId} device={DeviceId} session={SessionId} rev={Revision}",
+            userId, live.DeviceId, sessionId, row.Revision);
+        return await CommitAndBroadcastAsync(userId, row, ct);
     }
 
     public async Task<PlaybackSnapshotDto> PutAsync(Guid userId, PutPlaybackStateRequest req, CancellationToken ct)
     {
-        await HitStateLimitAsync(userId, ct);
+        await HitStateLimitAsync(userId, req.Kind ?? "", ct);
         if (req.ExpectedRevision is null || req.WriterSessionId is null || string.IsNullOrWhiteSpace(req.Kind))
         {
             throw new ApiException(400, "validation_failed", "Validation failed.",
@@ -91,16 +108,21 @@ public sealed class PlaybackStateService(
         var session = await sessions.GetAsync(req.WriterSessionId.Value, ct);
         if (session is not { } live || live.UserId != userId || row.WriterSessionId != req.WriterSessionId)
         {
+            logger.LogWarning(
+                "[sync] conflict code=not_writer op=put user={UserId} kind={Kind} session={Session} writer={Writer} rev={Revision}",
+                userId, kind, req.WriterSessionId, row.WriterSessionId, row.Revision);
             throw Conflict("not_writer", "Not the playback writer.", row);
         }
 
         if (row.Revision != req.ExpectedRevision)
         {
+            logger.LogWarning(
+                "[sync] conflict code=revision_conflict op=put user={UserId} kind={Kind} expected={Expected} actual={Actual}",
+                userId, kind, req.ExpectedRevision, row.Revision);
             throw Conflict("revision_conflict", "Playback revision conflict.", row);
         }
 
         var current = ToSnapshot(row);
-        var known = await KnownTracksAsync(row, ct);
         PlaybackSnapshotDto next;
         if (kind == "progress")
         {
@@ -123,18 +145,52 @@ public sealed class PlaybackStateService(
             next = PlaybackQueue.ApplyCommand(current, command);
         }
 
+        // Lookup IDs from the incoming snapshot. Using the previous row skipped every
+        // first play: known was empty, PruneSnapshot wiped the new queue, and pause
+        // then persisted that empty state to every device.
+        var known = await KnownTracksAsync(next, ct);
         next = PlaybackQueue.PruneSnapshot(next, known);
         WriteRow(row, next, req.WriterSessionId, live.DeviceId);
         row.Revision += 1;
-        await db.SaveChangesAsync(ct);
-        return ToSnapshot(row);
+        logger.LogInformation(
+            "[sync] put user={UserId} kind={Kind} device={DeviceId} rev={Revision} track={TrackId} playing={Playing} posMs={Pos} items={Items}",
+            userId, kind, live.DeviceId, row.Revision, next.TrackId, next.IsPlaying, next.PositionMs, next.Queue.Items.Count);
+        return await CommitAndBroadcastAsync(userId, row, ct);
     }
 
-    private async Task HitStateLimitAsync(Guid userId, CancellationToken ct)
+    private async Task<PlaybackSnapshotDto> CommitAndBroadcastAsync(
+        Guid userId,
+        PlaybackState row,
+        CancellationToken ct)
     {
-        var bucket = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        await limiter.HitAsync($"rl:playback-state-burst:{userId:D}", 10, TimeSpan.FromSeconds(5), ct);
-        await limiter.HitAsync($"rl:playback-state:{userId:D}:{bucket}", 2, TimeSpan.FromSeconds(1), ct);
+        await db.SaveChangesAsync(ct);
+        var snapshot = ToSnapshot(row);
+        try
+        {
+            await hub.PlaybackSnapshotAsync(userId, snapshot, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[sync] broadcast-fail user={UserId} rev={Revision} track={TrackId}",
+                userId, snapshot.Revision, snapshot.TrackId);
+        }
+
+        return snapshot;
+    }
+
+    private async Task HitStateLimitAsync(Guid userId, string kind, CancellationToken ct)
+    {
+        if (kind.Equals("progress", StringComparison.OrdinalIgnoreCase))
+        {
+            var bucket = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            await limiter.HitAsync($"rl:playback-state-burst:{userId:D}", 10, TimeSpan.FromSeconds(5), ct);
+            await limiter.HitAsync($"rl:playback-state:{userId:D}:{bucket}", 2, TimeSpan.FromSeconds(1), ct);
+            return;
+        }
+
+        // Claim/command are user intent. Do not share the progress 2/s bucket or
+        // "Play here" loses to the current writer's periodic PUTs.
+        await limiter.HitAsync($"rl:playback-command:{userId:D}", 20, TimeSpan.FromSeconds(10), ct);
     }
 
     private async Task<PlaybackState> EnsureRowAsync(Guid userId, CancellationToken ct)
@@ -160,10 +216,10 @@ public sealed class PlaybackStateService(
         return row;
     }
 
-    private async Task<HashSet<Guid>> KnownTracksAsync(PlaybackState row, CancellationToken ct)
+    private async Task<HashSet<Guid>> KnownTracksAsync(PlaybackSnapshotDto snapshot, CancellationToken ct)
     {
-        var ids = PlaybackQueue.Parse(row.Queue).Items.Select(i => i.TrackId).ToHashSet();
-        if (row.TrackId is Guid trackId)
+        var ids = snapshot.Queue.Items.Select(i => i.TrackId).ToHashSet();
+        if (snapshot.TrackId is Guid trackId)
         {
             ids.Add(trackId);
         }

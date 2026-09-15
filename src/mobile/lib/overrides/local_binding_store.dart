@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -21,7 +22,16 @@ class LocalTrackBinding {
   final int? durationMs;
   final int? sizeBytes;
 
-  bool get fileExists => File(copiedPath).existsSync();
+  bool get fileExists {
+    if (kIsWeb) {
+      return true;
+    }
+    try {
+      return File(copiedPath).existsSync();
+    } catch (_) {
+      return false;
+    }
+  }
 
   Map<String, dynamic> toJson() => {
         'trackId': trackId,
@@ -55,6 +65,9 @@ class LocalBindingStore {
     if (injected != null) {
       return injected;
     }
+    if (kIsWeb) {
+      throw UnsupportedError('Local files are not stored in the browser.');
+    }
     final support = await getApplicationSupportDirectory();
     return Directory(p.join(support.path, 'overrides'));
   }
@@ -70,11 +83,14 @@ class LocalBindingStore {
       return;
     }
     _loaded = true;
-    final file = await _indexFile();
-    if (!await file.exists()) {
+    if (kIsWeb && _directory == null) {
       return;
     }
     try {
+      final file = await _indexFile();
+      if (!await file.exists()) {
+        return;
+      }
       final map = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
       for (final entry in map.entries) {
         if (entry.value is Map<String, dynamic>) {
@@ -87,16 +103,27 @@ class LocalBindingStore {
   }
 
   Future<void> _flush() async {
-    final file = await _indexFile();
-    await file.writeAsString(
-      jsonEncode({for (final e in _cache.entries) e.key: e.value.toJson()}),
-    );
+    if (kIsWeb && _directory == null) {
+      return;
+    }
+    try {
+      final file = await _indexFile();
+      await file.writeAsString(
+        jsonEncode({for (final e in _cache.entries) e.key: e.value.toJson()}),
+      );
+    } catch (_) {}
   }
 
   Future<LocalTrackBinding?> get(String trackId) async {
     await _ensureLoaded();
     final row = _cache[trackId];
-    if (row == null || !row.fileExists) {
+    if (row == null) {
+      return null;
+    }
+    if (kIsWeb && _directory == null) {
+      return row;
+    }
+    if (!row.fileExists) {
       return null;
     }
     return row;
@@ -133,6 +160,9 @@ class LocalBindingStore {
     required String sourcePath,
     required String displayName,
   }) async {
+    if (kIsWeb && _directory == null) {
+      throw UnsupportedError('Local files are not stored in the browser.');
+    }
     final root = await _root();
     final destDir = Directory(p.join(root.path, trackId));
     await destDir.create(recursive: true);

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -147,6 +149,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return VizeScaffold(
+      showMiniPlayer: false,
       header: const VizeHeader(showLogo: true, title: 'Вход'),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
@@ -201,6 +204,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   password: _password.text,
                 );
                 if (context.mounted) {
+                  unawaited(PlayerScope.maybeOf(context)?.restoreIfNeeded());
                   context.go('/home');
                 }
               } catch (e) {
@@ -249,6 +253,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return VizeScaffold(
+      showMiniPlayer: false,
       header: const VizeHeader(title: 'Регистрация'),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
@@ -351,6 +356,7 @@ class _CheckEmailScreenState extends State<CheckEmailScreen> {
   @override
   Widget build(BuildContext context) {
     return VizeScaffold(
+      showMiniPlayer: false,
       header: const VizeHeader(title: 'Проверьте почту'),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
@@ -441,6 +447,7 @@ class _ForgotScreenState extends State<ForgotScreen> {
   @override
   Widget build(BuildContext context) {
     return VizeScaffold(
+      showMiniPlayer: false,
       header: const VizeHeader(title: 'Забыли пароль'),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
@@ -530,6 +537,7 @@ class _CodeScreenState extends State<CodeScreen> {
   @override
   Widget build(BuildContext context) {
     return VizeScaffold(
+      showMiniPlayer: false,
       header: VizeHeader(title: widget.title),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),

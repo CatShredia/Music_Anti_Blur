@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:music_anti_blur/overrides/local_binding_store.dart';
+import 'package:music_anti_blur/overrides/override_models.dart';
 import 'package:music_anti_blur/player/player_queue.dart';
 
 void main() {
@@ -37,5 +38,9 @@ void main() {
     expect(queue.current?.sourcePreference, 'auto');
     final switched = queue.withItemSource('i1', 'catalog');
     expect(switched.current?.sourcePreference, 'catalog');
+  });
+
+  test('local_unavailable notice names the other device, not a catalog swap', () {
+    expect(fallbackNotice('local_unavailable'), 'Локальный файл на другом устройстве');
   });
 }

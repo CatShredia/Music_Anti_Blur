@@ -7,7 +7,6 @@ DEVOPS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$DEVOPS_ROOT/.." && pwd)"
 RUN_DIR="$DEVOPS_ROOT/.run"
 API_PID_FILE="$RUN_DIR/api.pid"
-FLUTTER_PID_FILE="$RUN_DIR/flutter.pid"
 REMOVE_VOLUMES=0
 
 cd "$ROOT"
@@ -89,8 +88,12 @@ stop_api() {
 }
 
 stop_flutter() {
-  stop_pid_file "$FLUTTER_PID_FILE" "Flutter"
-  stop_pattern "flutter-run.sh" "Flutter"
+  local f
+  for f in "$RUN_DIR"/flutter*.pid; do
+    [[ -f "$f" ]] || continue
+    stop_pid_file "$f" "Flutter"
+  done
+  stop_pattern "flutter-run" "Flutter"
   stop_pattern "flutter run" "Flutter"
 }
 

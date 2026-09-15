@@ -39,6 +39,12 @@ public sealed record PlaybackCommandState(
     string? Source,
     PlaybackQueueDto? Queue);
 
+public sealed record DevicePresenceItemDto(Guid DeviceId, DateTimeOffset LastSeen, string? Name = null);
+
+public sealed record DevicePresenceDto(IReadOnlyList<DevicePresenceItemDto> Devices);
+
+public sealed record RenditionReadyDto(Guid TrackId, Guid GenerationId, string Scope);
+
 public sealed record PutPlaybackStateRequest(
     long? ExpectedRevision,
     Guid? WriterSessionId,

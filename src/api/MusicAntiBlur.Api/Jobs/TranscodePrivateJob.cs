@@ -5,6 +5,7 @@ using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Http;
 using MusicAntiBlur.Api.Media;
+using MusicAntiBlur.Api.Playback;
 using MusicAntiBlur.Api.Storage;
 using MusicAntiBlur.Api.Uploads;
 
@@ -15,6 +16,7 @@ public sealed class TranscodePrivateJob(
     ObjectStorageClient storage,
     MediaProcessRunner runner,
     IOptions<MediaOptions> mediaOptions,
+    IPlaybackHubPublisher hub,
     ILogger<TranscodePrivateJob> logger)
 {
     [AutomaticRetry(Attempts = 5)]
@@ -194,6 +196,22 @@ public sealed class TranscodePrivateJob(
         upload.LeaseExpiresAt = null;
         upload.UpdatedAt = now;
         await db.SaveChangesAsync(ct);
+        await BroadcastReadyAsync(upload, ct);
+    }
+
+    private async Task BroadcastReadyAsync(UserPrivateUpload upload, CancellationToken ct)
+    {
+        try
+        {
+            await hub.RenditionReadyAsync(
+                upload.UserId,
+                new RenditionReadyDto(upload.TrackId, upload.GenerationId, "private"),
+                ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "RenditionReady broadcast failed for private track {TrackId}.", upload.TrackId);
+        }
     }
 
     private async Task UpsertRenditionAsync(

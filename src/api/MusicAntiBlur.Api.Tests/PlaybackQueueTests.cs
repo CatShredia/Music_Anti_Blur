@@ -92,6 +92,26 @@ public sealed class PlaybackQueueTests
     }
 
     [Fact]
+    public void Prune_keeps_a_new_queue_when_those_tracks_exist()
+    {
+        var snapshot = Snapshot(TrackA, Item1);
+        var pruned = PlaybackQueue.PruneSnapshot(snapshot, new HashSet<Guid> { TrackA });
+        Assert.Equal(TrackA, pruned.TrackId);
+        Assert.Single(pruned.Queue.Items);
+        Assert.True(pruned.IsPlaying);
+    }
+
+    [Fact]
+    public void Prune_with_empty_known_set_clears_an_incoming_queue()
+    {
+        var snapshot = Snapshot(TrackA, Item1);
+        var pruned = PlaybackQueue.PruneSnapshot(snapshot, new HashSet<Guid>());
+        Assert.Null(pruned.TrackId);
+        Assert.Empty(pruned.Queue.Items);
+        Assert.False(pruned.IsPlaying);
+    }
+
+    [Fact]
     public void Prune_drops_missing_tracks_and_keeps_remaining()
     {
         var snapshot = Snapshot(TrackA, Item1) with

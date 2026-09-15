@@ -27,6 +27,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 | [02-database-overview.md](02-database-overview.md) | Целевая схема Postgres: таблицы, CHECK, индексы, каскады, ключи S3, чего не создавать |
 | [03-api-contract.md](03-api-contract.md) | Нормативные HTTP/SignalR routes, DTO, ошибки, idempotency и rate limits |
 | [04-operations.md](04-operations.md) | FFmpeg boundary, jobs, CDN/S3, telemetry, backup, deploy и retention |
+| [05-local-setup.md](05-local-setup.md) | Локальный запуск Compose + API + Flutter |
 
 Якоря, которые чаще всего нужны:
 
@@ -40,6 +41,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 - Таблицы, которых нет в MVP: [02-database-overview.md §14](02-database-overview.md)
 - HTTP/SignalR: [03-api-contract.md](03-api-contract.md)
 - Production-инварианты и cleanup: [04-operations.md](04-operations.md)
+- Локальный запуск стека: [05-local-setup.md](05-local-setup.md)
 
 Спринты разработки лежат в `no_commit/sprints/` (каталог в `.gitignore`). Это рабочие заметки для людей. Если `docs/` и спринт противоречат — правь код и схему по **`docs/`**, спринт не расширяет скоуп.
 
@@ -51,7 +53,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 
 Один монолитный репозиторий: API, Flutter-клиент, compose для локалки, `docs/` как источник правды. Новый код клади в существующие папки, не заводи параллельные деревья (`backend/`, `app/`, второй API).
 
-Локальный запуск — [README.md](../README.md). Секреты — [.env.example](../.env.example) (сам `.env` в git не коммитить).
+Локальный запуск — [05-local-setup.md](05-local-setup.md). Секреты — [.env.example](../.env.example) и [.env.local.example](../.env.local.example) (сам `.env` в git не коммитить).
 
 ```
 .
@@ -67,11 +69,12 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 
 | Путь | Зачем |
 |---|---|
-| [README.md](../README.md) | Compose, API, Flutter, MailHog, MinIO, CI |
+| [README.md](../README.md) | Описание продукта и ссылки |
+| [05-local-setup.md](05-local-setup.md) | Compose, API, Flutter, MailHog, MinIO, CI |
 | [docker-compose.yml](../docker-compose.yml) | Postgres, Redis, MailHog, MinIO |
 | [.env.example](../.env.example) | Имена переменных; значения только локально |
 | [.github/workflows/ci.yml](../.github/workflows/ci.yml) | CI на ветке `develop` |
-| [docs/](./) | Product / schema / API / operations |
+| [docs/](./) | Product / schema / API / operations / local setup |
 | [devops/](../devops/) | Скрипты start/stop, [seed-local-music.ps1](../devops/seed-local-music.ps1) / [seed-local-music.sh](../devops/seed-local-music.sh) (импорт `no_commit/music` после healthy API), [upload-catalog-source.ps1](../devops/upload-catalog-source.ps1); [yandex-storage-cdn.md](../devops/yandex-storage-cdn.md) — локальный MinIO и (позже) Yandex |
 
 ### 3.1. API — `src/api/`
@@ -363,11 +366,12 @@ src/mobile/lib/
 2. Задача про таблицы, индексы, FK? Только [02-database-overview.md](02-database-overview.md).
 3. Задача про route/DTO/status/SignalR event? Только [03-api-contract.md](03-api-contract.md).
 4. Задача про FFmpeg/CDN/jobs/deploy/backup? [04-operations.md](04-operations.md).
-5. Задача про «как это принято в .NET / Flutter / S3»? Таблица [§5](#5-стек--официальная-документация), затем официальный doc.
-6. Не уверен, в MVP ли фича — **не делать**. Список «вне MVP» в плане.
-7. Дизайн экранов не изобретать: Material 3, стабильные имена роутов.
-8. Не коммить `no_commit/` и секреты.
-9. Новый файл — в папки из [§3](#3-структура-репозитория), не плодить параллельные деревья.
+5. Задача про локальный запуск стека, `.env`, seed музыки, два Flutter-клиента? [05-local-setup.md](05-local-setup.md).
+6. Задача про «как это принято в .NET / Flutter / S3»? Таблица [§5](#5-стек--официальная-документация), затем официальный doc.
+7. Не уверен, в MVP ли фича — **не делать**. Список «вне MVP» в плане.
+8. Дизайн экранов не изобретать: Material 3, стабильные имена роутов.
+9. Не коммить `no_commit/` и секреты.
+10. Новый файл — в папки из [§3](#3-структура-репозитория), не плодить параллельные деревья.
 
 Когда добавляешь новую технологию в стек — сначала правка product plan, потом код, и добавь строку в [§5](#5-стек--официальная-документация) этого файла. Когда добавляешь папку или входной файл — обнови [§3](#3-структура-репозитория).
 
@@ -386,4 +390,5 @@ src/mobile/lib/
 | SignalR | план §4.6, API §6, [PlaybackHub.cs](../src/api/MusicAntiBlur.Api/Hubs/PlaybackHub.cs) |
 | HTTP errors / rate limits | [03-api-contract.md](03-api-contract.md), [Http/](../src/api/MusicAntiBlur.Api/Http/), [RedisRateLimiter.cs](../src/api/MusicAntiBlur.Api/RateLimiting/RedisRateLimiter.cs) |
 | Cleanup / backup / deploy | [04-operations.md](04-operations.md); jobs сейчас в [EmailJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/EmailJobs.cs) |
+| Локальный запуск стека | [05-local-setup.md](05-local-setup.md) |
 | Что не создавать в БД | overview §14 |

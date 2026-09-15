@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../overrides/override_models.dart';
@@ -28,6 +30,9 @@ class _PlayerNoticeHostState extends State<PlayerNoticeHost> {
   void initState() {
     super.initState();
     widget.player.addListener(_onPlayer);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(widget.player.restoreIfNeeded());
+    });
   }
 
   @override
@@ -65,17 +70,26 @@ class MiniPlayerBar extends StatelessWidget {
       listenable: player,
       builder: (context, _) {
         final track = player.track;
-        if (track == null && !player.hasQueue) {
-          return const SizedBox.shrink();
-        }
-        final title = track?.title ?? 'Трек';
+        final idle = !player.hasLastTrack;
+        final title = idle
+            ? 'Ничего не играет'
+            : (track?.title ?? player.labelFor(player.queue.current!).title);
+        final subtitle = idle
+            ? 'Синхронизируется между устройствами'
+            : player.followingRemote
+                ? (player.playing ? 'Играет на другом устройстве' : 'На другом устройстве')
+                : sourceLabel(player.resolvedSource ?? player.queue.current?.sourcePreference ?? 'auto');
         return Material(
           color: VizeColors.bgElevated,
           child: InkWell(
             onTap: () => openPlayer(context),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-              child: Row(
+            child: DecoratedBox(
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: VizeColors.stroke)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+                child: Row(
                 children: [
                   Container(
                     width: 40,
@@ -85,7 +99,11 @@ class MiniPlayerBar extends StatelessWidget {
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: VizeColors.stroke),
                     ),
-                    child: const Icon(Icons.album_outlined, color: VizeColors.accentMuted, size: 22),
+                    child: Icon(
+                      idle ? Icons.music_note_outlined : Icons.album_outlined,
+                      color: VizeColors.accentMuted,
+                      size: 22,
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -96,34 +114,43 @@ class MiniPlayerBar extends StatelessWidget {
                           title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: VizeColors.text, fontWeight: FontWeight.w600),
-                        ),
-                        if (player.resolvedSource != null)
-                          Text(
-                            sourceLabel(player.resolvedSource!),
-                            style: const TextStyle(color: VizeColors.accentMuted, fontSize: 12),
+                          style: TextStyle(
+                            color: idle ? VizeColors.accentMuted : VizeColors.text,
+                            fontWeight: FontWeight.w600,
                           ),
+                        ),
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: VizeColors.accentMuted, fontSize: 12),
+                        ),
                       ],
                     ),
                   ),
                   IconButton(
-                    tooltip: player.playing ? 'Пауза' : 'Play',
-                    onPressed: () => player.togglePlay(),
+                    tooltip: idle
+                        ? 'Нет трека'
+                        : player.followingRemote
+                            ? 'Управляется на другом устройстве'
+                            : (player.playing ? 'Пауза' : 'Play'),
+                    onPressed: player.canTogglePlay ? () => player.togglePlay() : null,
                     icon: Icon(
                       player.playing ? Icons.pause : Icons.play_arrow,
-                      color: VizeColors.accent,
+                      color: player.canTogglePlay ? VizeColors.accent : VizeColors.accentDim,
                     ),
                   ),
                   IconButton(
                     tooltip: 'Следующий',
-                    onPressed: player.canSkipNext ? () => _next(context, player) : null,
+                    onPressed: idle || !player.canSkipNext ? null : () => _next(context, player),
                     icon: Icon(
                       Icons.skip_next,
-                      color: player.canSkipNext ? VizeColors.accent : VizeColors.accentDim,
+                      color: !idle && player.canSkipNext ? VizeColors.accent : VizeColors.accentDim,
                     ),
                   ),
                 ],
               ),
+            ),
             ),
           ),
         );
