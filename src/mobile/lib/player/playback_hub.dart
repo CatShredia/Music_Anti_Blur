@@ -8,6 +8,7 @@ import 'package:signalr_netcore/signalr_client.dart';
 
 import 'playback_models.dart';
 import 'playback_sync.dart';
+import 'sync_log.dart';
 
 class PlaybackHubClient {
   PlaybackHubClient({
@@ -41,6 +42,7 @@ class PlaybackHubClient {
   }
 
   Future<void> start() async {
+    SyncLog.stage('hub-start', {'me': SyncLog.shortId(deviceId), 'url': url});
     _stopped = false;
     if (_starting || _connection?.state == HubConnectionState.Connected) {
       _startHeartbeat();
@@ -57,10 +59,15 @@ class PlaybackHubClient {
             return;
           }
           await _connection!.start();
+          SyncLog.stage('hub-socket-up', {
+            'me': SyncLog.shortId(deviceId),
+            'state': '${_connection?.state}',
+            'id': _connection?.connectionId ?? '-',
+          });
           _startHeartbeat();
           return;
         } catch (e) {
-          debugPrint('playback hub start failed: $e');
+          SyncLog.stage('hub-start-failed', {'me': SyncLog.shortId(deviceId), 'attempt': attempt + 1, 'error': '$e'});
           await _safe(onReconnecting);
           attempt++;
           await Future<void>.delayed(_backoff(attempt));
@@ -150,17 +157,34 @@ class PlaybackHubClient {
   }
 
   void _onSnapshotArgs(List<Object?>? args) {
+    SyncLog.stage('hub-event', {
+      'name': 'PlaybackSnapshot',
+      'me': SyncLog.shortId(deviceId),
+      'argc': args?.length ?? 0,
+      'arg0': args == null || args.isEmpty ? '-' : args.first.runtimeType.toString(),
+    });
     final snapshot = snapshotFromHubArgs(args);
     if (snapshot != null) {
       onSnapshot(snapshot);
+      return;
     }
+    SyncLog.stage('hub-snapshot-unparsed', {
+      'me': SyncLog.shortId(deviceId),
+      'argc': args?.length ?? 0,
+      'raw': args == null || args.isEmpty ? '-' : '${args.first}',
+    });
   }
 
   void _onPresenceArgs(List<Object?>? args) {
     final presence = presenceFromHubArgs(args);
     if (presence != null) {
       onPresence?.call(presence);
+      return;
     }
+    SyncLog.stage('hub-presence-unparsed', {
+      'me': SyncLog.shortId(deviceId),
+      'argc': args?.length ?? 0,
+    });
   }
 
   void _onRenditionArgs(List<Object?>? args) {

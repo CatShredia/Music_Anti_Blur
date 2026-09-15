@@ -1,13 +1,50 @@
+import 'dart:convert';
+
 import 'playback_models.dart';
+import 'sync_log.dart';
 
 Map<String, dynamic>? asJsonMap(Object? value) {
-  if (value is Map<String, dynamic>) {
+  if (value == null) {
+    return null;
+  }
+  if (value is String) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    try {
+      return asJsonMap(jsonDecode(trimmed));
+    } catch (_) {
+      return null;
+    }
+  }
+  if (value is Map) {
+    return {
+      for (final entry in value.entries) entry.key.toString(): canonicalizeJson(entry.value),
+    };
+  }
+  try {
+    return asJsonMap(jsonDecode(jsonEncode(value)));
+  } catch (_) {
+    return null;
+  }
+}
+
+Object? canonicalizeJson(Object? value) {
+  if (value == null || value is num || value is bool || value is String) {
     return value;
   }
   if (value is Map) {
-    return {for (final entry in value.entries) entry.key.toString(): entry.value};
+    return {for (final entry in value.entries) entry.key.toString(): canonicalizeJson(entry.value)};
   }
-  return null;
+  if (value is Iterable && value is! String) {
+    return [for (final entry in value) canonicalizeJson(entry)];
+  }
+  try {
+    return jsonDecode(jsonEncode(value));
+  } catch (_) {
+    return value.toString();
+  }
 }
 
 bool shouldIgnoreRemoteSnapshot({
@@ -49,25 +86,38 @@ int interpolatePositionMs({
 }
 
 PlaybackSnapshot? snapshotFromHubArgs(List<Object?>? args) {
-  if (args == null || args.isEmpty) {
+  try {
+    final map = _firstJsonMap(args);
+    return map == null ? null : PlaybackSnapshot.fromJson(map);
+  } catch (e) {
+    SyncLog.stage('parse-fail', {'kind': 'PlaybackSnapshot', 'error': '$e'});
     return null;
   }
-  final map = asJsonMap(args.first);
-  return map == null ? null : PlaybackSnapshot.fromJson(map);
 }
 
 DevicePresence? presenceFromHubArgs(List<Object?>? args) {
-  if (args == null || args.isEmpty) {
+  try {
+    final map = _firstJsonMap(args);
+    return map == null ? null : DevicePresence.fromJson(map);
+  } catch (e) {
+    SyncLog.stage('parse-fail', {'kind': 'DevicePresence', 'error': '$e'});
     return null;
   }
-  final map = asJsonMap(args.first);
-  return map == null ? null : DevicePresence.fromJson(map);
 }
 
 RenditionReady? renditionReadyFromHubArgs(List<Object?>? args) {
+  try {
+    final map = _firstJsonMap(args);
+    return map == null ? null : RenditionReady.fromJson(map);
+  } catch (e) {
+    SyncLog.stage('parse-fail', {'kind': 'RenditionReady', 'error': '$e'});
+    return null;
+  }
+}
+
+Map<String, dynamic>? _firstJsonMap(List<Object?>? args) {
   if (args == null || args.isEmpty) {
     return null;
   }
-  final map = asJsonMap(args.first);
-  return map == null ? null : RenditionReady.fromJson(map);
+  return asJsonMap(args.first);
 }

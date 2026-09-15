@@ -13,12 +13,14 @@ public sealed class PlaybackHub(
     RedisRateLimiter limiter,
     IConnectionMultiplexer redis,
     PlaybackPresenceStore presence,
-    IPlaybackHubPublisher publisher) : Hub
+    IPlaybackHubPublisher publisher,
+    ILogger<PlaybackHub> logger) : Hub
 {
     public override async Task OnConnectedAsync()
     {
         if (!TryUserId(out var userId))
         {
+            logger.LogWarning("[sync] hub-connect-abort why=no-user conn={Conn}", Context.ConnectionId);
             Context.Abort();
             return;
         }
@@ -29,6 +31,7 @@ public sealed class PlaybackHub(
         }
         catch
         {
+            logger.LogWarning("[sync] hub-connect-abort why=redis-ping user={UserId} conn={Conn}", userId, Context.ConnectionId);
             Context.Abort();
             return;
         }
@@ -40,23 +43,34 @@ public sealed class PlaybackHub(
         }
         catch (RateLimitedException)
         {
+            logger.LogWarning("[sync] hub-connect-abort why=rate-limit user={UserId} ip={Ip} conn={Conn}", userId, ip, Context.ConnectionId);
             Context.Abort();
             return;
         }
         catch (Http.ApiException)
         {
+            logger.LogWarning("[sync] hub-connect-abort why=limiter user={UserId} ip={Ip} conn={Conn}", userId, ip, Context.ConnectionId);
             Context.Abort();
             return;
         }
 
         Context.Items["userId"] = userId;
-        await Groups.AddToGroupAsync(Context.ConnectionId, PlaybackHubGroups.ForUser(userId), Context.ConnectionAborted);
-        if (TryDeviceId(out var deviceId))
+        var group = PlaybackHubGroups.ForUser(userId);
+        await Groups.AddToGroupAsync(Context.ConnectionId, group, Context.ConnectionAborted);
+        var hasDevice = TryDeviceId(out var deviceId);
+        if (hasDevice)
         {
             Context.Items["deviceId"] = deviceId;
             await TryPresenceAsync(() => presence.UpsertAsync(userId, deviceId, Context.ConnectionId, Context.ConnectionAborted));
             await PublishPresenceAsync(userId, Context.ConnectionAborted);
         }
+
+        logger.LogInformation(
+            "[sync] hub-connect user={UserId} device={Device} group={Group} conn={Conn}",
+            userId,
+            hasDevice ? deviceId.ToString() : "-",
+            group,
+            Context.ConnectionId);
 
         await base.OnConnectedAsync();
     }
@@ -65,6 +79,12 @@ public sealed class PlaybackHub(
     {
         if (Context.Items["userId"] is Guid userId)
         {
+            logger.LogInformation(
+                "[sync] hub-disconnect user={UserId} device={Device} conn={Conn} error={Error}",
+                userId,
+                Context.Items["deviceId"],
+                Context.ConnectionId,
+                exception?.Message ?? "-");
             await TryPresenceAsync(() => presence.RemoveByConnectionAsync(userId, Context.ConnectionId, CancellationToken.None));
             await PublishPresenceAsync(userId, CancellationToken.None);
         }

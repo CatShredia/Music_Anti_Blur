@@ -18,9 +18,10 @@ class QueueItem {
       };
 
   factory QueueItem.fromJson(Map<String, dynamic> json) => QueueItem(
-        itemId: json['itemId']?.toString() ?? '',
-        trackId: json['trackId']?.toString() ?? '',
-        sourcePreference: json['sourcePreference'] as String? ?? 'auto',
+        itemId: (json['itemId'] ?? json['ItemId'])?.toString() ?? '',
+        trackId: (json['trackId'] ?? json['TrackId'])?.toString() ?? '',
+        sourcePreference:
+            ((json['sourcePreference'] ?? json['SourcePreference'])?.toString() ?? 'auto'),
       );
 }
 
@@ -256,13 +257,15 @@ class PlayerQueue {
       };
 
   factory PlayerQueue.fromJson(Map<String, dynamic> json) {
-    final rawItems = json['items'] as List<dynamic>? ?? const [];
+    final rawItems = json['items'] ?? json['Items'];
+    final items = rawItems is Iterable ? rawItems : const [];
+    final shuffle = json['shuffle'] ?? json['Shuffle'];
     return PlayerQueue(
-      repeat: json['repeat'] as String? ?? 'off',
-      shuffle: json['shuffle'] as bool? ?? false,
-      currentItemId: json['currentItemId']?.toString(),
+      repeat: (json['repeat'] ?? json['Repeat'])?.toString() ?? 'off',
+      shuffle: shuffle == true || shuffle == 'true' || shuffle == 1,
+      currentItemId: (json['currentItemId'] ?? json['CurrentItemId'])?.toString(),
       items: [
-        for (final item in rawItems)
+        for (final item in items)
           if (item is Map)
             QueueItem.fromJson({
               for (final entry in item.entries) entry.key.toString(): entry.value,

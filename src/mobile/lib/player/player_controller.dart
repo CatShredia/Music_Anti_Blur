@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:just_audio/just_audio.dart';
 
@@ -13,6 +14,7 @@ import 'playback_hub.dart';
 import 'playback_models.dart';
 import 'playback_sync.dart';
 import 'player_queue.dart';
+import 'sync_log.dart';
 
 class PlayerScope extends InheritedNotifier<PlayerController> {
   const PlayerScope({
@@ -57,15 +59,16 @@ class PlayerController extends ChangeNotifier {
   bool _refreshUsed = false;
   bool _refreshing = false;
   bool _completing = false;
-  bool _restored = false;
   bool _starting = false;
   String? _sessionId;
   int _revision = 0;
   int _playGen = 0;
   Timer? _progressTimer;
   Timer? _followTimer;
+  Timer? _statePoll;
   Future<void> _writes = Future.value();
   Future<void>? _expanding;
+  bool _resyncBusy = false;
   List<QueueItem>? _orderBeforeShuffle;
   DateTime? _lastStateWrite;
   DateTime? _remoteUpdatedAt;
@@ -73,6 +76,7 @@ class PlayerController extends ChangeNotifier {
   PlaybackHubClient? _hub;
   bool _followingRemote = false;
   bool _remoteLocalFallbackNotice = false;
+  bool _audioReady = false;
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration?>? _durationSub;
   StreamSubscription<PlayerState>? _stateSub;
@@ -114,32 +118,16 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> restoreIfNeeded() async {
     if (!await api.hasSession()) {
+      SyncLog.stage('restore-skip', {'why': 'no-session'});
       return;
     }
+    SyncLog.stage('restore', {
+      'me': SyncLog.shortId(await api.deviceId()),
+      'web': kIsWeb,
+      'platform': defaultTargetPlatform.name,
+    });
     unawaited(_connectHub());
-    if (_restored) {
-      return;
-    }
-    _restored = true;
-    final gen = _playGen;
-    try {
-      final snapshot = await api.playbackState();
-      if (gen != _playGen || _starting) {
-        return;
-      }
-      final myDevice = await api.deviceId();
-      final otherDevice = snapshot.deviceId != null && snapshot.deviceId != myDevice;
-      if (otherDevice) {
-        await _applyRemoteSnapshot(snapshot);
-        return;
-      }
-      if (playing) {
-        return;
-      }
-      await _applySnapshot(snapshot, autoplay: false);
-    } catch (e) {
-      debugPrint('playback restore failed: $e');
-    }
+    await _resyncFromServer(via: 'restore');
   }
 
   Future<void> playTrack(
@@ -212,6 +200,9 @@ class PlayerController extends ChangeNotifier {
     if (handler.playing) {
       await handler.pause();
       await _persistCommand(playing: false);
+    } else if (!_audioReady) {
+      await _playCurrent(resumeIfSame: false, autoplay: true, seekTo: position);
+      await _persistCommand(playing: true);
     } else {
       await handler.play();
       await _persistCommand(playing: true);
@@ -220,8 +211,13 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> playHere() async {
     if (queue.current == null) {
+      SyncLog.stage('play-here-skip', {'why': 'no-queue'});
       return;
     }
+    SyncLog.stage('play-here', {
+      'me': SyncLog.shortId(myDeviceId),
+      'track': SyncLog.shortId(queue.current?.trackId),
+    });
     _remoteLocalFallbackNotice = resolvedSource == 'local';
     _stopFollowing();
     _starting = true;
@@ -353,6 +349,7 @@ class PlayerController extends ChangeNotifier {
     _progressTimer?.cancel();
     await handler.stop();
     playing = false;
+    _audioReady = false;
     notifyListeners();
   }
 
@@ -362,8 +359,8 @@ class PlayerController extends ChangeNotifier {
     _stopFollowing();
     _sessionId = null;
     _revision = 0;
-    _restored = false;
     _progressTimer?.cancel();
+    _statePoll?.cancel();
     queue = PlayerQueue.empty;
     track = null;
     coverObjectKey = null;
@@ -402,9 +399,15 @@ class PlayerController extends ChangeNotifier {
     _remoteLocalFallbackNotice = false;
     _stopFollowing();
     _starting = true;
+    SyncLog.stage('play', {
+      'me': SyncLog.shortId(myDeviceId ?? await api.deviceId()),
+      'track': SyncLog.shortId(queue.current?.trackId ?? track?.id),
+      'resume': resumeIfSame,
+    });
     try {
       await _playCurrent(resumeIfSame: resumeIfSame, autoplay: true);
-    } catch (_) {
+    } catch (e) {
+      SyncLog.stage('play-fail', {'error': '$e'});
       unawaited(_persistCommand(playing: false));
       rethrow;
     } finally {
@@ -435,10 +438,16 @@ class PlayerController extends ChangeNotifier {
         (resumeIfSame && previousId == item.trackId ? handler.position : Duration.zero);
     loading = true;
     qualityFallbackFrom = null;
+    _audioReady = false;
     notifyListeners();
     final gen = ++_playGen;
     try {
-      final local = await bindings.get(item.trackId);
+      LocalTrackBinding? local;
+      try {
+        local = await bindings.get(item.trackId);
+      } catch (e) {
+        SyncLog.stage('local-bind-skip', {'track': SyncLog.shortId(item.trackId), 'error': '$e'});
+      }
       final localOk = local != null;
       final remoteLocalOnly = _remoteLocalFallbackNotice && !localOk;
       _remoteLocalFallbackNotice = false;
@@ -539,6 +548,7 @@ class PlayerController extends ChangeNotifier {
       if (autoplay) {
         await handler.play();
       }
+      _audioReady = true;
       if (qualityFallbackFrom != null) {
         _emitNotice('Включено ${resolvedQuality ?? qualityFallbackFrom}');
       }
@@ -602,20 +612,43 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _applySnapshot(PlaybackSnapshot snapshot, {required bool autoplay}) async {
-    if (_starting || playing || _followingRemote) {
+    if (_starting || _followingRemote) {
+      return;
+    }
+    final incomingEmpty = snapshot.trackId == null && snapshot.queue.isEmpty;
+    final haveLocal = track != null || !queue.isEmpty;
+    if (incomingEmpty && haveLocal) {
+      if (snapshot.revision > _revision) {
+        _revision = snapshot.revision;
+      }
+      SyncLog.stage('apply-own-keep', {'why': 'empty-snapshot', 'rev': snapshot.revision});
       return;
     }
     _revision = snapshot.revision;
-    queue = snapshot.queue;
-    requestedQuality = snapshot.qualityCode;
-    resolvedSource = snapshot.source;
-    position = Duration(milliseconds: snapshot.positionMs);
-    _adoptSnapshotTrack(snapshot);
-    notifyListeners();
+    if (snapshot.queue.isEmpty && !queue.isEmpty) {
+      requestedQuality = snapshot.qualityCode;
+      resolvedSource = snapshot.source;
+      position = Duration(milliseconds: snapshot.positionMs);
+      _adoptSnapshotTrack(snapshot);
+      notifyListeners();
+      SyncLog.stage('apply-own-keep', {'why': 'keep-queue', 'rev': snapshot.revision});
+      return;
+    }
+    if (!incomingEmpty || !haveLocal) {
+      queue = snapshot.queue;
+      requestedQuality = snapshot.qualityCode;
+      resolvedSource = snapshot.source;
+      position = Duration(milliseconds: snapshot.positionMs);
+      _adoptSnapshotTrack(snapshot);
+      notifyListeners();
+    }
     if (snapshot.trackId == null || queue.current == null) {
       return;
     }
     unawaited(_hydrateQueueLabels());
+    if (!autoplay) {
+      return;
+    }
     try {
       await _playCurrent(
         resumeIfSame: false,
@@ -629,32 +662,38 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> _connectHub() async {
     if (!await api.hasSession()) {
+      SyncLog.stage('hub-connect-skip', {'why': 'no-session'});
       return;
     }
     final deviceId = await api.deviceId();
     myDeviceId = deviceId;
+    SyncLog.stage('hub-connect', {'me': SyncLog.shortId(deviceId), 'url': api.hubUrl});
     _hub ??= PlaybackHubClient(
       url: api.hubUrl,
       deviceId: deviceId,
       tokenFactory: _hubToken,
-      onSnapshot: (snapshot) => unawaited(_onHubSnapshot(snapshot)),
+      onSnapshot: (snapshot) {
+        SyncLog.stage('hub-snapshot', SyncLog.snapshot(snapshot)..addAll({'me': SyncLog.shortId(deviceId)}));
+        unawaited(_onHubSnapshot(snapshot));
+      },
       onPresence: _onPresence,
       onRenditionReady: _onRenditionReady,
       onReconnecting: () async {
+        SyncLog.stage('hub-reconnecting', {'me': SyncLog.shortId(deviceId)});
         await api.refresh();
       },
       onReconnected: () async {
-        try {
-          await _onHubSnapshot(await api.playbackState());
-        } catch (e) {
-          debugPrint('playback hub resync failed: $e');
-        }
+        SyncLog.stage('hub-reconnected', {'me': SyncLog.shortId(deviceId)});
+        await _resyncFromServer(via: 'reconnect');
       },
     );
     try {
       await _hub!.start();
+      SyncLog.stage('hub-connected', {'me': SyncLog.shortId(deviceId)});
+      _startStatePoll();
+      await _resyncFromServer(via: 'hub-start');
     } catch (e) {
-      debugPrint('playback hub connect failed: $e');
+      SyncLog.stage('hub-connect-failed', {'me': SyncLog.shortId(deviceId), 'error': '$e'});
     }
   }
 
@@ -667,25 +706,128 @@ class PlayerController extends ChangeNotifier {
     return await api.accessToken() ?? '';
   }
 
-  Future<void> _onHubSnapshot(PlaybackSnapshot snapshot) async {
+  Future<void> _onHubSnapshot(PlaybackSnapshot snapshot) => _applyAuthoritativeSnapshot(snapshot);
+
+  Future<void> _resyncFromServer({String via = 'get'}) async {
+    if (_starting) {
+      SyncLog.stage('resync-skip', {'via': via, 'why': 'starting'});
+      return;
+    }
+    if (_resyncBusy) {
+      return;
+    }
+    if (!await api.hasSession()) {
+      SyncLog.stage('resync-skip', {'via': via, 'why': 'no-session'});
+      return;
+    }
+    _resyncBusy = true;
+    try {
+      final snapshot = await api.playbackState();
+      SyncLog.stage('resync', {
+        'via': via,
+        'me': SyncLog.shortId(myDeviceId),
+        ...SyncLog.snapshot(snapshot),
+      });
+      await _applyAuthoritativeSnapshot(snapshot, via: via);
+    } catch (e) {
+      SyncLog.stage('resync-fail', {'via': via, 'error': '$e'});
+    } finally {
+      _resyncBusy = false;
+    }
+  }
+
+  Future<void> _applyAuthoritativeSnapshot(PlaybackSnapshot snapshot, {String via = 'hub'}) async {
     final myDevice = await api.deviceId();
-    if (shouldIgnoreRemoteSnapshot(
-      localRevision: _revision,
-      incomingRevision: snapshot.revision,
-      localDeviceId: myDevice,
-      incomingDeviceId: snapshot.deviceId,
-    )) {
+    final extra = {
+      'via': via,
+      'me': SyncLog.shortId(myDevice),
+      'follow': _followingRemote,
+      'localRev': _revision,
+      'playing': playing,
+      'writer': _sessionId != null,
+      ...SyncLog.snapshot(snapshot),
+    };
+    if (_sessionId != null && !_followingRemote) {
+      SyncLog.stage('apply-ignore', extra..['why'] = 'local-writer');
       if (snapshot.revision > _revision) {
         _revision = snapshot.revision;
       }
       return;
     }
-    await _applyRemoteSnapshot(snapshot);
+    final otherDevice = snapshot.deviceId != null && snapshot.deviceId != myDevice;
+    final orphanRemote = snapshot.deviceId == null && snapshot.trackId != null && _sessionId == null;
+    if (otherDevice || orphanRemote) {
+      if (shouldIgnoreRemoteSnapshot(
+        localRevision: _revision,
+        incomingRevision: snapshot.revision,
+        localDeviceId: myDevice,
+        incomingDeviceId: snapshot.deviceId,
+      ) && !orphanRemote) {
+        SyncLog.stage('apply-ignore', extra..['why'] = snapshot.revision <= _revision ? 'stale-rev' : 'own-echo');
+        if (snapshot.revision > _revision) {
+          _revision = snapshot.revision;
+        }
+        return;
+      }
+      if (orphanRemote && snapshot.revision <= _revision && _followingRemote) {
+        SyncLog.stage('apply-ignore', extra..['why'] = 'stale-orphan');
+        return;
+      }
+      if (snapshot.trackId == null && snapshot.queue.isEmpty) {
+        if (snapshot.revision > _revision) {
+          _revision = snapshot.revision;
+        }
+        SyncLog.stage('apply-ignore', extra..['why'] = 'empty-remote');
+        return;
+      }
+      SyncLog.stage('apply-follow', extra);
+      await _applyRemoteSnapshot(snapshot);
+      return;
+    }
+    if (snapshot.revision < _revision) {
+      SyncLog.stage('apply-ignore', extra..['why'] = 'older-own');
+      return;
+    }
+    if (_followingRemote) {
+      if (snapshot.deviceId == null && snapshot.trackId == null) {
+        SyncLog.stage('apply-ignore', extra..['why'] = 'empty-while-follow');
+        return;
+      }
+      SyncLog.stage('apply-unfollow', extra);
+      _stopFollowing();
+    }
+    if (playing || _starting) {
+      SyncLog.stage('apply-keep-local', extra..['why'] = _starting ? 'starting' : 'local-playing');
+      if (snapshot.revision > _revision) {
+        _revision = snapshot.revision;
+      }
+      return;
+    }
+    SyncLog.stage('apply-own', extra);
+    await _applySnapshot(snapshot, autoplay: false);
+  }
+
+  void _startStatePoll() {
+    _statePoll?.cancel();
+    _statePoll = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_starting) {
+        return;
+      }
+      if (_followingRemote || (_sessionId == null && !playing)) {
+        unawaited(_resyncFromServer(via: 'poll'));
+      }
+    });
   }
 
   void _onPresence(DevicePresence presence) {
     devices = presence.devices;
     notifyListeners();
+    SyncLog.stage('hub-presence', {
+      'me': SyncLog.shortId(myDeviceId),
+      'count': presence.devices.length,
+      'ids': presence.devices.map((item) => SyncLog.shortId(item.deviceId)).join(','),
+    });
+    unawaited(_resyncFromServer(via: 'presence'));
   }
 
   void _onRenditionReady(RenditionReady ready) {
@@ -703,6 +845,7 @@ class PlayerController extends ChangeNotifier {
     _progressTimer?.cancel();
     _sessionId = null;
     _followingRemote = true;
+    _audioReady = false;
     _revision = snapshot.revision;
     _remoteUpdatedAt = snapshot.updatedAt ?? DateTime.now().toUtc();
     _remotePositionMs = snapshot.positionMs;
@@ -722,6 +865,11 @@ class PlayerController extends ChangeNotifier {
       ),
     );
     _adoptSnapshotTrack(snapshot);
+    SyncLog.stage('follow', {
+      'me': SyncLog.shortId(myDeviceId),
+      ...SyncLog.snapshot(snapshot),
+      'uiTrack': track?.title ?? '-',
+    });
     notifyListeners();
     await _silenceLocalAudio();
     _syncFollowClock();
@@ -911,26 +1059,43 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> _ensureWriter() async {
     if (_followingRemote) {
+      SyncLog.stage('writer-skip', {'why': 'following'});
       return;
     }
     if (_sessionId != null) {
       return;
     }
-    final created = await api.createPlaybackSession(deviceId: await api.deviceId());
+    final me = await api.deviceId();
+    SyncLog.stage('writer-create', {'me': SyncLog.shortId(me)});
+    final created = await api.createPlaybackSession(deviceId: me);
     if (_followingRemote) {
+      SyncLog.stage('writer-abort', {'why': 'became-follow'});
       return;
     }
     _sessionId = created.writerSessionId;
     _revision = created.snapshot.revision;
+    SyncLog.stage('writer-created', {
+      'me': SyncLog.shortId(me),
+      'session': SyncLog.shortId(_sessionId),
+      ...SyncLog.snapshot(created.snapshot),
+    });
     try {
       await _paceStateWrite();
       if (_followingRemote) {
         _sessionId = null;
+        SyncLog.stage('writer-abort', {'why': 'became-follow-before-claim'});
         return;
       }
+      SyncLog.stage('writer-claim', {'me': SyncLog.shortId(me), 'rev': _revision, 'session': SyncLog.shortId(_sessionId)});
       final claimed = await api.claimPlaybackSession(_sessionId!, expectedRevision: _revision);
       _revision = claimed.revision;
+      SyncLog.stage('writer-claimed', {'me': SyncLog.shortId(me), ...SyncLog.snapshot(claimed)});
     } on ApiException catch (e) {
+      SyncLog.stage('writer-claim-fail', {
+        'code': e.code,
+        'status': e.status,
+        if (e.snapshot != null) ...SyncLog.snapshot(e.snapshot!),
+      });
       final snapshot = e.snapshot;
       if (snapshot != null) {
         final myDevice = await api.deviceId();
@@ -961,7 +1126,16 @@ class PlayerController extends ChangeNotifier {
   Future<void> _persistCommand({required bool playing}) async {
     _progressTimer?.cancel();
     await _enqueueWrite(() async {
-      if (_followingRemote || !await api.hasSession() || queue.isEmpty && track == null) {
+      if (_followingRemote) {
+        SyncLog.stage('persist-skip', {'kind': 'command', 'why': 'following'});
+        return;
+      }
+      if (!await api.hasSession()) {
+        SyncLog.stage('persist-skip', {'kind': 'command', 'why': 'no-session'});
+        return;
+      }
+      if (queue.isEmpty && track == null) {
+        SyncLog.stage('persist-skip', {'kind': 'command', 'why': 'empty'});
         return;
       }
       await _putState(
@@ -970,8 +1144,8 @@ class PlayerController extends ChangeNotifier {
           'trackId': queue.current?.trackId ?? track?.id,
           'positionMs': position.inMilliseconds,
           'isPlaying': playing,
-          'qualityCode': requestedQuality ?? resolvedQuality ?? 'auto',
-          'source': resolvedSource ?? 'catalog',
+          'qualityCode': _commandQualityCode(),
+          'source': _commandSource(),
           'queue': queue.toJson(),
         },
       );
@@ -1003,20 +1177,44 @@ class PlayerController extends ChangeNotifier {
     });
   }
 
+  String _commandQualityCode() {
+    const allowed = {'auto', 'aac_128', 'aac_256', 'src'};
+    final code = (requestedQuality ?? resolvedQuality ?? 'auto').toLowerCase();
+    return allowed.contains(code) ? code : 'auto';
+  }
+
+  String _commandSource() {
+    const allowed = {'catalog', 'local', 'private'};
+    final code = (resolvedSource ?? 'catalog').toLowerCase();
+    return allowed.contains(code) ? code : 'catalog';
+  }
+
   Future<void> _putState({required String kind, required Map<String, dynamic> state}) async {
     if (_followingRemote) {
+      SyncLog.stage('put-skip', {'kind': kind, 'why': 'following'});
       return;
     }
     try {
       await _ensureWriter();
       if (_followingRemote) {
+        SyncLog.stage('put-skip', {'kind': kind, 'why': 'became-follow'});
         return;
       }
       final sessionId = _sessionId;
       if (sessionId == null) {
+        SyncLog.stage('put-skip', {'kind': kind, 'why': 'no-session-id'});
         return;
       }
       await _paceStateWrite();
+      SyncLog.stage('put', {
+        'kind': kind,
+        'me': SyncLog.shortId(myDeviceId),
+        'session': SyncLog.shortId(sessionId),
+        'rev': _revision,
+        'track': SyncLog.shortId(state['trackId']?.toString()),
+        'playing': state['isPlaying'],
+        'posMs': state['positionMs'],
+      });
       final snapshot = await api.putPlaybackState(
         expectedRevision: _revision,
         writerSessionId: sessionId,
@@ -1024,7 +1222,16 @@ class PlayerController extends ChangeNotifier {
         state: state,
       );
       _revision = snapshot.revision;
+      if (kind == 'command') {
+        SyncLog.stage('put-ok', {'kind': kind, 'me': SyncLog.shortId(myDeviceId), ...SyncLog.snapshot(snapshot)});
+      }
     } on ApiException catch (e) {
+      SyncLog.stage('put-fail', {
+        'kind': kind,
+        'code': e.code,
+        'status': e.status,
+        if (e.snapshot != null) ...SyncLog.snapshot(e.snapshot!),
+      });
       if (e.code == 'not_writer') {
         _sessionId = null;
         if (e.snapshot != null) {
@@ -1122,11 +1329,17 @@ class PlayerController extends ChangeNotifier {
     final gen = _playGen;
     final resume = handler.position;
     try {
+      var localAvailable = false;
+      try {
+        localAvailable = await bindings.isAvailable(current.id);
+      } catch (e) {
+        SyncLog.stage('local-bind-skip', {'track': SyncLog.shortId(current.id), 'error': '$e'});
+      }
       final url = await api.playbackUrl(
         trackId: current.id,
         sourcePreference: queue.current?.sourcePreference ?? 'auto',
         qualityPreference: quality,
-        localAvailable: await bindings.isAvailable(current.id),
+        localAvailable: localAvailable,
       );
       if (gen != _playGen) {
         return;

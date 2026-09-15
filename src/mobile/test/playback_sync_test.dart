@@ -104,6 +104,42 @@ void main() {
     expect(snapshot.updatedAt, DateTime.utc(2026, 9, 15, 12));
   });
 
+  test('hub payload accepts PascalCase keys and a JSON string', () {
+    final snapshot = snapshotFromHubArgs([
+      {
+        'Revision': 8,
+        'DeviceId': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        'TrackId': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        'PositionMs': 900,
+        'IsPlaying': true,
+        'Source': 'catalog',
+        'UpdatedAt': '2026-09-15T12:00:00Z',
+        'Queue': {
+          'SchemaVersion': 1,
+          'Repeat': 'off',
+          'Shuffle': false,
+          'CurrentItemId': 'item-1',
+          'Items': [
+            {
+              'ItemId': 'item-1',
+              'TrackId': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+              'SourcePreference': 'auto',
+            },
+          ],
+        },
+      },
+    ]);
+    expect(snapshot?.trackId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    expect(snapshot?.isPlaying, isTrue);
+    expect(snapshot?.queue.current?.itemId, 'item-1');
+
+    final fromString = snapshotFromHubArgs([
+      '{"revision":2,"trackId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","positionMs":0,"isPlaying":false,"queue":{"schemaVersion":1,"repeat":"off","shuffle":false,"currentItemId":null,"items":[]}}',
+    ]);
+    expect(fromString?.revision, 2);
+    expect(fromString?.trackId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+  });
+
   test('DevicePresence and RenditionReady parse hub payloads', () {
     final presence = presenceFromHubArgs([
       {

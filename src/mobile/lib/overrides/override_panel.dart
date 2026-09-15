@@ -51,7 +51,10 @@ class TrackOverridePanelState extends State<TrackOverridePanel> {
   Future<void> reload() => _reload();
 
   Future<void> _reload() async {
-    final binding = await widget.bindings.get(widget.trackId);
+    LocalTrackBinding? binding;
+    try {
+      binding = await widget.bindings.get(widget.trackId);
+    } catch (_) {}
     TrackOverride? row;
     try {
       row = await widget.api.trackOverride(widget.trackId);

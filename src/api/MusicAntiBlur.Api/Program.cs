@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using Hangfire;
 using Hangfire.PostgreSql;
 using MailKit.Net.Smtp;
@@ -162,6 +163,11 @@ if (builder.Environment.IsDevelopment())
 }
 
 builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
+    })
     .AddStackExchangeRedis(redisCs);
 
 builder.Services.AddHangfire(config => config
