@@ -49,9 +49,9 @@ class MusicAudioHandler extends BaseAudioHandler with SeekHandler {
       }
       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
         final path = await _downloadToTemp(url);
-        return _player.setFilePath(path);
+        return await _player.setFilePath(path);
       }
-      return _player.setUrl(url);
+      return await _player.setUrl(url);
     } finally {
       _replacingSource = false;
     }
