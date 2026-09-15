@@ -990,7 +990,7 @@ WHERE user_id = :currentUserId AND track_id = :trackId;
 - 2–3 `artists`, несколько `albums`, ~10 `tracks`.
 - Рендиции seed-треков появятся в спринте хранилища; в спринте каталога `track_renditions` может быть пустым.
 
-Пароль admin — только хеш. Сырой пароль — README локалки, не таблица.
+Пароль admin — только хеш. Сырой пароль — [05-local-setup.md](05-local-setup.md), не таблица.
 
 ---
 

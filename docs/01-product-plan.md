@@ -386,4 +386,4 @@ docker-compose.yml  PostgreSQL + Redis + MailHog + MinIO (локальный S3;
 docs/             позже, не в no_commit
 ```
 
-Инструкции по локальному запуску — корневой [README.md](../README.md). Актуальная карта файлов для агентов — [00-ai-agents.md §3](00-ai-agents.md#3-структура-репозитория).
+Инструкции по локальному запуску — [05-local-setup.md](05-local-setup.md). Актуальная карта файлов для агентов — [00-ai-agents.md §3](00-ai-agents.md#3-структура-репозитория).

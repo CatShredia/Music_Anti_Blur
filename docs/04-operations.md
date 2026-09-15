@@ -1,7 +1,7 @@
 # Music Anti Blur — эксплуатационный контракт
 
 Версия: 1.0
-Связанные документы: [01-product-plan.md](01-product-plan.md), [02-database-overview.md](02-database-overview.md), [03-api-contract.md](03-api-contract.md)
+Связанные документы: [01-product-plan.md](01-product-plan.md), [02-database-overview.md](02-database-overview.md), [03-api-contract.md](03-api-contract.md). Локальный стек — [05-local-setup.md](05-local-setup.md).
 
 Документ фиксирует минимальные production-инварианты MVP. Конкретный провайдер мониторинга/backup может измениться, семантика проверок и восстановления — нет.
 
