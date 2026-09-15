@@ -19,7 +19,6 @@ $DevopsRoot = $PSScriptRoot
 $Root = Split-Path -Parent $DevopsRoot
 $RunDir = Join-Path $DevopsRoot ".run"
 $ApiPidFile = Join-Path $RunDir "api.pid"
-$FlutterPidFile = Join-Path $RunDir "flutter.pid"
 
 Set-Location $Root
 
@@ -81,7 +80,9 @@ function Stop-Api {
 }
 
 function Stop-Flutter {
-    Stop-PidFile $FlutterPidFile "Flutter"
+    Get-ChildItem -Path $RunDir -Filter "flutter*.pid" -ErrorAction SilentlyContinue | ForEach-Object {
+        Stop-PidFile $_.FullName "Flutter"
+    }
     Stop-CommandMatch "Music Anti Blur — Flutter" "Flutter"
     Stop-CommandMatch "flutter(\.bat)? run" "Flutter"
 }

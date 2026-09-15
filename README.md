@@ -11,9 +11,9 @@ Sprint 01: каркас API + Flutter auth. Локальный бакет — Mi
 - Windows: `devops\start.cmd`
 - Linux / macOS: `bash devops/start.sh`
 
-В консоли меню: **1** локальная разработка (Enter по умолчанию), **2** развертывание. Без меню: `devops\start.cmd -Mode local` или `bash devops/start.sh deploy`.
+В консоли меню: **1** локальная разработка (Enter по умолчанию), **2** развертывание, **3** эмулятор Android + Chrome, **0** выход. Без меню: `devops\start.cmd -Mode local` или `bash devops/start.sh deploy` / `dual`. Если корневого `.env` нет, скрипт предлагает скопировать `.env.local.example` в `.env` (Enter — да, `n` — прервать).
 
-Скрипт поднимает Docker Compose (Postgres, Redis, MailHog, MinIO), затем API и `flutter run` **в отдельных окнах**. В режиме **локальная разработка** после healthy API импортируются треки из `no_commit/music` (если папка есть): из каждой папки с аудио минимум 4 файла. Стартовый скрипт после этого завершается. Нужны Docker Desktop / daemon, .NET 10 SDK, Flutter и FFmpeg в PATH. Устройство для Flutter: переменная `FLUTTER_DEVICE` или интерактивный выбор `flutter run`.
+Скрипт поднимает Docker Compose (Postgres, Redis, MailHog, MinIO), затем API и `flutter run` **в отдельных окнах**. В режиме **локальная разработка** и **эмулятор + Chrome** после healthy API импортируются треки из `no_commit/music` (если папка есть): из каждой папки с аудио минимум 4 файла. Пункт **3** поднимает AVD (если ещё не запущен) и два `flutter run`: `-d chrome` и `-d emulator-*`. Стартовый скрипт после этого завершается. Нужны Docker Desktop / daemon, .NET 10 SDK, Flutter, Google Chrome (для пункта 3) и FFmpeg в PATH. Устройство для Flutter в режимах 1–2: переменная `FLUTTER_DEVICE` или интерактивный выбор `flutter run`.
 
 Остановка (API + Flutter + Compose, тома Postgres и MinIO сохраняются):
 

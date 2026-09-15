@@ -217,20 +217,32 @@ class VizeScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bottom = showMiniPlayer || tabIndex != null
+        ? SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (showMiniPlayer) const MiniPlayerBar(),
+                if (tabIndex != null) VizeTabBar(index: tabIndex!),
+              ],
+            ),
+          )
+        : null;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: VizeTheme.overlay,
       child: Scaffold(
         body: SafeArea(
+          bottom: bottom == null,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               ?header,
               Expanded(child: body),
-              if (showMiniPlayer) const MiniPlayerBar(),
-              if (tabIndex != null) VizeTabBar(index: tabIndex!),
             ],
           ),
         ),
+        bottomNavigationBar: bottom,
       ),
     );
   }
