@@ -197,6 +197,8 @@ class AuthMessages {
         'dependency_unavailable' => 'Сервис временно недоступен. Попробуйте позже.',
         'admin_required' => 'Недостаточно прав',
         'not_found' => 'Не найдено',
+        'source_unavailable' => 'Трек пока нельзя воспроизвести',
+        'quality_unavailable' => 'Это качество недоступно',
         _ => 'Не удалось выполнить запрос',
       };
 

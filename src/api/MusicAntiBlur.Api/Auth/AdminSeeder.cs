@@ -7,6 +7,8 @@ namespace MusicAntiBlur.Api.Auth;
 
 public static class AdminSeeder
 {
+    public static readonly Guid DevelopmentAdminId = Guid.Parse("a0000001-0001-4001-8001-000000000001");
+
     public static async Task SeedAsync(WebApplication app)
     {
         if (!app.Environment.IsDevelopment())
@@ -34,7 +36,7 @@ public static class AdminSeeder
 
         var user = new User
         {
-            Id = Guid.NewGuid(),
+            Id = DevelopmentAdminId,
             Role = "admin",
             CreatedAt = now,
             UpdatedAt = now,

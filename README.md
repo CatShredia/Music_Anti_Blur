@@ -13,14 +13,14 @@ Sprint 01: каркас API + Flutter auth. Локальный бакет — Mi
 
 В консоли меню: **1** локальная разработка (Enter по умолчанию), **2** развертывание. Без меню: `devops\start.cmd -Mode local` или `bash devops/start.sh deploy`.
 
-Скрипт поднимает Docker Compose (Postgres, Redis, MailHog, MinIO), затем API и `flutter run` **в отдельных окнах**. Стартовый скрипт после этого завершается. Нужны Docker Desktop / daemon, .NET 10 SDK и Flutter. Устройство для Flutter: переменная `FLUTTER_DEVICE` или интерактивный выбор `flutter run`.
+Скрипт поднимает Docker Compose (Postgres, Redis, MailHog, MinIO), затем API и `flutter run` **в отдельных окнах**. В режиме **локальная разработка** после healthy API импортируются треки из `no_commit/music` (если папка есть): из каждой папки с аудио минимум 4 файла. Стартовый скрипт после этого завершается. Нужны Docker Desktop / daemon, .NET 10 SDK, Flutter и FFmpeg в PATH. Устройство для Flutter: переменная `FLUTTER_DEVICE` или интерактивный выбор `flutter run`.
 
 Остановка (API + Flutter + Compose, тома Postgres и MinIO сохраняются):
 
 - Windows: `devops\stop.cmd`
 - Linux / macOS: `bash devops/stop.sh`
 
-Стереть данные БД и бакет MinIO: `devops\stop.cmd -Volumes` или `bash devops/stop.sh --volumes`.
+Стереть данные БД и бакет MinIO: `devops\stop.cmd -Volumes` или `bash devops/stop.sh --volumes`. После этого в приложении нужно **войти заново**: JWT со старого user id в новой базе больше не действует.
 
 Развертывание сейчас — это Release/Production API на этой же машине плюс Flutter в режиме разработки. Отдельного Kubernetes/образа API ещё нет.
 
@@ -59,15 +59,38 @@ dotnet run --project src/api/MusicAntiBlur.Api
 
 Sandbox admin (Development): login `admin`, password `AdminPassword123`.
 
-FFmpeg и ffprobe должны быть в PATH (Windows: winget/choco; Linux: пакет `ffmpeg`). Если бинаря нет, джоба пишет `ffmpeg not found` в статус generation.
+В Development API при старте заполняет фейковый каталог и помечает имена префиксом **`[SEED DATA]`** (артисты, альбомы, треки). В Production / режиме развертывания этот каталог не создаётся. Уже существующие seed-строки с фиксированными GUID при следующем старте Development переименовываются с тем же префиксом.
 
-Залить исходник на seed-трек Neon Pulse (после `dotnet run` и healthy MinIO):
+Реальные файлы для прослушивания кладите в `no_commit/music` (gitignore). После того как API отвечает, `devops\start.cmd` / `start.sh` в local-режиме сами создают артистов/альбомы/треки и заливают исходники через admin multipart. Повторный запуск пропускает треки, у которых уже есть качества. Вручную:
+
+```powershell
+devops\seed-local-music.ps1
+```
+
+```bash
+bash devops/seed-local-music.sh
+```
+
+FFmpeg и ffprobe должны быть в PATH (Windows: winget/choco; Linux: пакет `ffmpeg`). Если бинаря нет, джоба пишет `ffmpeg not found` в статус generation. В Development лимит admin-import 10/час не действует, чтобы локальный импорт мог залить больше пяти файлов за раз.
+
+Залить исходник на конкретный каталожный трек (после `dotnet run` и healthy MinIO), в том числе на seed Neon Pulse:
 
 ```powershell
 devops\upload-catalog-source.ps1 -Path C:\path\to\track.mp3
 ```
 
-Скрипт логинится как admin, грузит multipart в MinIO и ждёт транскод. `POST /api/v1/tracks/{id}/playback-url` отдаёт signed URL (локально MinIO GET, не тело аудио через API). Откройте URL в VLC — перемотка идёт через HTTP Range. API байты аудио не стримит.
+Скрипт логинится как admin, грузит multipart в MinIO и ждёт транскод. `POST /api/v1/tracks/{id}/playback-url` отдаёт signed URL (локально MinIO GET, не тело аудио через API). Play на карточке трека и «Играть альбом» в приложении берут этот URL через `just_audio` / `audio_service`. API байты аудио не стримит.
+
+Host внутри подписи URL должен быть тем, куда ходит **плеер**, не API. При `Storage__UseCdn=false` API берёт hostname из запроса к себе (`Host`): эмулятор Android ходит на `http://10.0.2.2:5080` — в URL MinIO попадёт `http://10.0.2.2:9000`. Windows desktop с `http://127.0.0.1:5080` получит `127.0.0.1:9000`. Явный `Storage__PresignEndpoint` по-прежнему перекрывает это. Не подменяйте hostname у уже подписанного URL на клиенте — сломается SigV4.
+
+Для next/prev по seed-альбому `[SEED DATA] Night Signals` залейте **два** Ready-трека (Neon Pulse по умолчанию и Glass Rain):
+
+```powershell
+devops\upload-catalog-source.ps1 -Path C:\path\to\one.mp3
+devops\upload-catalog-source.ps1 -Path C:\path\to\two.mp3 -TrackId d1111111-1111-4111-8111-111111111112
+```
+
+Фон: iOS `UIBackgroundModes = audio`; Android media notification через `audio_service`. На Android 13+ запрашивается `POST_NOTIFICATIONS`; если отказать, трек всё равно играет, notification может не появиться. Windows desktop играет в процессе приложения, lock screen там не критерий.
 
 3. Flutter:
 

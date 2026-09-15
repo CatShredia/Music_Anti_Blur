@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../api/api_client.dart';
+import '../player/player_controller.dart';
+import '../player/player_nav.dart';
 import '../theme.dart';
 import '../validation/catalog_rules.dart';
 import '../widgets.dart';
@@ -25,6 +27,12 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    PlayerScope.maybeOf(context)?.restoreIfNeeded();
   }
 
   Future<void> _load() async {
@@ -327,6 +335,7 @@ class AlbumScreen extends StatefulWidget {
 class _AlbumScreenState extends State<AlbumScreen> {
   AlbumDetail? _album;
   String? _error;
+  bool _busy = false;
 
   @override
   void initState() {
@@ -363,6 +372,34 @@ class _AlbumScreenState extends State<AlbumScreen> {
                     if (album.year != null)
                       Text('${album.year}', style: Theme.of(context).textTheme.bodySmall),
                     const SizedBox(height: 20),
+                    VizePrimaryButton(
+                      label: 'Играть альбом',
+                      busy: _busy,
+                      onPressed: album.tracks.isEmpty || PlayerScope.maybeOf(context) == null
+                          ? null
+                          : () async {
+                              final player = PlayerScope.maybeOf(context);
+                              if (player == null) {
+                                return;
+                              }
+                              setState(() => _busy = true);
+                              try {
+                                await player.playAlbum(album);
+                                if (context.mounted) {
+                                  openPlayer(context);
+                                }
+                              } catch (e) {
+                                if (context.mounted) {
+                                  showVizeError(context, e);
+                                }
+                              } finally {
+                                if (mounted) {
+                                  setState(() => _busy = false);
+                                }
+                              }
+                            },
+                    ),
+                    const SizedBox(height: 20),
                     ...album.tracks.map(
                       (track) => Padding(
                         padding: const EdgeInsets.only(bottom: 10),
@@ -392,6 +429,7 @@ class TrackScreen extends StatefulWidget {
 class _TrackScreenState extends State<TrackScreen> {
   TrackDetail? _track;
   String? _error;
+  bool _busy = false;
 
   @override
   void initState() {
@@ -448,11 +486,33 @@ class _TrackScreenState extends State<TrackScreen> {
                         ],
                       ),
                     const SizedBox(height: 20),
-                    const VizePrimaryButton(label: 'Play', onPressed: null),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Воспроизведение в приложении — спринт 04. Сейчас URL проверяют curl / VLC.',
-                      style: TextStyle(color: VizeColors.accentMuted, fontSize: 14),
+                    VizePrimaryButton(
+                      label: 'Play',
+                      busy: _busy,
+                      onPressed: track.availableQualities.isEmpty ||
+                              PlayerScope.maybeOf(context) == null
+                          ? null
+                          : () async {
+                              final player = PlayerScope.maybeOf(context);
+                              if (player == null) {
+                                return;
+                              }
+                              setState(() => _busy = true);
+                              try {
+                                await player.playTrack(track.id);
+                                if (context.mounted) {
+                                  openPlayer(context);
+                                }
+                              } catch (e) {
+                                if (context.mounted) {
+                                  showVizeError(context, e);
+                                }
+                              } finally {
+                                if (mounted) {
+                                  setState(() => _busy = false);
+                                }
+                              }
+                            },
                     ),
                   ],
                 ),

@@ -17,6 +17,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<TrackRendition> TrackRenditions => Set<TrackRendition>();
     public DbSet<ObjectDeletion> ObjectDeletions => Set<ObjectDeletion>();
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
+    public DbSet<PlaybackState> PlaybackStates => Set<PlaybackState>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -255,6 +256,33 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasIndex(x => x.ExpiresAt).HasDatabaseName("ix_idempotency_expiry");
             e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PlaybackState>(e =>
+        {
+            e.ToTable("playback_states", t =>
+            {
+                t.HasCheckConstraint("ck_ps_pos", "position_ms >= 0");
+                t.HasCheckConstraint("ck_ps_source", "source IS NULL OR source IN ('catalog', 'local', 'private')");
+                t.HasCheckConstraint("ck_ps_quality",
+                    "quality_code IS NULL OR quality_code IN ('auto','aac_128','aac_256','src')");
+                t.HasCheckConstraint("ck_ps_revision", "revision >= 0");
+                t.HasCheckConstraint("ck_ps_queue",
+                    "jsonb_typeof(queue) = 'object' AND queue->>'schemaVersion' = '1' AND queue->>'repeat' IN ('off', 'one', 'all') AND queue ? 'currentItemId' AND jsonb_typeof(queue->'items') = 'array' AND jsonb_typeof(queue->'shuffle') = 'boolean' AND jsonb_array_length(queue->'items') <= 500 AND octet_length(queue::text) <= 262144");
+                t.HasCheckConstraint("ck_ps_empty",
+                    "track_id IS NOT NULL OR (position_ms = 0 AND is_playing = false AND source IS NULL AND quality_code IS NULL)");
+            });
+            e.HasKey(x => x.UserId);
+            e.Property(x => x.Revision).HasDefaultValue(0L);
+            e.Property(x => x.PositionMs).HasDefaultValue(0);
+            e.Property(x => x.Queue).HasColumnType("jsonb")
+                .HasDefaultValueSql("'{\"schemaVersion\":1,\"repeat\":\"off\",\"shuffle\":false,\"currentItemId\":null,\"items\":[]}'::jsonb");
+            e.HasIndex(x => x.TrackId).HasDatabaseName("ix_playback_track")
+                .HasFilter("track_id IS NOT NULL");
+            e.HasOne(x => x.User).WithOne(x => x.PlaybackState).HasForeignKey<PlaybackState>(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Track).WithMany().HasForeignKey(x => x.TrackId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
     }
 }

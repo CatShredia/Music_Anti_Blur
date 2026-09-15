@@ -8,6 +8,12 @@
 
 .PARAMETER TrackId
   Catalog track id. Default: Neon Pulse seed.
+
+.PARAMETER AccessToken
+  Optional bearer token; skips admin login when set.
+
+.PARAMETER SkipReadyWait
+  Complete multipart and return without polling Hangfire.
 #>
 param(
     [Parameter(Mandatory = $true)]
@@ -15,7 +21,9 @@ param(
     [string]$ApiBase = "http://127.0.0.1:5080",
     [string]$TrackId = "d1111111-1111-4111-8111-111111111111",
     [string]$Login = "admin",
-    [string]$Password = "AdminPassword123"
+    [string]$Password = "AdminPassword123",
+    [string]$AccessToken = "",
+    [switch]$SkipReadyWait
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,9 +42,12 @@ $contentType = switch ($ext) {
     default { "application/octet-stream" }
 }
 
-$loginBody = @{ identifierType = "login"; identifier = $Login; password = $Password } | ConvertTo-Json
-$session = Invoke-RestMethod -Method Post -Uri "$ApiBase/api/v1/auth/login" -ContentType "application/json" -Body $loginBody
-$token = $session.accessToken
+$token = $AccessToken
+if ([string]::IsNullOrWhiteSpace($token)) {
+    $loginBody = @{ identifierType = "login"; identifier = $Login; password = $Password } | ConvertTo-Json
+    $session = Invoke-RestMethod -Method Post -Uri "$ApiBase/api/v1/auth/login" -ContentType "application/json" -Body $loginBody
+    $token = $session.accessToken
+}
 $headers = @{ Authorization = "Bearer $token"; "Idempotency-Key" = [guid]::NewGuid().ToString() }
 
 $initBody = @{
@@ -92,6 +103,11 @@ $completeHeaders = @{ Authorization = "Bearer $token"; "Idempotency-Key" = [guid
 $completeBody = @{ parts = $etags } | ConvertTo-Json -Depth 5
 $null = Invoke-RestMethod -Method Post -Uri "$ApiBase/api/v1/admin/tracks/$TrackId/uploads/$generationId/complete" -Headers $completeHeaders -ContentType "application/json" -Body $completeBody
 
+if ($SkipReadyWait) {
+    Write-Host "queued generation $generationId track $TrackId"
+    return
+}
+
 $statusHeaders = @{ Authorization = "Bearer $token" }
 for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Seconds 2
@@ -103,13 +119,11 @@ for ($i = 0; $i -lt 60; $i++) {
         $play = Invoke-RestMethod -Method Post -Uri "$ApiBase/api/v1/tracks/$TrackId/playback-url" -Headers $statusHeaders -ContentType "application/json" -Body '{"sourcePreference":"catalog","qualityPreference":"auto","localAvailable":false}'
         Write-Host "playback $($play.resolvedQuality) $($play.url)"
         Write-Host "VLC: open the URL above. Range/expiry are signed query params."
-        exit 0
+        return
     }
     if ($st.status -eq "failed" -or $st.status -eq "cancelled") {
-        Write-Error "upload $($st.status): $($st.errorMessage)"
-        exit 1
+        throw "upload $($st.status): $($st.errorMessage)"
     }
 }
 
-Write-Error "timed out waiting for transcode"
-exit 1
+throw "timed out waiting for transcode"

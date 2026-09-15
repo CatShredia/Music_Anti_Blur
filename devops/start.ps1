@@ -2,6 +2,7 @@
 <#
 .SYNOPSIS
   Поднимает Postgres/Redis/MailHog/MinIO, API и Flutter (hot reload).
+  В режиме local после healthy API импортирует no_commit/music (если папка есть).
 
 .PARAMETER Mode
   Пропустить меню: local | deploy | 1 | 2
@@ -199,6 +200,16 @@ if ($selected -eq "local") {
 }
 
 Wait-Api
+
+if ($selected -eq "local") {
+    $seedScript = Join-Path $DevopsRoot "seed-local-music.ps1"
+    Write-Info "После API: импорт no_commit/music (минимум 4 трека из каждой папки)..."
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File $seedScript -ApiBase "http://127.0.0.1:5080"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "Импорт no_commit/music завершился с кодом $LASTEXITCODE. Flutter всё равно запускаем."
+    }
+}
+
 Start-FlutterDev
 
 Write-Host ""

@@ -3,19 +3,33 @@ import 'package:go_router/go_router.dart';
 
 import 'api/api_client.dart';
 import 'catalog/catalog_screens.dart';
+import 'player/audio_handler.dart';
+import 'player/mini_player.dart';
+import 'player/player_controller.dart';
+import 'player/player_screen.dart';
 import 'theme.dart';
 import 'validation/auth_rules.dart';
 import 'widgets.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(MusicAntiBlurApp(api: ApiClient()));
+  final api = ApiClient();
+  final handler = await createMusicAudioHandler();
+  final player = PlayerController(api, handler: handler);
+  try {
+    await player.prepare();
+  } catch (e) {
+    debugPrint('audio session prepare failed: $e');
+  }
+  runApp(MusicAntiBlurApp(api: api, player: player));
 }
 
 class MusicAntiBlurApp extends StatelessWidget {
-  MusicAntiBlurApp({super.key, required this.api});
+  MusicAntiBlurApp({super.key, required this.api, this.player});
 
   final ApiClient api;
+  final PlayerController? player;
+  final _messengerKey = GlobalKey<ScaffoldMessengerState>();
 
   late final GoRouter _router = GoRouter(
     initialLocation: '/login',
@@ -74,15 +88,26 @@ class MusicAntiBlurApp extends StatelessWidget {
         builder: (_, state) => TrackScreen(api: api, id: state.pathParameters['id']!),
       ),
       GoRoute(path: '/settings', builder: (_, _) => SettingsScreen(api: api)),
+      if (player case final activePlayer?)
+        GoRoute(path: '/player', builder: (_, _) => PlayerScreen(player: activePlayer)),
     ],
   );
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(
+    final app = MaterialApp.router(
       title: 'Music Anti Blur',
       theme: VizeTheme.data(),
       routerConfig: _router,
+      scaffoldMessengerKey: _messengerKey,
+    );
+    final current = player;
+    if (current == null) {
+      return app;
+    }
+    return PlayerScope(
+      notifier: current,
+      child: PlayerNoticeHost(player: current, messengerKey: _messengerKey, child: app),
     );
   }
 }
@@ -668,6 +693,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
           OutlinedButton(
             onPressed: () async {
+              await PlayerScope.maybeOf(context)?.resetLocal();
               await widget.api.logout();
               if (context.mounted) {
                 context.go('/login');

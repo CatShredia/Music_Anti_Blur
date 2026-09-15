@@ -1,3 +1,5 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using System.Text;
 using Hangfire;
 using Hangfire.PostgreSql;
@@ -20,6 +22,7 @@ using MusicAntiBlur.Api.RateLimiting;
 using MusicAntiBlur.Api.Storage;
 using MusicAntiBlur.Api.Media;
 using MusicAntiBlur.Api.Uploads;
+using MusicAntiBlur.Api.Playback;
 using StackExchange.Redis;
 
 DotEnv.LoadFromAncestors(Directory.GetCurrentDirectory());
@@ -66,6 +69,8 @@ builder.Services.AddScoped<CatalogService>();
 builder.Services.AddScoped<AdminUploadService>();
 builder.Services.AddScoped<IdempotencyStore>();
 builder.Services.AddScoped<PlaybackUrlService>();
+builder.Services.AddSingleton<PlaybackSessionStore>();
+builder.Services.AddScoped<PlaybackStateService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -96,6 +101,22 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 }
 
                 return Task.CompletedTask;
+            },
+            OnTokenValidated = async context =>
+            {
+                var raw = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub);
+                if (raw is null || !Guid.TryParse(raw, out var userId))
+                {
+                    context.Fail("invalid_token");
+                    return;
+                }
+
+                var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+                if (!await db.Users.AsNoTracking().AnyAsync(u => u.Id == userId))
+                {
+                    context.Fail("invalid_token");
+                }
             },
             OnChallenge = async context =>
             {
@@ -171,6 +192,7 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 app.MapAuthEndpoints();
 app.MapCatalogEndpoints();
 app.MapCatalogMediaEndpoints();
+app.MapPlaybackEndpoints();
 app.MapHub<PlaybackHub>("/hubs/playback");
 
 app.MapGet("/health", async (AppDbContext db, CancellationToken ct) =>

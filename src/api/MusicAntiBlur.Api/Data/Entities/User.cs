@@ -12,6 +12,7 @@ public sealed class User
     public DateTimeOffset UpdatedAt { get; set; }
 
     public UserSettings? Settings { get; set; }
+    public PlaybackState? PlaybackState { get; set; }
     public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
     public ICollection<PasswordResetToken> PasswordResetTokens { get; set; } = new List<PasswordResetToken>();
     public ICollection<EmailVerificationToken> EmailVerificationTokens { get; set; } = new List<EmailVerificationToken>();

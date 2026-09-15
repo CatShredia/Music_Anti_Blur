@@ -233,6 +233,42 @@ class CatalogPage<T> {
       );
 }
 
+class PlaybackUrl {
+  PlaybackUrl({
+    required this.resolvedSource,
+    required this.delivery,
+    required this.resolvedQuality,
+    required this.url,
+    required this.expiresAt,
+    required this.generationId,
+    required this.durationMs,
+    this.qualityFallbackFrom,
+    this.fallbackReason,
+  });
+
+  final String resolvedSource;
+  final String delivery;
+  final String resolvedQuality;
+  final String url;
+  final DateTime expiresAt;
+  final String generationId;
+  final int durationMs;
+  final String? qualityFallbackFrom;
+  final String? fallbackReason;
+
+  factory PlaybackUrl.fromJson(Map<String, dynamic> json) => PlaybackUrl(
+        resolvedSource: json['resolvedSource'] as String,
+        delivery: json['delivery'] as String,
+        resolvedQuality: json['resolvedQuality'] as String,
+        url: json['url'] as String,
+        expiresAt: DateTime.parse(json['expiresAt'] as String),
+        generationId: json['generationId'] as String,
+        durationMs: json['durationMs'] as int,
+        qualityFallbackFrom: json['qualityFallbackFrom'] as String?,
+        fallbackReason: json['fallbackReason'] as String?,
+      );
+}
+
 String formatDuration(int? durationMs) {
   if (durationMs == null || durationMs <= 0) {
     return '—';
