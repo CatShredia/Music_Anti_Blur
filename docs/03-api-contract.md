@@ -1,10 +1,10 @@
 # Music Anti Blur — API contract
 
-Версия: 1.0
+Версия: 1.1
 Формат: JSON over HTTPS, UTF-8
-Связанные документы: [01-product-plan.md](01-product-plan.md), [02-database-overview.md](02-database-overview.md), [04-operations.md](04-operations.md)
+Связанные документы: [00-ai-agents.md](00-ai-agents.md), [01-product-plan.md](01-product-plan.md), [02-database-overview.md](02-database-overview.md), [04-operations.md](04-operations.md), [05-local-setup.md](05-local-setup.md)
 
-Документ нормативен для HTTP/SignalR MVP. OpenAPI, backend и Flutter должны ему соответствовать. Аудиобайты через API не проходят.
+Документ нормативен для HTTP/SignalR MVP. OpenAPI/Swagger в Development (`/swagger`) — подсказка, не замена этому файлу. Аудиобайты через API не проходят.
 
 ---
 
@@ -14,7 +14,8 @@
 - UUID — lowercase canonical string, время — ISO 8601 UTC, позиции/длительности — целые миллисекунды.
 - Enum-коды lowercase. Auth: `Authorization: Bearer`; access TTL 15 минут.
 - Retryable authenticated mutation принимает `Idempotency-Key` UUID, scoped по `(user, route)` на 24 часа. Login/refresh и другие ответы с token secrets используют собственную атомарность и не кэшируются idempotency layer. Тот же key с иным body → `409 idempotency_conflict`.
-- `X-Request-Id` возвращается сервером. Обычный JSON body ≤ 256 KiB.
+- `X-Request-Id` возвращается сервером. Клиент шлёт `X-Device-Id` (UUID) на auth и playback; без заголовка сервер генерирует новый id на запрос.
+- Обычный JSON body ≤ 256 KiB.
 - Успехи: `200` чтение/команда, `201` создание, `202` асинхронно принято, `204` удаление/выход.
 
 Ошибки — `application/problem+json` RFC 9457:
@@ -100,12 +101,21 @@ Idempotency records хранятся в PostgreSQL (`idempotency_records`). Тр
 { "items": [{ "type": "track", "id": "uuid", "title": "...", "subtitle": "...", "rank": 0.87 }], "nextCursor": null }
 ```
 
-Private metadata не включается. Admin catalog upload использует тот же generation-aware multipart flow под `/admin/tracks/{trackId}/uploads`.
+Private metadata не включается.
+
+Admin metadata (роль `admin`, использует seed/upload-скрипты):
+
+- `POST /admin/artists`, `PUT /admin/artists/{id}`
+- `POST /admin/albums`, `PUT /admin/albums/{id}`
+- `POST /admin/tracks`, `PUT /admin/tracks/{id}`
+
+Admin catalog upload — тот же generation-aware multipart flow, что private, под `/admin/tracks/{trackId}/uploads` (см. §5).
 
 ---
 
 ## 4. Override, source и quality
 
+- `GET /me` → `{ id, login, email, role, emailVerifiedAt }`.
 - `GET /me/settings` → `{ preferredQuality }`.
 - `PATCH /me/settings { preferredQuality }` → `200`; допустимы `auto|aac_128|aac_256|src`.
 - `GET /tracks/{trackId}/override` — owner-scoped override + private status/qualities.
@@ -146,7 +156,7 @@ Local:
 }
 ```
 
-`auto` source = Local → active Ready Private → Catalog. Для явного недоступного source используется тот же безопасный fallback и `fallbackReason`: `local_unavailable`, `private_not_ready` или `catalog_unavailable`; UI обязан показать его. Quality = `aac_256` → `aac_128`; при понижении ответ содержит `qualityFallbackFrom`. `src` только явно и после stream eligibility. URL — CDN secure token, не S3 pre-signed GET. ACL проверяется до owner-aware cache lookup. Flutter re-resolve до expiry или один раз после 401/403 и продолжает Range с сохранённой позиции.
+`auto` source = Local → active Ready Private → Catalog. Для явного недоступного source используется тот же безопасный fallback и `fallbackReason`: `local_unavailable`, `private_not_ready` или `catalog_unavailable`; UI обязан показать его. Quality = `aac_256` → `aac_128`; при понижении ответ содержит `qualityFallbackFrom`. `src` только явно и после stream eligibility. В **продукте** URL — Yandex CDN secure token, не S3 SigV4 GET. Локально (`Storage__UseCdn=false`) URL — S3 presigned GET на MinIO; поле **`delivery` всё равно `cdn`** (discriminated union remote vs `local`). Host в подписи берётся из `Host` запроса к API, см. [05-local-setup.md](05-local-setup.md). ACL проверяется до owner-aware cache lookup. Flutter re-resolve до expiry или один раз после 401/403 и продолжает Range с сохранённой позиции.
 
 Если Local недоступен, active Ready Private отсутствует и Catalog не имеет подходящей Ready-рендиции, endpoint возвращает `422 source_unavailable` с безопасными полями `{ localAvailable, privateReady, catalogReady }`, без bucket keys.
 
@@ -187,6 +197,12 @@ Admin catalog использует идентичные routes/DTO под рол
 - `GET|DELETE /admin/tracks/{trackId}/uploads/{generationId}`.
 
 Ошибки state/idempotency/checksum те же; owner isolation заменяется `admin_required`, audit обязателен.
+
+Повтор транскода (после `ffmpeg not found` / failed generation):
+
+- `POST /admin/tracks/{trackId}/transcode { generationId? }` → `202`
+- `GET /admin/tracks/{trackId}/renditions`
+- `POST /tracks/{trackId}/private-uploads/{generationId}/transcode` → `202` (только владелец)
 
 ---
 
@@ -237,12 +253,15 @@ Admin catalog использует идентичные routes/DTO под рол
 | verification resend, forgot | 3/час/email hash+IP |
 | reset, verify | 10/15 мин/IP |
 | refresh | 30/5 мин/family+IP |
+| playback sessions create | 20/мин/user |
 | playback URL | 60/мин/user |
-| upload initiate | 10/час/user |
+| upload initiate | 10/час/user (`rl:private-import` / `rl:admin-import`) |
 | part URL | 120/мин/user |
 | admin import | 10/час/admin |
 | SignalR connect | 20/5 мин/user+IP |
 | playback progress (`kind=progress`) | 2/сек sustained, burst 10/user |
 | playback claim + command | 20/10 сек/user |
 
-При отказе Redis auth/upload/admin/private URL, создание/claim writer session и `PUT /playback-state` fail closed с `503 dependency_unavailable`. `GET /playback-state` и catalog read могут работать degraded. OpenAPI генерируется и проверяется diff в CI; breaking changes требуют новой API version.
+В **Development** лимиты initiate (`admin-import` и `private-import`) не применяются — иначе `seed-local-music` упирается в 10/час. Остальные лимиты действуют.
+
+При отказе Redis auth/upload/admin/private URL, создание/claim writer session и `PUT /playback-state` fail closed с `503 dependency_unavailable`. `GET /playback-state` и catalog read могут работать degraded. Breaking changes контракта требуют новой API version. CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) сейчас: `dotnet build`/`test` и `flutter analyze`/`test`; **OpenAPI diff в CI нет**.

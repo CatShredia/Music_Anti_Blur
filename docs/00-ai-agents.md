@@ -45,7 +45,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 
 Спринты разработки лежат в `no_commit/sprints/` (каталог в `.gitignore`). Это рабочие заметки для людей. Если `docs/` и спринт противоречат — правь код и схему по **`docs/`**, спринт не расширяет скоуп.
 
-Ожидаемая раскладка в [01-product-plan.md §10](01-product-plan.md) — черновик. Актуальная карта файлов — [§3](#3-структура-репозитория).
+Ожидаемая раскладка в [01-product-plan.md §10](01-product-plan.md) совпадает с картой [§3](#3-структура-репозитория).
 
 ---
 
@@ -86,16 +86,17 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 ```
 src/api/MusicAntiBlur.Api/
 ├── Program.cs
-├── Auth/           register, login, refresh, reset, JWT
-├── Catalog/        чтение каталога, поиск, admin metadata, playback-url
-├── Playback/       HTTP snapshot playback_states, Redis writer sessions
+├── Auth/           register, login, refresh, reset, JWT, GET /me
+├── Catalog/        чтение каталога, поиск, admin metadata
+├── Overrides/      per-user override, private multipart, transcode retry
+├── Playback/       HTTP snapshot playback_states, Redis writer sessions / presence
 ├── Data/           DbContext, сущности, миграции EF
 ├── Hubs/           PlaybackHub (JWT + Redis backplane)
-├── Jobs/           Hangfire: письма, ping, cleanup, transcode, S3 outbox
+├── Jobs/           Hangfire: письма, ping, auth cleanup, transcode, S3 outbox
 ├── Mail/           SMTP (MailKit)
 ├── Media/          профили FFmpeg, ffprobe, process runner
 ├── Storage/        S3 (MinIO/Yandex), CDN/presign signer
-├── Uploads/        admin multipart + idempotency
+├── Uploads/        playback-url, admin/private multipart, idempotency, object_deletions
 ├── Http/           problem+json, request id
 ├── RateLimiting/   Redis, fail closed
 └── Config/         загрузка корневого .env
@@ -107,15 +108,16 @@ src/api/MusicAntiBlur.Api/
 | Пароль / login / email | [AuthValidation.cs](../src/api/MusicAntiBlur.Api/Auth/AuthValidation.cs), [TokenHasher.cs](../src/api/MusicAntiBlur.Api/Auth/TokenHasher.cs) |
 | JWT | [JwtTokenService.cs](../src/api/MusicAntiBlur.Api/Auth/JwtTokenService.cs) |
 | Каталог / поиск | [CatalogEndpoints.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogEndpoints.cs), [CatalogService.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogService.cs), [CatalogValidation.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogValidation.cs), [PlaybackUrlService.cs](../src/api/MusicAntiBlur.Api/Catalog/PlaybackUrlService.cs) |
-| Playback snapshot | [Playback/](../src/api/MusicAntiBlur.Api/Playback/) — `GET/PUT /playback-state`, sessions/claim; writer в Redis |
-| Загрузка / S3 | [Uploads/](../src/api/MusicAntiBlur.Api/Uploads/), [Storage/](../src/api/MusicAntiBlur.Api/Storage/), [Media/](../src/api/MusicAntiBlur.Api/Media/) |
+| Playback snapshot | [Playback/](../src/api/MusicAntiBlur.Api/Playback/) — `GET/PUT /playback-state`, sessions/claim; writer и presence в Redis |
+| Override / private | [Overrides/](../src/api/MusicAntiBlur.Api/Overrides/), [Uploads/PrivateUploadService.cs](../src/api/MusicAntiBlur.Api/Uploads/PrivateUploadService.cs) |
+| Загрузка / S3 | [Uploads/](../src/api/MusicAntiBlur.Api/Uploads/), [CatalogUploadEndpoints.cs](../src/api/MusicAntiBlur.Api/Uploads/CatalogUploadEndpoints.cs), [Storage/](../src/api/MusicAntiBlur.Api/Storage/), [Media/](../src/api/MusicAntiBlur.Api/Media/) |
 | Схема БД | [AppDbContext.cs](../src/api/MusicAntiBlur.Api/Data/AppDbContext.cs), [Data/Entities/](../src/api/MusicAntiBlur.Api/Data/Entities/), [Data/Migrations/](../src/api/MusicAntiBlur.Api/Data/Migrations/) — только EF-миграции |
 | SignalR | [PlaybackHub.cs](../src/api/MusicAntiBlur.Api/Hubs/PlaybackHub.cs) |
-| Письма / Hangfire | [EmailJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/EmailJobs.cs), [TranscodeCatalogJob.cs](../src/api/MusicAntiBlur.Api/Jobs/TranscodeCatalogJob.cs), [SmtpEmailSender.cs](../src/api/MusicAntiBlur.Api/Mail/SmtpEmailSender.cs), [HangfireDashboardAuth.cs](../src/api/MusicAntiBlur.Api/Jobs/HangfireDashboardAuth.cs) |
+| Письма / Hangfire | [EmailJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/EmailJobs.cs) (ещё `MaintenanceJobs` + `RecurringJobSetup`), [StorageCleanupJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/StorageCleanupJobs.cs), [TranscodeCatalogJob.cs](../src/api/MusicAntiBlur.Api/Jobs/TranscodeCatalogJob.cs), [TranscodePrivateJob.cs](../src/api/MusicAntiBlur.Api/Jobs/TranscodePrivateJob.cs), [SmtpEmailSender.cs](../src/api/MusicAntiBlur.Api/Mail/SmtpEmailSender.cs), [HangfireDashboardAuth.cs](../src/api/MusicAntiBlur.Api/Jobs/HangfireDashboardAuth.cs) |
 | Rate limit | [RedisRateLimiter.cs](../src/api/MusicAntiBlur.Api/RateLimiting/RedisRateLimiter.cs) |
-| Seed Development | [AdminSeeder.cs](../src/api/MusicAntiBlur.Api/Auth/AdminSeeder.cs), [CatalogSeeder.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogSeeder.cs) — только `IsDevelopment()`, имена каталога с префиксом `[SEED DATA]`. Аудио из `no_commit/music` сидер не трогает: это [seed-local-music.ps1](../devops/seed-local-music.ps1) после старта API. В Development `admin-import` rate limit не применяется. |
+| Seed Development | [AdminSeeder.cs](../src/api/MusicAntiBlur.Api/Auth/AdminSeeder.cs), [CatalogSeeder.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogSeeder.cs) — только `IsDevelopment()`, имена каталога с префиксом `[SEED DATA]`. Аудио из `no_commit/music` сидер не трогает: это [seed-local-music.ps1](../devops/seed-local-music.ps1) после старта API. В Development лимиты `admin-import` и `private-import` не применяются. |
 
-Сущности: `User`, `UserSettings`, `RefreshToken`, `PasswordResetToken`, `EmailVerificationToken`, `Artist`, `Album`, `Track`, `CatalogUpload`, `TrackRendition`, `ObjectDeletion`, `IdempotencyRecord`, `PlaybackState`. Новые таблицы — только если они есть в [02-database-overview.md](02-database-overview.md). Private/override ещё не в `src/`.
+Сущности: `User`, `UserSettings`, `RefreshToken`, `PasswordResetToken`, `EmailVerificationToken`, `Artist`, `Album`, `Track`, `CatalogUpload`, `TrackRendition`, `UserTrackOverride`, `UserPrivateUpload`, `UserPrivateRendition`, `ObjectDeletion`, `IdempotencyRecord`, `PlaybackState`. Новые таблицы — только если они есть в [02-database-overview.md](02-database-overview.md). `POST /me/identifiers/*` в коде есть, но [вне MVP](01-product-plan.md#52-out-of-scope): не расширять и не тащить в клиент.
 
 ### 3.2. Flutter — `src/mobile/`
 
@@ -125,8 +127,9 @@ src/api/MusicAntiBlur.Api/
 src/mobile/lib/
 ├── main.dart              экраны auth / settings, go_router
 ├── catalog/               дом, поиск, карточки artist/album/track
-├── player/                AudioHandler, playTrack, очередь, мини-плеер, persist snapshot
-├── theme.dart             тёмная тема Vize (токены макета)
+├── player/                AudioHandler, очередь, мини-плеер, SignalR snapshot, persist
+├── overrides/             local binding (в т.ч. web no-op), SAF, private multipart, панель на карточке
+├── theme.dart             тёмная тема Vize (токены макета; не расширять «для красоты», см. план §3)
 ├── widgets.dart           шапка, чипы, поля, таббар, ошибки формы
 ├── validation/            auth + search; те же коды, что API/CHECK
 └── api/api_client.dart    dio, JWT, refresh, X-Device-Id, problem+json
@@ -135,6 +138,7 @@ src/mobile/lib/
 | Задача | Файл |
 |---|---|
 | Экраны и роуты | [main.dart](../src/mobile/lib/main.dart), [catalog/catalog_screens.dart](../src/mobile/lib/catalog/catalog_screens.dart), [player/](../src/mobile/lib/player/) |
+| Подмена / private upload | [overrides/](../src/mobile/lib/overrides/) |
 | Тема / токены | [theme.dart](../src/mobile/lib/theme.dart) |
 | Общие виджеты | [widgets.dart](../src/mobile/lib/widgets.dart) |
 | HTTP + secure storage | [api_client.dart](../src/mobile/lib/api/api_client.dart) |
@@ -146,7 +150,7 @@ src/mobile/lib/
 
 - Секреты, `.env`, `no_commit/` — не в git.
 - Hangfire-таблицы и S3-байты — не в EF `DbContext`.
-- Плеер Flutter и private upload — ещё нет в `src/`; не invent-ahead.
+- `ListenEvent`, плейлисты, смена login/email — вне MVP, даже если в API торчат заготовки `/me/identifiers/*`.
 
 ---
 
@@ -356,7 +360,7 @@ src/mobile/lib/
 | MinIO | https://min.io/docs/minio/container/index.html |
 | pgsty/minio (локальный образ) | https://hub.docker.com/r/pgsty/minio |
 
-Ожидаемый compose: Postgres 16 + Redis + MailHog + MinIO (локальный S3). API на хосте ходит в MinIO как `http://127.0.0.1:9000`, не `http://minio:9000`. FFmpeg pin в API image. Production probes, backup, graceful deploy и restore drill — `04-operations.md`. Yandex — когда подключаем облако, не вместо MinIO в локальном `start`.
+Ожидаемый compose: Postgres 16 + Redis + MailHog + MinIO (локальный S3). API на хосте ходит в MinIO как `http://127.0.0.1:9000`, не `http://minio:9000`. FFmpeg локально — бинарники в PATH процесса API (`start` предлагает установку). Pin FFmpeg в container image — production-инвариант [04-operations.md](04-operations.md); отдельного образа API в репозитории ещё нет ([05-local-setup.md](05-local-setup.md)). Yandex — когда подключаем облако, не вместо MinIO в локальном `start`.
 
 ---
 
@@ -389,6 +393,6 @@ src/mobile/lib/
 | Local + private | план §4.5, upload/rendition tables, API §5 |
 | SignalR | план §4.6, API §6, [PlaybackHub.cs](../src/api/MusicAntiBlur.Api/Hubs/PlaybackHub.cs) |
 | HTTP errors / rate limits | [03-api-contract.md](03-api-contract.md), [Http/](../src/api/MusicAntiBlur.Api/Http/), [RedisRateLimiter.cs](../src/api/MusicAntiBlur.Api/RateLimiting/RedisRateLimiter.cs) |
-| Cleanup / backup / deploy | [04-operations.md](04-operations.md); jobs сейчас в [EmailJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/EmailJobs.cs) |
+| Cleanup / backup / deploy | [04-operations.md](04-operations.md); jobs: [EmailJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/EmailJobs.cs), [StorageCleanupJobs.cs](../src/api/MusicAntiBlur.Api/Jobs/StorageCleanupJobs.cs) |
 | Локальный запуск стека | [05-local-setup.md](05-local-setup.md) |
 | Что не создавать в БД | overview §14 |

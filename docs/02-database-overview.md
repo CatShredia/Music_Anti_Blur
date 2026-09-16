@@ -1,11 +1,11 @@
 # Database overview
 
-Версия: 1.1
+Версия: 1.2
 СУБД: **PostgreSQL 16**  
 ORM: Entity Framework Core (миграции — единственный способ менять схему)  
-Связанный документ: [01-product-plan.md](01-product-plan.md)
+Связанные документы: [00-ai-agents.md](00-ai-agents.md), [01-product-plan.md](01-product-plan.md), [03-api-contract.md](03-api-contract.md), [04-operations.md](04-operations.md), [05-local-setup.md](05-local-setup.md).
 
-Аудиофайлы в PostgreSQL **не хранятся**. В таблицах только метаданные и ключи объектов в Yandex Object Storage.
+Аудиофайлы в PostgreSQL **не хранятся**. В таблицах только метаданные и ключи объектов в Object Storage (прод — Yandex, локально MinIO).
 
 ---
 
@@ -983,12 +983,10 @@ WHERE user_id = :currentUserId AND track_id = :trackId;
 
 ## 12. Seed (Development)
 
-Минимум для демо (конкретные UUID — на усмотрение миграции/HasData):
-
-- 1× `users`: `role = admin`, идентификатор из env.
+- 1× `users`: `role = admin`, идентификатор из env ([05-local-setup.md](05-local-setup.md)).
 - 1× `user_settings` для него.
-- 2–3 `artists`, несколько `albums`, ~10 `tracks`.
-- Рендиции seed-треков появятся в спринте хранилища; в спринте каталога `track_renditions` может быть пустым.
+- Фейковый каталог: `CatalogSeeder` пишет artists/albums/tracks с префиксом **`[SEED DATA]`** и фиксированными GUID. В Production / режиме `deploy` сидер не запускается.
+- Рендиции **не** создаёт CatalogSeeder. Ready `track_renditions` появляются после admin multipart + Hangfire: `devops/seed-local-music` (папка `no_commit/music`) или `upload-catalog-source.ps1`.
 
 Пароль admin — только хеш. Сырой пароль — [05-local-setup.md](05-local-setup.md), не таблица.
 

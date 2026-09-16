@@ -1,6 +1,6 @@
 # Music Anti Blur — локальный запуск стека
 
-Связанные документы: [00-ai-agents.md](00-ai-agents.md), [01-product-plan.md](01-product-plan.md), [04-operations.md](04-operations.md). Секреты — корневой `.env` (в git не коммитить). Локальный бакет — MinIO в Compose; Yandex Object Storage / CDN — [devops/yandex-storage-cdn.md](../devops/yandex-storage-cdn.md).
+Связанные документы: [00-ai-agents.md](00-ai-agents.md), [01-product-plan.md](01-product-plan.md), [02-database-overview.md](02-database-overview.md), [03-api-contract.md](03-api-contract.md), [04-operations.md](04-operations.md). Секреты — корневой `.env` (в git не коммитить). Локальный бакет — MinIO в Compose; Yandex Object Storage / CDN — [devops/yandex-storage-cdn.md](../devops/yandex-storage-cdn.md).
 
 Production-инварианты (health, backup, deploy) — [04-operations.md](04-operations.md). Этот файл — как поднять стек на машине разработчика.
 
@@ -17,7 +17,7 @@ Production-инварианты (health, backup, deploy) — [04-operations.md](
 | ASP.NET Core API | хост | http://localhost:5080 |
 | Flutter | хост | `flutter run` (устройство выбирается) |
 
-API **не** стримит аудиобайты. Playback URL — S3 presigned GET в MinIO (`Storage__UseCdn=false`). Host внутри подписи берётся из запроса к API (`Host`): эмулятор Android → `http://10.0.2.2:9000`, Windows/Chrome → `127.0.0.1:9000`. Явный `Storage__PresignEndpoint` перекрывает это. Не подменяйте hostname у уже подписанного URL на клиенте — сломается SigV4.
+API **не** стримит аудиобайты. Playback URL — S3 presigned GET в MinIO (`Storage__UseCdn=false`). Поле JSON `delivery` остаётся `cdn` (ветка remote HTTP), как в [03-api-contract.md](03-api-contract.md). Host внутри подписи берётся из запроса к API (`Host`): эмулятор Android → `http://10.0.2.2:9000`, Windows/Chrome → `127.0.0.1:9000`. Явный `Storage__PresignEndpoint` перекрывает это. Не подменяйте hostname у уже подписанного URL на клиенте — сломается SigV4.
 
 ---
 
@@ -25,9 +25,9 @@ API **не** стримит аудиобайты. Playback URL — S3 presigned 
 
 - Docker Desktop / daemon
 - .NET 10 SDK
-- Flutter
-- FFmpeg и ffprobe в PATH (Windows: winget/choco; Linux: пакет `ffmpeg`). Без них Hangfire пишет `ffmpeg not found` в статус generation
-- Для пункта меню «эмулятор + Chrome»: Google Chrome и Android emulator (`emulator-*`)
+- Flutter — для пунктов меню 1–3; пункт **4** (API + Docker) без Flutter
+- FFmpeg и ffprobe в PATH. `start` предлагает установить, если их нет (Enter — да, `n` — продолжить без транскода). Windows: winget `Gyan.FFmpeg`; Linux/macOS: пакет `ffmpeg` / Homebrew. Без них Hangfire пишет `ffmpeg not found` в статус generation
+- Для пункта меню «эмулятор + Chrome»: Google Chrome и Android emulator (`emulator-*`). На диске, где лежит AVD (часто `C:\Users\<you>\.android\avd`), нужно несколько ГБ свободно — иначе emulator падает с `not enough disk space`, а `flutter emulators --launch` прячет эту строку.
 
 ---
 
@@ -44,20 +44,23 @@ API **не** стримит аудиобайты. Playback URL — S3 presigned 
 
 | Клавиша | Режим |
 |---|---|
-| **1** (Enter по умолчанию) | локальная разработка |
+| **1** (Enter по умолчанию) | локальная разработка (Compose + API + Flutter) |
 | **2** | развертывание (Release/Production API на этой машине + Flutter в режиме разработки) |
 | **3** | эмулятор Android + Chrome |
+| **4** | API + Docker, без Flutter (телефон по USB/Wi‑Fi) |
 | **0** | выход |
 
-Без меню: `devops\start.cmd -Mode local` или `bash devops/start.sh deploy` / `dual`.
+Без меню: `devops\start.cmd -Mode local` или `bash devops/start.sh deploy` / `dual` / `api`.
 
 Если корневого `.env` нет, скрипт предлагает скопировать [`.env.local.example`](../.env.local.example) в `.env` (Enter — да, `n` — прервать). Имена переменных также в [`.env.example`](../.env.example).
 
-Скрипт поднимает Compose, затем API и `flutter run` **в отдельных окнах**. После этого стартовый скрипт завершается.
+Скрипт поднимает Compose и API. В режимах **1–3** ещё `flutter run` **в отдельных окнах**. После этого стартовый скрипт завершается.
 
-В режимах **1** и **3**, когда API healthy, импортируются треки из `no_commit/music` (если папка есть): из каждой папки с аудио минимум 4 файла. Пункт **3** поднимает AVD (если ещё не запущен) и два `flutter run`: `-d chrome` и `-d emulator-*`.
+В режимах **1**, **3** и **4**, когда API healthy, импортируются треки из `no_commit/music` (если папка есть): из каждой папки с аудио минимум 4 файла. Пункт **3** поднимает AVD (если ещё не запущен) и два `flutter run`: `-d chrome` и `-d emulator-*`. Пункт **4** Flutter не требует: на ноутбуке только Docker и .NET SDK.
 
 Устройство для Flutter в режимах 1–2: переменная `FLUTTER_DEVICE` или интерактивный выбор `flutter run`.
+
+Телефон по USB (режим **4**): APK по умолчанию ходит на `http://10.0.2.2:5080` (это эмулятор). Соберите с `--dart-define=API_BASE_URL=http://<LAN-IP-ноутбука>:5080` и одной Wi‑Fi сетью, либо `adb reverse tcp:5080 tcp:5080` и `adb reverse tcp:9000 tcp:9000` и тогда `http://127.0.0.1:5080`. Скрипт печатает LAN IP и пытается сделать reverse, если `adb` видит устройство. Нужны открытые порты **5080** и **9000** (MinIO в signed URL).
 
 Развертывание сейчас — Release/Production API на этой же машине плюс Flutter в режиме разработки. Отдельного Kubernetes/образа API ещё нет.
 
@@ -107,20 +110,23 @@ dotnet run --project src/api/MusicAntiBlur.Api
 |---|---|
 | HTTP | http://localhost:5080 |
 | Swagger (Development) | http://localhost:5080/swagger |
-| Health | http://localhost:5080/health |
+| Health | http://localhost:5080/health (Postgres; этого ждёт `start`) |
+| Deps | http://localhost:5080/health/deps (Redis, SMTP, Hangfire, S3; без отдельной auth) |
 | Hangfire | http://localhost:5080/hangfire — Basic `admin` / `admin-local-only` |
 
-Миграции применяются при старте API.
+Production live/ready — цель в [04-operations.md](04-operations.md) §5, в коде пока не разведены.
+
+Миграции применяются при старте API (`MigrateAsync`). В production цель — отдельный one-shot до трафика, см. [04-operations.md](04-operations.md) §8.
 
 Sandbox admin (Development): login `admin`, password `AdminPassword123`. Сырой пароль только здесь и в `.env`, не в таблицах БД.
 
 В Development API при старте заполняет фейковый каталог и помечает имена префиксом **`[SEED DATA]`**. В Production / режиме развертывания этот каталог не создаётся. Уже существующие seed-строки с фиксированными GUID при следующем старте Development переименовываются с тем же префиксом.
 
-В Development лимит admin-import 10/час не действует, чтобы локальный импорт мог залить больше пяти файлов за раз.
+В Development лимиты initiate (`admin-import` и `private-import`) не действуют, чтобы локальный импорт мог залить больше пяти файлов за раз.
 
 ### 5.3. Каталог из файлов
 
-Реальные файлы для прослушивания — в `no_commit/music` (gitignore). `start` в local/dual сам создаёт артистов/альбомы/треки и заливает исходники через admin multipart. Повторный запуск пропускает треки, у которых уже есть качества. Вручную:
+Реальные файлы для прослушивания — в `no_commit/music` (gitignore). `start` в режимах **1, 3 и 4** (не deploy) сам создаёт артистов/альбомы/треки и заливает исходники через admin multipart. Повторный запуск пропускает треки, у которых уже есть качества. Вручную:
 
 ```powershell
 devops\seed-local-music.ps1
@@ -183,3 +189,5 @@ GitHub Actions ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) на 
 
 - API: `dotnet restore`, `dotnet build -c Release` и `dotnet test` проекта `src/api/MusicAntiBlur.Api.Tests`
 - Flutter: `flutter pub get`, `flutter analyze --fatal-infos`, `flutter test` в `src/mobile`
+
+OpenAPI spec diff в CI нет.

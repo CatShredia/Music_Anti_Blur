@@ -66,7 +66,7 @@ class MusicAudioHandler extends BaseAudioHandler with SeekHandler {
       if (_player.playing) {
         await _player.pause();
       }
-      return _player.setFilePath(path);
+      return await _player.setFilePath(path);
     } finally {
       _replacingSource = false;
     }
@@ -84,7 +84,7 @@ class MusicAudioHandler extends BaseAudioHandler with SeekHandler {
       if (_player.playing) {
         await _player.pause();
       }
-      return _player.setUrl(uri.toString());
+      return await _player.setUrl(uri.toString());
     } finally {
       _replacingSource = false;
     }
