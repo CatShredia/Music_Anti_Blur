@@ -1,8 +1,10 @@
 # Music Anti Blur — описание продукта и план
 
-Версия: 0.4
+Версия: 0.5
 Клиенты MVP: только мобильное приложение (Flutter)  
 Дизайн: отсутствует, разрабатывается отдельно; в спринтах UI не полируем
+
+Связанные документы: [00-ai-agents.md](00-ai-agents.md), [02-database-overview.md](02-database-overview.md), [03-api-contract.md](03-api-contract.md), [04-operations.md](04-operations.md), [05-local-setup.md](05-local-setup.md).
 
 ---
 
@@ -30,7 +32,7 @@
 | Транскодинг | FFmpeg | Несколько качеств каталожного и приватного трека |
 | Очередь задач | Hangfire | Транскодинг, письма восстановления пароля, уборка |
 | Realtime | SignalR | Состояние воспроизведения, присутствие устройств, «транскод готов» |
-| Почта | SMTP (локально MailHog / smtp4dev) | Письма восстановления пароля |
+| Почта | SMTP (локально MailHog / smtp4dev) | Verification и восстановление пароля |
 
 **Не используем в MVP:** Blazor, микросервисы, Kubernetes, отдельный ML-сервис, HLS/DASH (один файл на качество, progressive download + Range), рекомендации.
 
@@ -74,6 +76,8 @@ flowchart TB
   CDN --> S3
 ```
 
+Локально (`Storage__UseCdn=false`, MinIO): Range GET идёт на S3 presigned URL, не на Yandex CDN. JSON `playback-url` тот же, поле `delivery` остаётся `cdn` (ветка remote HTTP). Норматив URL — [03-api-contract.md](03-api-contract.md) §4, локальный стек — [05-local-setup.md](05-local-setup.md).
+
 Правило: **API не принимает и не стримит аудиобайты**. Загрузка идёт из Flutter прямо в Object Storage по presigned multipart URL. Для воспроизведения API после проверки ACL создаёт короткоживущий **Yandex CDN secure-token URL**; это не S3 SigV4 URL с заменённым hostname. CDN проверяет токен до cache lookup, origin закрыт от публичного чтения. Для private URL выдаётся только владельцу.
 
 Hangfire в MVP крутится **в процессе API** (один деплой). FFmpeg вызывается из Hangfire-джобы. Если CPU станет узким — вынести worker отдельно, контракт джоб не менять.
@@ -86,7 +90,7 @@ Hangfire в MVP крутится **в процессе API** (один депл�
 - FFmpeg + Hangfire — выбор качества не сделать «на лету» из одного файла без предрасчёта; тот же пайплайн для приватных загрузок.
 - Yandex Object Storage + CDN — аудитория РФ/СНГ, S3-совместимость, трафик не через Kestrel.
 - SignalR — несколько устройств одного пользователя и пуш «транскод готов» (каталог и private).
-- SMTP — восстановление пароля по email в MVP.
+- SMTP — verification и восстановление пароля по email в MVP.
 
 ---
 
@@ -286,7 +290,7 @@ Hub: состояние воспроизведения пользователя.
 
 ## 6. Модель данных (эскиз)
 
-Имена таблиц можно уточнить в спринте 1, смысл полей — нет.
+Норматив схемы, индексов и DDL — [02-database-overview.md](02-database-overview.md). Ниже смысл сущностей, не замена overview.
 
 **User** — Login nullable, Email nullable, EmailVerifiedAt nullable, PasswordHash, Role, CreatedAt  
 Регистрация MVP пишет login и email сразу. DB требует минимум один идентификатор. Менять их после регистрации — вне скоупа.
@@ -362,7 +366,7 @@ Hangfire создаёт свои таблицы в PostgreSQL (схема `hangf
 - Регистрация принимает login **и** email. Email-вход/recovery недоступны до verification. Смена логина и почты после регистрации не входит в MVP.
 - Два параллельных refresh/reset одного токена дают ровно один успех; reset отзывает все сессии.
 - Каталог открывается, поиск находит seed-треки и **не** находит чужие private-файлы.
-- Трек играет по CDN secure-token URL с Range. После expiry/background/seek URL обновляется, позиция сохраняется.
+- Трек играет по CDN secure-token URL с Range (локально — MinIO presigned GET, тот же контракт). После expiry/background/seek URL обновляется, позиция сохраняется.
 - На Android/iOS проверены lock screen, notification actions, звонок/audio focus, unplug headphones, Bluetooth и process restart.
 - `auto` и явный quality выбираются сервером по фиксированному fallback; неподдержанный `src` не выдаётся.
 - Можно привязать локальный файл и переключить источник Catalog / Local.
@@ -375,15 +379,14 @@ Hangfire создаёт свои таблицы в PostgreSQL (схема `hangf
 
 ---
 
-## 10. Репозиторий (ожидаемая раскладка)
+## 10. Репозиторий
 
-Предложение, фиксируется в спринте 1:
+Актуальная карта файлов — [00-ai-agents.md §3](00-ai-agents.md#3-структура-репозитория). Локальный запуск — [05-local-setup.md](05-local-setup.md).
 
 ```
-src/api/          ASP.NET Core
-src/mobile/       Flutter
+src/api/            ASP.NET Core
+src/mobile/         Flutter
 docker-compose.yml  PostgreSQL + Redis + MailHog + MinIO (локальный S3; прод — Yandex)
-docs/             позже, не в no_commit
+docs/               нормативные документы
+devops/             start/stop, seed, upload
 ```
-
-Инструкции по локальному запуску — [05-local-setup.md](05-local-setup.md). Актуальная карта файлов для агентов — [00-ai-agents.md §3](00-ai-agents.md#3-структура-репозитория).

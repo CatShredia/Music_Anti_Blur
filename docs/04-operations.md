@@ -1,7 +1,7 @@
 # Music Anti Blur — эксплуатационный контракт
 
-Версия: 1.0
-Связанные документы: [01-product-plan.md](01-product-plan.md), [02-database-overview.md](02-database-overview.md), [03-api-contract.md](03-api-contract.md). Локальный стек — [05-local-setup.md](05-local-setup.md).
+Версия: 1.1
+Связанные документы: [00-ai-agents.md](00-ai-agents.md), [01-product-plan.md](01-product-plan.md), [02-database-overview.md](02-database-overview.md), [03-api-contract.md](03-api-contract.md). Локальный стек — [05-local-setup.md](05-local-setup.md).
 
 Документ фиксирует минимальные production-инварианты MVP. Конкретный провайдер мониторинга/backup может измениться, семантика проверок и восстановления — нет.
 
@@ -10,7 +10,7 @@
 ## 1. Topology и конфигурация
 
 - MVP — один deployable ASP.NET Core: HTTP API, SignalR и Hangfire server. PostgreSQL 16, Redis, Yandex Object Storage/CDN и SMTP — внешние зависимости.
-- FFmpeg/ffprobe версии pin в container image; образ запускается непривилегированным пользователем, read-only root filesystem, отдельный ограниченный temp volume.
+- Локально API и FFmpeg работают **на хосте** (не в Compose). Production-цель: FFmpeg/ffprobe pin в container image; образ непривилегированный, read-only root, отдельный temp volume. Образа API в репозитории ещё нет.
 - Секреты только env/secret store. При старте валидируются issuer/audience JWT, длина signing key, S3/CDN/SMTP/Redis config; секреты не печатаются.
 - Production bucket и CDN origin закрыты. CORS bucket разрешает только необходимые multipart methods/headers приложения.
 - Часы всех nodes синхронизируются NTP; допустимый CDN token clock skew фиксируется конфигурацией и тестом.
@@ -72,7 +72,7 @@ Sweeper каждые 5 минут:
 
 ### 4.2. Playback
 
-- API выдаёт Yandex CDN secure-token URL TTL 10 минут, не S3 SigV4 URL.
+- API выдаёт Yandex CDN secure-token URL TTL 10 минут, не S3 SigV4 URL. Локально (`Storage__UseCdn=false`) — S3 presigned GET; JSON-поле `delivery` остаётся `cdn`, см. [03-api-contract.md](03-api-contract.md) §4 и [05-local-setup.md](05-local-setup.md).
 - CDN валидирует token до cache lookup; unsigned request и token другого path отклоняются.
 - Cache identity — object path/generation, auth query не создаёт публичный bypass. Origin принимает чтение только от настроенного CDN.
 - Проверяются GET, HEAD, `Range: bytes=...`, 206/416, seek, token expiry и clock skew.
@@ -91,6 +91,13 @@ Sweeper каждые 5 минут:
 ## 5. Health и degraded mode
 
 Endpoints:
+
+Сейчас в коде (локальный `start` ждёт `/health`):
+
+- `GET /health` — PostgreSQL `CanConnect`; 200 `{ status: ok }` или 503. Это текущий readiness-lite, не liveness без зависимостей.
+- `GET /health/deps` — Redis ping, SMTP connect, Hangfire storage, S3 HEAD bucket; 200 только если все true. **Не** закрыт отдельной auth.
+
+Production-цель (ещё не разведена в коде):
 
 - `/health/live`: процесс отвечает, без внешних dependencies.
 - `/health/ready`: PostgreSQL доступен и migrations совместимы; API может принимать traffic.
@@ -148,7 +155,7 @@ Backup считается успешным только после провер�
 ## 8. Deployment и migrations
 
 - Версии runtime, NuGet/Dart dependencies, PostgreSQL image и FFmpeg pin.
-- EF migration запускается отдельным one-shot step до включения новой версии, не каждым API replica.
+- EF migration запускается отдельным one-shot step до включения новой версии, не каждым API replica. Локальный `dotnet run` / `start` сейчас вызывает `MigrateAsync` при старте процесса — [05-local-setup.md](05-local-setup.md).
 - Изменения schema — expand/contract: сначала совместимые nullable/new fields/index concurrently где возможно, затем код, backfill, и только позже удаление старого.
 - Перед остановкой instance: снять readiness, прекратить новые jobs, дать active HTTP/SignalR завершиться, выполнить Hangfire drain до 30 секунд; незавершённые jobs восстанавливаются lease/retry.
 - Rollback приложения не откатывает destructive migration. Для несовместимой schema deployment блокируется.

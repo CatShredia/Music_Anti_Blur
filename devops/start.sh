@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Поднимает Postgres/Redis/MailHog/MinIO, API и Flutter (hot reload).
-# В режиме local после healthy API импортирует no_commit/music (если папка есть).
-# Аргумент (необязательно): local | deploy | dual | 1 | 2 | 3 | 0
+# Поднимает Postgres/Redis/MailHog/MinIO и API.
+# Режимы local/dual/deploy ещё запускают Flutter.
+# В режиме local и api после healthy API импортирует no_commit/music (если папка есть).
+# Аргумент (необязательно): local | deploy | dual | api | 1 | 2 | 3 | 4 | 0
 set -euo pipefail
 
 DEVOPS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,6 +26,87 @@ need_cmd() {
   }
 }
 
+confirm_yes() {
+  local prompt="$1"
+  local unknown_hint="${2:-Неизвестный ответ, считаем да.}"
+  local choice="" raw
+  read -r -p "$prompt [Y]: " choice || true
+  raw="$(printf '%s' "${choice:-}" | tr '[:upper:]' '[:lower:]')"
+  case "$raw" in
+    ""|y|yes|д|да) return 0 ;;
+    n|no|н|нет|0|q|quit) return 1 ;;
+    *)
+      warn "$unknown_hint"
+      return 0
+      ;;
+  esac
+}
+
+ffmpeg_ready() {
+  command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1
+}
+
+install_ffmpeg() {
+  if command -v brew >/dev/null 2>&1; then
+    info "Установка FFmpeg через Homebrew..."
+    brew install ffmpeg
+    return 0
+  fi
+  if command -v apt-get >/dev/null 2>&1; then
+    info "Установка FFmpeg через apt..."
+    sudo apt-get update
+    sudo apt-get install -y ffmpeg
+    return 0
+  fi
+  if command -v dnf >/dev/null 2>&1; then
+    info "Установка FFmpeg через dnf..."
+    sudo dnf install -y ffmpeg || sudo dnf install -y ffmpeg-free
+    return 0
+  fi
+  if command -v pacman >/dev/null 2>&1; then
+    info "Установка FFmpeg через pacman..."
+    sudo pacman -S --noconfirm ffmpeg
+    return 0
+  fi
+  if command -v apk >/dev/null 2>&1; then
+    info "Установка FFmpeg через apk..."
+    sudo apk add ffmpeg
+    return 0
+  fi
+  warn "Нет brew/apt/dnf/pacman/apk — автоматическая установка невозможна."
+  return 1
+}
+
+ensure_ffmpeg() {
+  if ffmpeg_ready; then
+    return 0
+  fi
+
+  warn "FFmpeg не найден (нужны ffmpeg и ffprobe в PATH для транскода Hangfire)."
+  if [[ ! -t 0 ]]; then
+    warn "Нет интерактивного ввода — установку пропускаем. Поставьте FFmpeg вручную."
+    return 0
+  fi
+
+  if ! confirm_yes "Установить FFmpeg сейчас?"; then
+    warn "Продолжаем без FFmpeg. Транскод Hangfire не завершится."
+    return 0
+  fi
+
+  if ! install_ffmpeg; then
+    warn "Не удалось установить FFmpeg автоматически. Linux/macOS: пакет ffmpeg или brew install ffmpeg."
+    return 0
+  fi
+
+  hash -r || true
+  if ffmpeg_ready; then
+    info "FFmpeg готов: $(command -v ffmpeg)"
+    return 0
+  fi
+
+  warn "FFmpeg установлен, но не виден в PATH этого сеанса. Откройте новый терминал и повторите start."
+}
+
 ensure_dotenv() {
   if [[ -f "$ROOT/.env" ]]; then
     return 0
@@ -41,21 +123,10 @@ ensure_dotenv() {
     exit 1
   fi
 
-  local choice=""
-  read -r -p "Скопировать .env.local.example в .env и продолжить? [Y]: " choice || true
-  local raw
-  raw="$(printf '%s' "${choice:-}" | tr '[:upper:]' '[:lower:]')"
-  case "$raw" in
-    ""|y|yes|д|да)
-      ;;
-    n|no|н|нет|0|q|quit)
-      err "Прервано: без .env скрипт не запускает инфраструктуру."
-      exit 1
-      ;;
-    *)
-      warn "Неизвестный ответ, копируем .env."
-      ;;
-  esac
+  if ! confirm_yes "Скопировать .env.local.example в .env и продолжить?" "Неизвестный ответ, копируем .env."; then
+    err "Прервано: без .env скрипт не запускает инфраструктуру."
+    exit 1
+  fi
 
   cp "$ROOT/.env.local.example" "$ROOT/.env"
   info "Создан .env из .env.local.example."
@@ -68,6 +139,7 @@ resolve_start_mode() {
     1|local|dev|--local) echo local ;;
     2|deploy|--deploy) echo deploy ;;
     3|dual|emulator|chrome|emulator-chrome|--dual) echo dual ;;
+    4|api|backend|no-flutter|phone|--api) echo api ;;
     0|exit|q|quit|--exit) echo exit ;;
     *) echo "" ;;
   esac
@@ -79,7 +151,7 @@ choose_mode() {
     local parsed
     parsed="$(resolve_start_mode "$raw")"
     if [[ -z "$parsed" ]]; then
-      err "Неизвестный режим '$1'. Используйте local, deploy, dual или exit."
+      err "Неизвестный режим '$1'. Используйте local, deploy, dual, api или exit."
       exit 1
     fi
     echo "$parsed"
@@ -92,6 +164,7 @@ choose_mode() {
   echo "  [1] Локальная разработка   (по умолчанию, Enter)" >&2
   echo "  [2] Развертывание" >&2
   echo "  [3] Эмулятор Android + Chrome" >&2
+  echo "  [4] API + Docker (без Flutter, телефон)" >&2
   echo "  [0] Выход" >&2
   local choice=""
   read -r -p "Выбор [1]: " choice || true
@@ -322,9 +395,47 @@ start_flutter_dev() {
   done
 }
 
+lan_ipv4() {
+  hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9.]+$' | grep -vE '^(127\.|169\.254\.)' || true
+}
+
+try_adb_reverse() {
+  if ! command -v adb >/dev/null 2>&1; then
+    warn "adb не найден. USB-телефон: поставьте platform-tools или ходите по Wi‑Fi на LAN IP."
+    return 0
+  fi
+  if ! adb devices 2>/dev/null | grep -qE $'\tdevice$'; then
+    warn "adb есть, телефон не в состоянии device. USB + отладка по USB."
+    return 0
+  fi
+  if adb reverse tcp:5080 tcp:5080 && adb reverse tcp:9000 tcp:9000; then
+    info "USB: проброшены порты 5080 (API) и 9000 (MinIO) → на телефоне http://127.0.0.1:5080"
+  else
+    warn "adb reverse не удался. На телефоне используйте LAN IP ноутбука."
+  fi
+}
+
+write_phone_hints() {
+  echo
+  echo "Телефон (USB или Wi‑Fi в той же сети):"
+  echo "  APK по умолчанию ходит на http://10.0.2.2:5080 (это эмулятор)."
+  echo "  Сборка под этот ноутбук:"
+  local ip any=0
+  while read -r ip; do
+    [[ -z "$ip" ]] && continue
+    any=1
+    echo "    flutter build apk --release --dart-define=API_BASE_URL=http://${ip}:5080"
+  done < <(lan_ipv4)
+  if [[ "$any" -eq 0 ]]; then
+    echo "    flutter build apk --release --dart-define=API_BASE_URL=http://<LAN-IP>:5080"
+  fi
+  echo "  USB без LAN: adb reverse tcp:5080 tcp:5080 && adb reverse tcp:9000 tcp:9000"
+  echo "    тогда в приложении http://127.0.0.1:5080"
+  try_adb_reverse
+}
+
 need_cmd docker
 need_cmd dotnet
-need_cmd flutter
 
 selected="$(choose_mode "${1:-}")"
 if [[ "$selected" == "exit" ]]; then
@@ -332,7 +443,12 @@ if [[ "$selected" == "exit" ]]; then
   exit 0
 fi
 
+if [[ "$selected" != "api" ]]; then
+  need_cmd flutter
+fi
+
 ensure_dotenv
+ensure_ffmpeg
 
 echo
 if [[ "$selected" == "local" ]]; then
@@ -341,6 +457,8 @@ elif [[ "$selected" == "dual" ]]; then
   info "Режим: эмулятор Android + Chrome"
   assert_chrome_device
   start_android_emulator_if_needed
+elif [[ "$selected" == "api" ]]; then
+  info "Режим: API + Docker (без Flutter)"
 else
   info "Режим: развертывание (Release API + Flutter hot reload)"
   warn "Production без смены Jwt/паролей из .env.example небезопасен."
@@ -361,14 +479,14 @@ if [[ "$selected" != "deploy" ]]; then
   if bash "$DEVOPS_ROOT/seed-local-music.sh"; then
     :
   else
-    warn "Импорт no_commit/music завершился с ошибкой. Flutter всё равно запускаем."
+    warn "Импорт no_commit/music завершился с ошибкой."
   fi
 fi
 
 if [[ "$selected" == "dual" ]]; then
   emulator_id="$(wait_android_emulator)"
   start_flutter_dev chrome "$emulator_id"
-else
+elif [[ "$selected" != "api" ]]; then
   start_flutter_dev
 fi
 
@@ -379,4 +497,9 @@ echo "MailHog      http://127.0.0.1:8025"
 echo "MinIO S3     http://127.0.0.1:9000"
 echo "MinIO UI     http://127.0.0.1:9001  (minio / minio-local-only)"
 echo "Hangfire     http://127.0.0.1:5080/hangfire"
-info "API и Flutter запущены отдельно. Остановка: bash devops/stop.sh"
+if [[ "$selected" == "api" ]]; then
+  write_phone_hints
+  info "API запущен без Flutter. Остановка: bash devops/stop.sh"
+else
+  info "API и Flutter запущены отдельно. Остановка: bash devops/stop.sh"
+fi
