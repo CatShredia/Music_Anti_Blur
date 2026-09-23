@@ -25,9 +25,9 @@ API **не** стримит аудиобайты. Playback URL — S3 presigned 
 
 - Docker Desktop / daemon
 - .NET 10 SDK
-- Flutter — для пунктов меню 1–3; пункт **4** (API + Docker) без Flutter
+- Flutter — только если в wizard выбран хотя бы один клиент (Chrome / Windows / эмулятор / USB)
 - FFmpeg и ffprobe в PATH. `start` предлагает установить, если их нет (Enter — да, `n` — продолжить без транскода). Windows: winget `Gyan.FFmpeg`; Linux/macOS: пакет `ffmpeg` / Homebrew. Без них Hangfire пишет `ffmpeg not found` в статус generation
-- Для пункта меню «эмулятор + Chrome»: Google Chrome и Android emulator (`emulator-*`). На диске, где лежит AVD (часто `C:\Users\<you>\.android\avd`), нужно несколько ГБ свободно — иначе emulator падает с `not enough disk space`, а `flutter emulators --launch` прячет эту строку.
+- Для эмулятора Android: AVD в Android Studio. На диске AVD нужно несколько ГБ свободно — иначе emulator падает с `not enough disk space`
 
 ---
 
@@ -40,29 +40,42 @@ API **не** стримит аудиобайты. Playback URL — S3 presigned 
 | Windows | `devops\start.cmd` | `devops\stop.cmd` |
 | Linux / macOS | `bash devops/start.sh` | `bash devops/stop.sh` |
 
-Меню:
+Интерактивный wizard (порядок):
 
-| Клавиша | Режим |
-|---|---|
-| **1** (Enter по умолчанию) | локальная разработка (Compose + API + Flutter) |
-| **2** | развертывание (Release/Production API на этой машине + Flutter в режиме разработки) |
-| **3** | эмулятор Android + Chrome |
-| **4** | API + Docker, без Flutter (телефон по USB/Wi‑Fi) |
-| **0** | выход |
+1. **Язык** — RU (Enter) / EN. Все следующие подсказки на выбранном языке.
+2. **`.env`** — если файла нет или он пуст:
+   - [`.env.local.example`](../.env.local.example) — копируем и продолжаем (локальные дефолты, Postgres 5433);
+   - [`.env.example`](../.env.example) — копируем и **выходим**: заполните секреты/порты и запустите `start` снова;
+   - отмена — выход без старта.
+3. **Тип** — локальная (Enter) / публикация.
+   - **Публикация** — только Compose + Production API (`dotnet publish`). Без Flutter, без seed, без меню устройств.
+   - **Локальная** — Compose + Development API. После healthy API спрашивает, импортировать ли `no_commit/music` (Enter — да, `n` — пропустить). В публикации seed нет.
+   Если Docker не запущен — скрипт просит открыть Docker Desktop и ждёт демон (Enter — ждать, `n` — выход). На Windows/macOS пробует открыть Docker Desktop сам.
+4. **Два слота Flutter** (только локальная). Enter в каждом = ничего. Можно 0, 1 или 2 клиента. Список из `flutter devices`: Chrome, Windows (если есть), эмулятор (уже запущенный `emulator-*` или «запустить AVD»), USB с отладкой. **Эмулятор — только в одном слоте.** Два Chrome/Windows разрешены. `flutter pub get` пропускается, если нет доступа к `pub.dev` (берётся локальный кэш).
 
-Без меню: `devops\start.cmd -Mode local` или `bash devops/start.sh deploy` / `dual` / `api`.
+Без меню (Windows):
 
-Если корневого `.env` нет, скрипт предлагает скопировать [`.env.local.example`](../.env.local.example) в `.env` (Enter — да, `n` — прервать). Имена переменных также в [`.env.example`](../.env.example).
+```text
+devops\start.cmd -Mode local -Lang en -Device1 chrome -Device2 none
+devops\start.cmd -Mode publish
+devops\start.cmd -Mode dual
+devops\start.cmd -Mode api
+```
 
-Скрипт поднимает Compose и API. В режимах **1–3** ещё `flutter run` **в отдельных окнах**. После этого стартовый скрипт завершается.
+Без меню (bash): аргумент режима + `START_LANG` / `START_DEVICE1` / `START_DEVICE2` (или `DEVICE1` / `DEVICE2`):
 
-В режимах **1**, **3** и **4**, когда API healthy, импортируются треки из `no_commit/music` (если папка есть): из каждой папки с аудио минимум 4 файла. Пункт **3** поднимает AVD (если ещё не запущен) и два `flutter run`: `-d chrome` и `-d emulator-*`. Пункт **4** Flutter не требует: на ноутбуке только Docker и .NET SDK.
+```bash
+START_LANG=en START_DEVICE1=chrome START_DEVICE2=emulator bash devops/start.sh local
+bash devops/start.sh publish
+bash devops/start.sh dual    # local + chrome + emulator
+bash devops/start.sh api     # local без Flutter
+```
 
-Устройство для Flutter в режимах 1–2: переменная `FLUTTER_DEVICE` или интерактивный выбор `flutter run`.
+Алиасы: `deploy` / `2` = publish; `dual` / `3` = chrome + emulator; `api` / `4` = local без устройств.
 
-Телефон по USB (режим **4**): APK по умолчанию ходит на `http://10.0.2.2:5080` (это эмулятор). Соберите с `--dart-define=API_BASE_URL=http://<LAN-IP-ноутбука>:5080` и одной Wi‑Fi сетью, либо `adb reverse tcp:5080 tcp:5080` и `adb reverse tcp:9000 tcp:9000` и тогда `http://127.0.0.1:5080`. Скрипт печатает LAN IP и пытается сделать reverse, если `adb` видит устройство. Нужны открытые порты **5080** и **9000** (MinIO в signed URL).
+Если выбран USB — скрипт печатает LAN IP и делает `adb reverse` 5080/9000. APK по умолчанию ходит на `http://10.0.2.2:5080` (эмулятор); для телефона: `--dart-define=API_BASE_URL=http://<LAN-IP>:5080` или reverse → `http://127.0.0.1:5080`. Нужны порты **5080** и **9000**.
 
-Развертывание сейчас — Release/Production API на этой же машине плюс Flutter в режиме разработки. Отдельного Kubernetes/образа API ещё нет.
+Публикация — Release/Production API на этой же машине. Отдельного Kubernetes/образа API ещё нет.
 
 ---
 
@@ -80,7 +93,7 @@ API **не** стримит аудиобайты. Playback URL — S3 presigned 
 
 ### 5.1. Compose
 
-Docker Desktop должен быть запущен.
+Docker Desktop должен быть запущен. `start` сам ждёт демон, если его ещё нет; здесь — ручной путь.
 
 ```bash
 docker compose up -d
@@ -126,7 +139,7 @@ Sandbox admin (Development): login `admin`, password `AdminPassword123`. Сыр�
 
 ### 5.3. Каталог из файлов
 
-Реальные файлы для прослушивания — в `no_commit/music` (gitignore). `start` в режимах **1, 3 и 4** (не deploy) сам создаёт артистов/альбомы/треки и заливает исходники через admin multipart. Повторный запуск пропускает треки, у которых уже есть качества. Вручную:
+Реальные файлы для прослушивания — в `no_commit/music` (gitignore). `start` в **локальном** типе после API спрашивает про импорт (Enter — да): создаёт артистов/альбомы/треки и заливает исходники через admin multipart. В публикации seed не бежит. Повторный запуск пропускает треки, у которых уже есть качества. Вручную:
 
 ```powershell
 devops\seed-local-music.ps1
@@ -177,7 +190,7 @@ flutter run
 
 На карточке трека: **Выбрать файл** копирует аудио в каталог приложения (Android ещё берёт persistable SAF URI). Play в airplane mode играет эту копию, если источник Авто или Local. Чип **Catalog** всегда берёт CDN/MinIO и игнорирует файл на устройстве. **Загрузить на сервер** — отдельный шаг: multipart в `users/{userId}/overrides/.../generations/{id}/`, не автозагрузка из picker. Чужой аккаунт на том же `trackId`: `GET /tracks/{id}/override` и private playback-url дают **404** `not_found`, не 403.
 
-Два клиента одного user (эмулятор Android + Chrome debug, пункт меню **3**): у каждого свой `deviceId` в secure storage. Play на A обновляет now playing на B без автозвука (SignalR `PlaybackSnapshot`). **Играть здесь** на B забирает writer; A глушит звук. Play/pause на ведомом недоступны — нет remote-control. Список «Это устройство / Другое устройство» — presence. Local-файл живёт только на том устройстве, где выбран picker: на B без файла «Играть здесь» берёт **ваш** private Ready или каталог и показывает «Локальный файл на другом устройстве». Chrome/Windows годится как второй экран now playing; браузер не продукт MVP.
+Два клиента одного user (в wizard: два слота, например Chrome + эмулятор / USB): у каждого свой `deviceId` в secure storage. Play на A обновляет now playing на B без автозвука (SignalR `PlaybackSnapshot`). **Играть здесь** на B забирает writer; A глушит звук. Play/pause на ведомом недоступны — нет remote-control. Список «Это устройство / Другое устройство» — presence. Local-файл живёт только на том устройстве, где выбран picker: на B без файла «Играть здесь» берёт **ваш** private Ready или каталог и показывает «Локальный файл на другом устройстве». Chrome/Windows годится как второй экран now playing; браузер не продукт MVP.
 
 Норматив sync: [03-api-contract.md](03-api-contract.md) §6.
 
