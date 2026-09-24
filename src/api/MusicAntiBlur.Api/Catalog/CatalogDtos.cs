@@ -6,7 +6,13 @@ public sealed record AlbumRefDto(Guid Id, string Title);
 
 public sealed record ArtistListItemDto(Guid Id, string Name);
 
-public sealed record ArtistAlbumItemDto(Guid Id, string Title, int? Year);
+public sealed record ArtistAlbumItemDto(
+    Guid Id,
+    string Title,
+    int? Year,
+    string? CoverObjectKey,
+    string? CoverUrl,
+    DateTimeOffset? CoverUrlExpiresAt);
 
 public sealed record ArtistDetailDto(Guid Id, string Name, IReadOnlyList<ArtistAlbumItemDto> Albums);
 
@@ -15,6 +21,8 @@ public sealed record AlbumListItemDto(
     string Title,
     int? Year,
     string? CoverObjectKey,
+    string? CoverUrl,
+    DateTimeOffset? CoverUrlExpiresAt,
     ArtistRefDto Artist);
 
 public sealed record TrackListItemDto(Guid Id, string Title, int TrackNumber, int? DurationMs, string? Isrc);
@@ -24,6 +32,8 @@ public sealed record AlbumDetailDto(
     string Title,
     int? Year,
     string? CoverObjectKey,
+    string? CoverUrl,
+    DateTimeOffset? CoverUrlExpiresAt,
     ArtistRefDto Artist,
     IReadOnlyList<TrackListItemDto> Tracks);
 
@@ -35,7 +45,9 @@ public sealed record TrackDetailDto(
     string? Isrc,
     ArtistRefDto Artist,
     AlbumRefDto Album,
-    IReadOnlyList<QualityDto> AvailableQualities);
+    IReadOnlyList<QualityDto> AvailableQualities,
+    string? CoverUrl,
+    DateTimeOffset? CoverUrlExpiresAt);
 
 public sealed record QualityDto(string Code, int BitrateKbps);
 

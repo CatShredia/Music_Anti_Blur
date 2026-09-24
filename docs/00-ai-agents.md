@@ -75,7 +75,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 | [.env.example](../.env.example) | Имена переменных; значения только локально |
 | [.github/workflows/ci.yml](../.github/workflows/ci.yml) | CI на ветке `develop` |
 | [docs/](./) | Product / schema / API / operations / local setup |
-| [devops/](../devops/) | Скрипты start/stop, [seed-local-music.ps1](../devops/seed-local-music.ps1) / [seed-local-music.sh](../devops/seed-local-music.sh) (импорт `no_commit/music` после healthy API), [upload-catalog-source.ps1](../devops/upload-catalog-source.ps1); [yandex-storage-cdn.md](../devops/yandex-storage-cdn.md) — локальный MinIO и (позже) Yandex |
+| [devops/](../devops/) | Скрипты start/stop, [seed-local-music.ps1](../devops/seed-local-music.ps1) / [seed-local-music.sh](../devops/seed-local-music.sh) (импорт `no_commit/music` после healthy API; обложка `cover.jpg`/`folder.jpg` или теги), [upload-catalog-source.ps1](../devops/upload-catalog-source.ps1); [yandex-storage-cdn.md](../devops/yandex-storage-cdn.md) — локальный MinIO и (позже) Yandex |
 
 ### 3.1. API — `src/api/`
 
@@ -107,7 +107,7 @@ src/api/MusicAntiBlur.Api/
 | HTTP auth | [AuthEndpoints.cs](../src/api/MusicAntiBlur.Api/Auth/AuthEndpoints.cs), [AuthService.cs](../src/api/MusicAntiBlur.Api/Auth/AuthService.cs) |
 | Пароль / login / email | [AuthValidation.cs](../src/api/MusicAntiBlur.Api/Auth/AuthValidation.cs), [TokenHasher.cs](../src/api/MusicAntiBlur.Api/Auth/TokenHasher.cs) |
 | JWT | [JwtTokenService.cs](../src/api/MusicAntiBlur.Api/Auth/JwtTokenService.cs) |
-| Каталог / поиск | [CatalogEndpoints.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogEndpoints.cs), [CatalogService.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogService.cs), [CatalogValidation.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogValidation.cs), [PlaybackUrlService.cs](../src/api/MusicAntiBlur.Api/Catalog/PlaybackUrlService.cs) |
+| Каталог / поиск | [CatalogEndpoints.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogEndpoints.cs), [CatalogService.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogService.cs), [CatalogValidation.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogValidation.cs), [CoverImageValidation.cs](../src/api/MusicAntiBlur.Api/Catalog/CoverImageValidation.cs), [PlaybackUrlService.cs](../src/api/MusicAntiBlur.Api/Catalog/PlaybackUrlService.cs) — обложка: `PUT /admin/albums/{id}/cover`, ключ `catalog/covers/{albumId}`, `coverUrl` в GET альбома/артиста/трека |
 | Playback snapshot | [Playback/](../src/api/MusicAntiBlur.Api/Playback/) — `GET/PUT /playback-state`, sessions/claim; writer и presence в Redis |
 | Override / private | [Overrides/](../src/api/MusicAntiBlur.Api/Overrides/), [Uploads/PrivateUploadService.cs](../src/api/MusicAntiBlur.Api/Uploads/PrivateUploadService.cs) |
 | Загрузка / S3 | [Uploads/](../src/api/MusicAntiBlur.Api/Uploads/), [CatalogUploadEndpoints.cs](../src/api/MusicAntiBlur.Api/Uploads/CatalogUploadEndpoints.cs), [Storage/](../src/api/MusicAntiBlur.Api/Storage/), [Media/](../src/api/MusicAntiBlur.Api/Media/) |

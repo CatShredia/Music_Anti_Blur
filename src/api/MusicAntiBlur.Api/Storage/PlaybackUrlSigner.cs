@@ -9,11 +9,11 @@ namespace MusicAntiBlur.Api.Storage;
 
 public sealed class PlaybackUrlSigner(IOptions<StorageOptions> storageOptions, IOptions<CdnOptions> cdnOptions, ObjectStorageClient storage)
 {
-    public SignedPlaybackUrl Sign(string bucketKey, string? clientHost = null)
+    public SignedPlaybackUrl Sign(string bucketKey, string? clientHost = null, TimeSpan? ttlOverride = null)
     {
         var storageCfg = storageOptions.Value;
         var cdn = cdnOptions.Value;
-        var ttl = TimeSpan.FromSeconds(cdn.UrlTtlSeconds <= 0 ? 600 : cdn.UrlTtlSeconds);
+        var ttl = ttlOverride ?? TimeSpan.FromSeconds(cdn.UrlTtlSeconds <= 0 ? 600 : cdn.UrlTtlSeconds);
         var expiresAt = DateTimeOffset.UtcNow.Add(ttl);
 
         if (storageCfg.UseCdn)

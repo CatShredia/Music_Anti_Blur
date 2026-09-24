@@ -46,7 +46,7 @@ class PlayerController extends ChangeNotifier {
   bool loading = false;
   bool playing = false;
   double volume = 1;
-  String? coverObjectKey;
+  String? coverUrl;
   final Map<String, QueueTrackLabel> queueLabels = {};
   Duration position = Duration.zero;
   Duration duration = Duration.zero;
@@ -366,7 +366,7 @@ class PlayerController extends ChangeNotifier {
     _statePoll?.cancel();
     queue = PlayerQueue.empty;
     track = null;
-    coverObjectKey = null;
+    coverUrl = null;
     queueLabels.clear();
     _orderBeforeShuffle = null;
     devices = const [];
@@ -536,7 +536,11 @@ class PlayerController extends ChangeNotifier {
             album: AlbumRef(id: '', title: ''),
             availableQualities: const [],
             durationMs: durationMs,
+            coverUrl: coverUrl,
           );
+      if (detail?.coverUrl != null && detail!.coverUrl!.isNotEmpty) {
+        coverUrl = detail.coverUrl;
+      }
       queueLabels[track!.id] = QueueTrackLabel(title: track!.title, subtitle: track!.artist.name);
       if (loaded != null && loaded > Duration.zero) {
         duration = loaded;
@@ -582,11 +586,13 @@ class PlayerController extends ChangeNotifier {
   }
 
   MediaItem _mediaItem(TrackDetail? detail, QueueItem item, LocalTrackBinding? local, int? durationMs) {
+    final art = detail?.coverUrl ?? coverUrl;
     return MediaItem(
       id: detail?.id ?? item.trackId,
       title: detail?.title ?? local?.displayName ?? 'Трек',
       album: detail?.album.title,
       artist: detail?.artist.name,
+      artUri: art != null && art.isNotEmpty ? Uri.tryParse(art) : null,
       duration: durationMs != null && durationMs > 0 ? Duration(milliseconds: durationMs) : null,
     );
   }
@@ -930,6 +936,9 @@ class PlayerController extends ChangeNotifier {
         return;
       }
       track = detail;
+      if (detail.coverUrl != null && detail.coverUrl!.isNotEmpty) {
+        coverUrl = detail.coverUrl;
+      }
       queueLabels[detail.id] = QueueTrackLabel(title: detail.title, subtitle: detail.artist.name);
       if (detail.durationMs != null && detail.durationMs! > 0) {
         duration = Duration(milliseconds: detail.durationMs!);
@@ -1057,7 +1066,7 @@ class PlayerController extends ChangeNotifier {
       );
 
   void _rememberAlbum(AlbumDetail album) {
-    coverObjectKey = album.coverObjectKey;
+    coverUrl = album.coverUrl ?? coverUrl;
     for (final item in album.tracks) {
       queueLabels[item.id] = QueueTrackLabel(title: item.title, subtitle: album.artist.name);
     }

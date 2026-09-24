@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../catalog/catalog_screens.dart';
 import '../overrides/override_models.dart';
 import '../theme.dart';
 import 'player_controller.dart';
@@ -91,19 +92,13 @@ class MiniPlayerBar extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
                 child: Row(
                 children: [
-                  Container(
-                    width: 40,
+                  CatalogCover(
+                    coverUrl: idle ? null : player.coverUrl,
                     height: 40,
-                    decoration: BoxDecoration(
-                      color: VizeColors.surface,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: VizeColors.stroke),
-                    ),
-                    child: Icon(
-                      idle ? Icons.music_note_outlined : Icons.album_outlined,
-                      color: VizeColors.accentMuted,
-                      size: 22,
-                    ),
+                    width: 40,
+                    icon: idle ? Icons.music_note_outlined : Icons.album_outlined,
+                    iconSize: 22,
+                    radius: 8,
                   ),
                   const SizedBox(width: 12),
                   Expanded(

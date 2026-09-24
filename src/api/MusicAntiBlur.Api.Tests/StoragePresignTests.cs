@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using MusicAntiBlur.Api.Catalog;
 using MusicAntiBlur.Api.Storage;
 using Xunit;
 
@@ -99,6 +100,41 @@ public sealed class StoragePresignTests
     {
         var storage = new StorageOptions { Endpoint = "http://127.0.0.1:9000" };
         Assert.Equal("http://127.0.0.1:9000", PlaybackUrlSigner.ResolvePresignBase(storage, "127.0.0.1"));
+    }
+
+    [Fact]
+    public void Sign_cover_key_uses_hour_ttl_and_presign_host()
+    {
+        using var storage = new ObjectStorageClient(
+            Options.Create(new StorageOptions
+            {
+                Endpoint = "http://127.0.0.1:9000",
+                Region = "us-east-1",
+                Bucket = "music-anti-blur",
+                AccessKey = "minio",
+                SecretKey = "minio-local-only",
+                ForcePathStyle = true
+            }),
+            NullLogger<ObjectStorageClient>.Instance);
+        var signer = new PlaybackUrlSigner(
+            Options.Create(new StorageOptions
+            {
+                Endpoint = "http://127.0.0.1:9000",
+                Region = "us-east-1",
+                Bucket = "music-anti-blur",
+                AccessKey = "minio",
+                SecretKey = "minio-local-only",
+                ForcePathStyle = true
+            }),
+            Options.Create(new CdnOptions { UrlTtlSeconds = 600 }),
+            storage);
+
+        var albumId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var before = DateTimeOffset.UtcNow;
+        var signed = signer.Sign(ObjectKeys.Cover(albumId), "10.0.2.2", CoverImageValidation.UrlTtl);
+        Assert.Contains("catalog/covers/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", signed.Url, StringComparison.Ordinal);
+        Assert.StartsWith("http://10.0.2.2:9000/music-anti-blur/", signed.Url, StringComparison.Ordinal);
+        Assert.InRange(signed.ExpiresAt, before.AddMinutes(55), before.AddMinutes(65));
     }
 
     [Fact]

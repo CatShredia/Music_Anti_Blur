@@ -177,6 +177,73 @@ def get_or_create_album(artist_id, title, year):
     info("альбом " + title)
     return created["id"]
 
+COVER_NAMES = ("cover.jpg", "cover.jpeg", "cover.png", "folder.jpg", "folder.png")
+
+def find_cover_file(folder):
+    if not os.path.isdir(folder):
+        return None
+    wanted = {name.lower() for name in COVER_NAMES}
+    for name in sorted(os.listdir(folder)):
+        full = os.path.join(folder, name)
+        if os.path.isfile(full) and name.lower() in wanted:
+            return full
+    return None
+
+def extract_embedded_cover(audio_path):
+    if not shutil.which("ffmpeg"):
+        return None
+    tmp = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"mab-cover-{os.urandom(8).hex()}.jpg")
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", audio_path,
+             "-an", "-frames:v", "1", "-f", "image2", tmp],
+            check=False,
+        )
+        if proc.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+            return tmp
+    except OSError:
+        pass
+    if os.path.isfile(tmp):
+        os.remove(tmp)
+    return None
+
+def upload_cover(album_id, path):
+    url = f"{API}/api/v1/admin/albums/{album_id}/cover"
+    def run():
+        return subprocess.run(
+            ["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}",
+             "-X", "PUT", "-H", f"Authorization: Bearer {TOKEN}",
+             "-F", f"file=@{path}", url],
+            check=False, capture_output=True, text=True,
+        )
+    res = run()
+    code = (res.stdout or "").strip()
+    if code == "401":
+        login()
+        res = run()
+        code = (res.stdout or "").strip()
+    if code != "200":
+        warn(f"обложка {album_id} -> HTTP {code}")
+    else:
+        info("обложка альбома " + album_id)
+
+def ensure_album_cover(album_id, folder, files):
+    album = api("GET", f"/api/v1/albums/{album_id}")
+    if album.get("coverObjectKey"):
+        return
+    path = find_cover_file(folder)
+    tmp = None
+    if not path and files:
+        tmp = extract_embedded_cover(files[0])
+        path = tmp
+    if not path:
+        return
+    try:
+        upload_cover(album_id, path)
+    finally:
+        if tmp and os.path.isfile(tmp):
+            os.remove(tmp)
+
 def get_or_create_track(album_id, artist_id, title, number):
     title = limit_name(title)
     album = api("GET", f"/api/v1/albums/{album_id}")
@@ -242,10 +309,11 @@ def upload_file(path, track_id):
         {"parts": etags}, idem=os.urandom(16).hex())
     info(f"queued generation {generation} track {track_id}")
 
-def import_album(artist_id, title, year, files):
+def import_album(artist_id, title, year, files, folder):
     if not files:
         return []
     album_id = get_or_create_album(artist_id, title, year)
+    ensure_album_cover(album_id, folder, audio_files(folder))
     pending = []
     for i, path in enumerate(files, start=1):
         title_t, number = track_meta(path, i)
@@ -278,11 +346,11 @@ for artist_name in sorted(os.listdir(MUSIC)):
         for album_dir in album_dirs:
             files = select_tracks(album_dir)
             title, year = album_meta(os.path.basename(album_dir), os.path.basename(album_dir))
-            pending.extend(import_album(artist_id, title, year, files))
+            pending.extend(import_album(artist_id, title, year, files, album_dir))
         if direct:
-            pending.extend(import_album(artist_id, album_hint, None, direct))
+            pending.extend(import_album(artist_id, album_hint, None, direct, artist_dir))
     else:
-        pending.extend(import_album(artist_id, album_hint, None, direct))
+        pending.extend(import_album(artist_id, album_hint, None, direct, artist_dir))
 
 pending = list(dict.fromkeys(pending))
 if not pending:

@@ -67,6 +67,7 @@ builder.Services.AddSingleton<ObjectStorageClient>();
 builder.Services.AddSingleton<PlaybackUrlSigner>();
 builder.Services.AddSingleton<MediaProcessRunner>();
 builder.Services.AddScoped<AuthService>();
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<CatalogService>();
 builder.Services.AddScoped<AdminUploadService>();
 builder.Services.AddScoped<IdempotencyStore>();

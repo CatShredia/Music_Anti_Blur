@@ -13,6 +13,8 @@ class CatalogRules {
   static const nameLength = 'name_length';
   static const titleLength = 'title_length';
   static const coverKey = 'cover_object_key';
+  static const coverType = 'cover_type';
+  static const fileTooLarge = 'file_too_large';
   static const isrcFormat = 'isrc_format';
   static const limitRange = 'limit_range';
 

@@ -97,7 +97,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
               children: [
-                CatalogCover(coverObjectKey: player.coverObjectKey),
+                CatalogCover(coverUrl: player.coverUrl ?? player.track?.coverUrl),
                 const SizedBox(height: 16),
                 Text(track?.title ?? 'Трек', style: Theme.of(context).textTheme.headlineMedium),
                 const SizedBox(height: 4),

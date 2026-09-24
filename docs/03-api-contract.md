@@ -95,6 +95,8 @@ Idempotency records хранятся в PostgreSQL (`idempotency_records`). Тр
 - `GET /tracks/{id}`
 - `GET /search?q=&cursor=&limit=20`
 
+Альбом (list/detail) и альбомы в `GET /artists/{id}` отдают `coverObjectKey` (ключ в бакете) и, если ключ есть, `coverUrl` + `coverUrlExpiresAt` (presign/CDN, TTL 1 час, host как у playback). `GET /tracks/{id}` повторяет `coverUrl` / `coverUrlExpiresAt` с альбома. Поиск обложку не включает.
+
 `limit` 1..50; cursor opaque. Search `q` 2..100 символов, wildcard экранируются. Результаты track/album/artist сортируются по rank DESC, display name, id:
 
 ```json
@@ -107,6 +109,7 @@ Admin metadata (роль `admin`, использует seed/upload-скрипт�
 
 - `POST /admin/artists`, `PUT /admin/artists/{id}`
 - `POST /admin/albums`, `PUT /admin/albums/{id}`
+- `PUT /admin/albums/{id}/cover` — multipart поле `file` (JPEG/PNG, до 5 МБ). Пишет `catalog/covers/{albumId}`, ставит `coverObjectKey`. `400` `cover_type` / `file_too_large`; `404` нет альбома.
 - `POST /admin/tracks`, `PUT /admin/tracks/{id}`
 
 Admin catalog upload — тот же generation-aware multipart flow, что private, под `/admin/tracks/{trackId}/uploads` (см. §5).

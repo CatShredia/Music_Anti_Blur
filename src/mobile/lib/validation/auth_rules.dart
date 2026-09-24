@@ -178,6 +178,7 @@ class AuthMessages {
         'name_length' => 'Имя: 1–200 символов',
         'title_length' => 'Название: 1–200 символов',
         'cover_object_key' => 'Слишком длинный ключ обложки',
+        'cover_type' => 'Обложка: только JPEG или PNG',
         'isrc_format' => 'ISRC: до 32 латинских букв и цифр',
         'limit_range' => 'Некорректный размер страницы',
         'file_too_large' => 'Файл слишком большой',

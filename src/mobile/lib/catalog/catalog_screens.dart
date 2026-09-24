@@ -136,7 +136,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 album.artist.name,
                                 if (album.year != null) '${album.year}',
                               ].join(' · '),
-                              coverObjectKey: album.coverObjectKey,
+                              coverUrl: album.coverUrl,
                               onTap: () => context.push('/album/${album.id}'),
                             ),
                           ),
@@ -314,6 +314,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
                             icon: Icons.album_outlined,
                             title: album.title,
                             subtitle: album.year?.toString(),
+                            coverUrl: album.coverUrl,
                             onTap: () => context.push('/album/${album.id}'),
                           ),
                         ),
@@ -367,7 +368,7 @@ class _AlbumScreenState extends State<AlbumScreen> {
               : ListView(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                   children: [
-                    CatalogCover(coverObjectKey: album.coverObjectKey),
+                    CatalogCover(coverUrl: album.coverUrl),
                     const SizedBox(height: 16),
                     Text(album.artist.name, style: Theme.of(context).textTheme.titleMedium),
                     if (album.year != null)
@@ -493,7 +494,7 @@ class _TrackScreenState extends State<TrackScreen> {
               : ListView(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                   children: [
-                    CatalogCover(coverObjectKey: null),
+                    CatalogCover(coverUrl: track.coverUrl),
                     const SizedBox(height: 16),
                     Text(track.artist.name, style: Theme.of(context).textTheme.titleMedium),
                     const SizedBox(height: 4),
@@ -565,23 +566,46 @@ class _TrackScreenState extends State<TrackScreen> {
 }
 
 class CatalogCover extends StatelessWidget {
-  const CatalogCover({super.key, this.coverObjectKey});
+  const CatalogCover({
+    super.key,
+    this.coverUrl,
+    this.height = 160,
+    this.width,
+    this.icon = Icons.album_outlined,
+    this.iconSize = 56,
+    this.radius,
+  });
 
-  final String? coverObjectKey;
+  final String? coverUrl;
+  final double height;
+  final double? width;
+  final IconData icon;
+  final double iconSize;
+  final double? radius;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 160,
-      decoration: BoxDecoration(
-        color: VizeColors.surface,
-        borderRadius: BorderRadius.circular(VizeRadii.card),
-        border: Border.all(color: VizeColors.stroke),
-      ),
-      child: Icon(
-        coverObjectKey == null ? Icons.album_outlined : Icons.image_outlined,
-        size: 56,
-        color: VizeColors.accentMuted,
+    final borderRadius = BorderRadius.circular(radius ?? VizeRadii.card);
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: Container(
+        height: height,
+        width: width ?? double.infinity,
+        decoration: BoxDecoration(
+          color: VizeColors.surface,
+          borderRadius: borderRadius,
+          border: Border.all(color: VizeColors.stroke),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: coverUrl == null || coverUrl!.isEmpty
+            ? Icon(icon, size: iconSize, color: VizeColors.accentMuted)
+            : Image.network(
+                coverUrl!,
+                fit: BoxFit.cover,
+                width: width ?? double.infinity,
+                height: height,
+                errorBuilder: (_, _, _) => Icon(icon, size: iconSize, color: VizeColors.accentMuted),
+              ),
       ),
     );
   }
@@ -594,13 +618,13 @@ class CatalogTile extends StatelessWidget {
     required this.title,
     required this.onTap,
     this.subtitle,
-    this.coverObjectKey,
+    this.coverUrl,
   });
 
   final IconData icon;
   final String title;
   final String? subtitle;
-  final String? coverObjectKey;
+  final String? coverUrl;
   final VoidCallback onTap;
 
   @override
@@ -609,18 +633,13 @@ class CatalogTile extends StatelessWidget {
       onTap: onTap,
       child: Row(
         children: [
-          Container(
-            width: 48,
+          CatalogCover(
+            coverUrl: coverUrl,
             height: 48,
-            decoration: BoxDecoration(
-              color: VizeColors.bgElevated,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: VizeColors.stroke),
-            ),
-            child: Icon(
-              coverObjectKey == null ? icon : Icons.image_outlined,
-              color: VizeColors.accentMuted,
-            ),
+            width: 48,
+            icon: icon,
+            iconSize: 22,
+            radius: 12,
           ),
           const SizedBox(width: 12),
           Expanded(
