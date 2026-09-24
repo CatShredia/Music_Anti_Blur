@@ -1,6 +1,6 @@
 # Database overview
 
-Версия: 1.2
+Версия: 1.3
 СУБД: **PostgreSQL 16**  
 ORM: Entity Framework Core (миграции — единственный способ менять схему)  
 Связанные документы: [00-ai-agents.md](00-ai-agents.md), [01-product-plan.md](01-product-plan.md), [03-api-contract.md](03-api-contract.md), [04-operations.md](04-operations.md), [05-local-setup.md](05-local-setup.md).
@@ -54,6 +54,7 @@ flowchart LR
 | Надёжное удаление объектов | PostgreSQL `object_deletions` + Hangfire |
 | Idempotency authenticated mutations | PostgreSQL `idempotency_records` |
 | Now playing, эфемерная очередь | PostgreSQL `playback_states` (снимок); realtime — SignalR/Redis |
+| Счётчик и история прослушиваний | PostgreSQL `user_track_stats`, `user_play_history` (не `listen_events`) |
 | Локальный URI/bookmark файла | **только клиент**, не в БД |
 | CDN secure-token URL | не персистить; Redis-кэш owner-aware и короче TTL подписи |
 | S3 multipart upload ID | PostgreSQL в строке upload generation до complete/abort |
@@ -168,6 +169,20 @@ erDiagram
     uuid user_id PK_FK
     text preferred_quality
     timestamptz updated_at
+  }
+
+  user_track_stats {
+    uuid user_id PK_FK
+    uuid track_id PK_FK
+    int play_count
+    timestamptz last_played_at
+  }
+
+  user_play_history {
+    uuid id PK
+    uuid user_id FK
+    uuid track_id FK
+    timestamptz played_at
   }
 
   artists {
@@ -832,6 +847,36 @@ UNIQUE `(user_id, route, idempotency_key)`, индекс `(expires_at)`. Тра�
 
 ---
 
+### 7.16. `user_track_stats`
+
+Счётчик прослушиваний **на пользователя и трек**. Не `listen_events` (то имя зарезервировано под рекомендации).
+
+| Колонка | Тип | Null | Описание |
+|---|---|---|---|
+| `user_id` | `uuid` | нет | PK, FK → users CASCADE |
+| `track_id` | `uuid` | нет | PK, FK → tracks CASCADE |
+| `play_count` | `int` | нет | ≥ 1 |
+| `last_played_at` | `timestamptz` | нет | |
+
+Обложка артиста для текущего пользователя: альбом с максимальной суммой `play_count` по его трекам (нужна `cover_object_key`); иначе любой альбом с обложкой.
+
+---
+
+### 7.17. `user_play_history`
+
+Журнал стартов трека. Повтор того же трека в 30 с API не пишет.
+
+| Колонка | Тип | Null | Описание |
+|---|---|---|---|
+| `id` | `uuid` | нет | PK |
+| `user_id` | `uuid` | нет | FK → users CASCADE |
+| `track_id` | `uuid` | нет | FK → tracks CASCADE |
+| `played_at` | `timestamptz` | нет | |
+
+Индекс `(user_id, played_at, id)` для cursor-страницы истории.
+
+---
+
 ## 8. Каскады (сводка)
 
 ```mermaid
@@ -843,6 +888,8 @@ flowchart TD
   users -->|CASCADE| idempotency_records
   users -->|CASCADE| playback_states
   users -->|CASCADE| user_track_overrides
+  users -->|CASCADE| user_track_stats
+  users -->|CASCADE| user_play_history
   user_track_overrides -->|CASCADE| user_private_renditions
   user_track_overrides -->|CASCADE| user_private_uploads
   artists -->|RESTRICT| albums
@@ -851,6 +898,8 @@ flowchart TD
   tracks -->|CASCADE| track_renditions
   tracks -->|CASCADE| catalog_uploads
   tracks -->|CASCADE| user_track_overrides
+  tracks -->|CASCADE| user_track_stats
+  tracks -->|CASCADE| user_play_history
   tracks -->|SET NULL| playback_states
 ```
 
@@ -923,6 +972,9 @@ flowchart TD
 | `ix_object_deletions_owner` | `object_deletions` | `(owner_user_id)` |
 | `ux_idempotency_scope` | `idempotency_records` | `(user_id, route, idempotency_key)` |
 | `ix_idempotency_expiry` | `idempotency_records` | `(expires_at)` |
+| `ix_user_track_stats_track` | `user_track_stats` | `(track_id)` |
+| `ix_user_play_history_user` | `user_play_history` | `(user_id, played_at, id)` |
+| `ix_user_play_history_track` | `user_play_history` | `(track_id)` |
 
 Поиск:
 

@@ -4,7 +4,11 @@ public sealed record ArtistRefDto(Guid Id, string Name);
 
 public sealed record AlbumRefDto(Guid Id, string Title);
 
-public sealed record ArtistListItemDto(Guid Id, string Name);
+public sealed record ArtistListItemDto(
+    Guid Id,
+    string Name,
+    string? CoverUrl,
+    DateTimeOffset? CoverUrlExpiresAt);
 
 public sealed record ArtistAlbumItemDto(
     Guid Id,
@@ -14,7 +18,12 @@ public sealed record ArtistAlbumItemDto(
     string? CoverUrl,
     DateTimeOffset? CoverUrlExpiresAt);
 
-public sealed record ArtistDetailDto(Guid Id, string Name, IReadOnlyList<ArtistAlbumItemDto> Albums);
+public sealed record ArtistDetailDto(
+    Guid Id,
+    string Name,
+    string? CoverUrl,
+    DateTimeOffset? CoverUrlExpiresAt,
+    IReadOnlyList<ArtistAlbumItemDto> Albums);
 
 public sealed record AlbumListItemDto(
     Guid Id,
@@ -46,6 +55,7 @@ public sealed record TrackDetailDto(
     ArtistRefDto Artist,
     AlbumRefDto Album,
     IReadOnlyList<QualityDto> AvailableQualities,
+    string? CoverObjectKey,
     string? CoverUrl,
     DateTimeOffset? CoverUrlExpiresAt);
 

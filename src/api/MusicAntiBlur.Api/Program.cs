@@ -78,6 +78,7 @@ builder.Services.AddSingleton<PlaybackSessionStore>();
 builder.Services.AddSingleton<PlaybackPresenceStore>();
 builder.Services.AddSingleton<IPlaybackHubPublisher, PlaybackHubPublisher>();
 builder.Services.AddScoped<PlaybackStateService>();
+builder.Services.AddScoped<PlayHistoryService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -217,6 +218,7 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 
 app.MapAuthEndpoints();
 app.MapCatalogEndpoints();
+app.MapPlayHistoryEndpoints();
 app.MapCatalogMediaEndpoints();
 app.MapOverrideEndpoints();
 app.MapPlaybackEndpoints();

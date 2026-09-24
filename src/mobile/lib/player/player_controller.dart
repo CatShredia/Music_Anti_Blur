@@ -47,6 +47,7 @@ class PlayerController extends ChangeNotifier {
   bool playing = false;
   double volume = 1;
   String? coverUrl;
+  String? coverObjectKey;
   final Map<String, QueueTrackLabel> queueLabels = {};
   Duration position = Duration.zero;
   Duration duration = Duration.zero;
@@ -367,6 +368,7 @@ class PlayerController extends ChangeNotifier {
     queue = PlayerQueue.empty;
     track = null;
     coverUrl = null;
+    coverObjectKey = null;
     queueLabels.clear();
     _orderBeforeShuffle = null;
     devices = const [];
@@ -538,9 +540,7 @@ class PlayerController extends ChangeNotifier {
             durationMs: durationMs,
             coverUrl: coverUrl,
           );
-      if (detail?.coverUrl != null && detail!.coverUrl!.isNotEmpty) {
-        coverUrl = detail.coverUrl;
-      }
+      _adoptCover(key: detail?.coverObjectKey, url: detail?.coverUrl);
       queueLabels[track!.id] = QueueTrackLabel(title: track!.title, subtitle: track!.artist.name);
       if (loaded != null && loaded > Duration.zero) {
         duration = loaded;
@@ -564,6 +564,9 @@ class PlayerController extends ChangeNotifier {
         return;
       }
       _audioReady = true;
+      if (previousId != item.trackId) {
+        unawaited(_recordPlay(item.trackId));
+      }
       if (qualityFallbackFrom != null) {
         _emitNotice('Включено ${resolvedQuality ?? qualityFallbackFrom}');
       }
@@ -936,9 +939,7 @@ class PlayerController extends ChangeNotifier {
         return;
       }
       track = detail;
-      if (detail.coverUrl != null && detail.coverUrl!.isNotEmpty) {
-        coverUrl = detail.coverUrl;
-      }
+      _adoptCover(key: detail.coverObjectKey, url: detail.coverUrl);
       queueLabels[detail.id] = QueueTrackLabel(title: detail.title, subtitle: detail.artist.name);
       if (detail.durationMs != null && detail.durationMs! > 0) {
         duration = Duration(milliseconds: detail.durationMs!);
@@ -1066,10 +1067,33 @@ class PlayerController extends ChangeNotifier {
       );
 
   void _rememberAlbum(AlbumDetail album) {
-    coverUrl = album.coverUrl ?? coverUrl;
+    _adoptCover(key: album.coverObjectKey, url: album.coverUrl);
     for (final item in album.tracks) {
       queueLabels[item.id] = QueueTrackLabel(title: item.title, subtitle: album.artist.name);
     }
+  }
+
+  Future<void> _recordPlay(String trackId) async {
+    try {
+      await api.recordPlay(trackId);
+    } catch (e) {
+      debugPrint('play history failed: $e');
+    }
+  }
+
+  void _adoptCover({String? key, String? url}) {
+    if (url == null || url.isEmpty) {
+      return;
+    }
+    if (key != null && key == coverObjectKey && coverUrl != null && coverUrl!.isNotEmpty) {
+      return;
+    }
+    if (url == coverUrl) {
+      coverObjectKey = key ?? coverObjectKey;
+      return;
+    }
+    coverObjectKey = key ?? coverObjectKey;
+    coverUrl = url;
   }
 
   Future<void> _hydrateQueueLabels() async {

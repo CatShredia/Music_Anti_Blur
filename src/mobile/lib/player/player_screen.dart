@@ -9,6 +9,52 @@ import '../widgets.dart';
 import 'player_controller.dart';
 import 'player_queue.dart';
 
+class _PlayerCover extends StatefulWidget {
+  const _PlayerCover({required this.player});
+
+  final PlayerController player;
+
+  @override
+  State<_PlayerCover> createState() => _PlayerCoverState();
+}
+
+class _PlayerCoverState extends State<_PlayerCover> {
+  String? _url;
+
+  @override
+  void initState() {
+    super.initState();
+    _url = widget.player.coverUrl ?? widget.player.track?.coverUrl;
+    widget.player.addListener(_onPlayer);
+  }
+
+  @override
+  void didUpdateWidget(_PlayerCover oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.player, widget.player)) {
+      oldWidget.player.removeListener(_onPlayer);
+      widget.player.addListener(_onPlayer);
+      _url = widget.player.coverUrl ?? widget.player.track?.coverUrl;
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.player.removeListener(_onPlayer);
+    super.dispose();
+  }
+
+  void _onPlayer() {
+    final next = widget.player.coverUrl ?? widget.player.track?.coverUrl;
+    if (next != _url && mounted) {
+      setState(() => _url = next);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => CatalogCover(coverUrl: _url);
+}
+
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({super.key, required this.player});
 
@@ -97,7 +143,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
               children: [
-                CatalogCover(coverUrl: player.coverUrl ?? player.track?.coverUrl),
+                _PlayerCover(player: player),
                 const SizedBox(height: 16),
                 Text(track?.title ?? 'Трек', style: Theme.of(context).textTheme.headlineMedium),
                 const SizedBox(height: 4),

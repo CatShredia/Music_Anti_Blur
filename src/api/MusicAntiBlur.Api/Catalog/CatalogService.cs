@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
@@ -39,7 +40,12 @@ public sealed class CatalogService(
             .Select(a => new { a.Id, a.Name, a.SortName })
             .ToListAsync(ct);
 
-        var page = rows.Take(take).Select(a => new ArtistListItemDto(a.Id, a.Name)).ToList();
+        var coverKeys = await ArtistCoverKeysAsync(rows.Take(take).Select(a => a.Id).ToList(), ct);
+        var page = rows.Take(take).Select(a =>
+        {
+            var cover = SignCover(coverKeys.GetValueOrDefault(a.Id));
+            return new ArtistListItemDto(a.Id, a.Name, cover.Url, cover.ExpiresAt);
+        }).ToList();
         string? next = null;
         if (rows.Count > take)
         {
@@ -72,14 +78,13 @@ public sealed class CatalogService(
             throw NotFound();
         }
 
-        return new ArtistDetailDto(
-            artist.Id,
-            artist.Name,
-            artist.Albums.Select(x =>
-            {
-                var cover = SignCover(x.CoverObjectKey);
-                return new ArtistAlbumItemDto(x.Id, x.Title, x.Year, x.CoverObjectKey, cover.Url, cover.ExpiresAt);
-            }).ToList());
+        var albums = artist.Albums.Select(x =>
+        {
+            var cover = SignCover(x.CoverObjectKey);
+            return new ArtistAlbumItemDto(x.Id, x.Title, x.Year, x.CoverObjectKey, cover.Url, cover.ExpiresAt);
+        }).ToList();
+        var artistCover = SignCover((await ArtistCoverKeysAsync([artist.Id], ct)).GetValueOrDefault(artist.Id));
+        return new ArtistDetailDto(artist.Id, artist.Name, artistCover.Url, artistCover.ExpiresAt, albums);
     }
 
     public async Task<PageDto<AlbumListItemDto>> ListAlbumsAsync(Guid? artistId, string? cursor, int? limit, CancellationToken ct)
@@ -214,6 +219,7 @@ public sealed class CatalogService(
             new ArtistRefDto(track.ArtistId, track.ArtistName),
             new AlbumRefDto(track.AlbumId, track.AlbumTitle),
             qualities,
+            track.CoverObjectKey,
             cover.Url,
             cover.ExpiresAt);
     }
@@ -297,7 +303,7 @@ public sealed class CatalogService(
         };
         db.Artists.Add(artist);
         await db.SaveChangesAsync(ct);
-        return new ArtistDetailDto(artist.Id, artist.Name, []);
+        return new ArtistDetailDto(artist.Id, artist.Name, null, null, []);
     }
 
     public async Task<ArtistDetailDto> UpdateArtistAsync(Guid id, UpsertArtistRequest req, CancellationToken ct)
@@ -456,7 +462,53 @@ public sealed class CatalogService(
         return await GetAlbumAsync(id, ct);
     }
 
-    private (string? Url, DateTimeOffset? ExpiresAt) SignCover(string? key)
+    private Guid? CurrentUserId()
+    {
+        var user = http.HttpContext?.User;
+        var raw = user?.FindFirstValue(ClaimTypes.NameIdentifier) ?? user?.FindFirstValue("sub");
+        return raw is not null && Guid.TryParse(raw, out var id) ? id : null;
+    }
+
+    private async Task<Dictionary<Guid, string?>> ArtistCoverKeysAsync(IReadOnlyList<Guid> artistIds, CancellationToken ct)
+    {
+        var result = new Dictionary<Guid, string?>();
+        if (artistIds.Count == 0)
+        {
+            return result;
+        }
+
+        var albums = await db.Albums.AsNoTracking()
+            .Where(a => artistIds.Contains(a.ArtistId) && a.CoverObjectKey != null)
+            .Select(a => new { a.Id, a.ArtistId, a.CoverObjectKey, a.Year, a.Title })
+            .ToListAsync(ct);
+        var playsByAlbum = new Dictionary<Guid, int>();
+        if (CurrentUserId() is { } userId)
+        {
+            playsByAlbum = await (
+                from s in db.UserTrackStats.AsNoTracking()
+                where s.UserId == userId
+                join t in db.Tracks.AsNoTracking() on s.TrackId equals t.Id
+                where artistIds.Contains(t.ArtistId)
+                group s by t.AlbumId into g
+                select new { AlbumId = g.Key, Plays = g.Sum(x => x.PlayCount) }
+            ).ToDictionaryAsync(x => x.AlbumId, x => x.Plays, ct);
+        }
+
+        foreach (var artistId in artistIds)
+        {
+            var picked = albums
+                .Where(a => a.ArtistId == artistId)
+                .OrderByDescending(a => playsByAlbum.GetValueOrDefault(a.Id))
+                .ThenByDescending(a => a.Year ?? 0)
+                .ThenBy(a => a.Title)
+                .FirstOrDefault();
+            result[artistId] = picked?.CoverObjectKey;
+        }
+
+        return result;
+    }
+
+    public (string? Url, DateTimeOffset? ExpiresAt) SignCover(string? key)
     {
         if (string.IsNullOrWhiteSpace(key))
         {

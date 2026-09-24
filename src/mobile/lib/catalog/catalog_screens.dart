@@ -116,6 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: CatalogTile(
                               icon: Icons.person_outline,
                               title: artist.name,
+                              coverUrl: artist.coverUrl,
                               onTap: () => context.push('/artist/${artist.id}'),
                             ),
                           ),
@@ -304,6 +305,8 @@ class _ArtistScreenState extends State<ArtistScreen> {
               : ListView(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                   children: [
+                    CatalogCover(coverUrl: _artist!.coverUrl),
+                    const SizedBox(height: 16),
                     if (_artist!.albums.isEmpty)
                       const Text('Альбомов пока нет', style: TextStyle(color: VizeColors.accentMuted))
                     else
@@ -565,7 +568,7 @@ class _TrackScreenState extends State<TrackScreen> {
   }
 }
 
-class CatalogCover extends StatelessWidget {
+class CatalogCover extends StatefulWidget {
   const CatalogCover({
     super.key,
     this.coverUrl,
@@ -584,28 +587,63 @@ class CatalogCover extends StatelessWidget {
   final double? radius;
 
   @override
+  State<CatalogCover> createState() => _CatalogCoverState();
+}
+
+class _CatalogCoverState extends State<CatalogCover> {
+  Widget? _image;
+
+  @override
+  void initState() {
+    super.initState();
+    _rebuildImage();
+  }
+
+  @override
+  void didUpdateWidget(CatalogCover oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.coverUrl != widget.coverUrl ||
+        oldWidget.height != widget.height ||
+        oldWidget.width != widget.width ||
+        oldWidget.icon != widget.icon ||
+        oldWidget.iconSize != widget.iconSize) {
+      _rebuildImage();
+    }
+  }
+
+  void _rebuildImage() {
+    final url = widget.coverUrl;
+    if (url == null || url.isEmpty) {
+      _image = null;
+      return;
+    }
+    _image = Image.network(
+      url,
+      key: ValueKey<String>(url),
+      fit: BoxFit.cover,
+      width: widget.width ?? double.infinity,
+      height: widget.height,
+      gaplessPlayback: true,
+      filterQuality: FilterQuality.medium,
+      errorBuilder: (_, _, _) => Icon(widget.icon, size: widget.iconSize, color: VizeColors.accentMuted),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final borderRadius = BorderRadius.circular(radius ?? VizeRadii.card);
+    final borderRadius = BorderRadius.circular(widget.radius ?? VizeRadii.card);
     return ClipRRect(
       borderRadius: borderRadius,
       child: Container(
-        height: height,
-        width: width ?? double.infinity,
+        height: widget.height,
+        width: widget.width ?? double.infinity,
         decoration: BoxDecoration(
           color: VizeColors.surface,
           borderRadius: borderRadius,
           border: Border.all(color: VizeColors.stroke),
         ),
         clipBehavior: Clip.antiAlias,
-        child: coverUrl == null || coverUrl!.isEmpty
-            ? Icon(icon, size: iconSize, color: VizeColors.accentMuted)
-            : Image.network(
-                coverUrl!,
-                fit: BoxFit.cover,
-                width: width ?? double.infinity,
-                height: height,
-                errorBuilder: (_, _, _) => Icon(icon, size: iconSize, color: VizeColors.accentMuted),
-              ),
+        child: _image ?? Icon(widget.icon, size: widget.iconSize, color: VizeColors.accentMuted),
       ),
     );
   }

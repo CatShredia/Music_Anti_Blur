@@ -108,7 +108,7 @@ src/api/MusicAntiBlur.Api/
 | Пароль / login / email | [AuthValidation.cs](../src/api/MusicAntiBlur.Api/Auth/AuthValidation.cs), [TokenHasher.cs](../src/api/MusicAntiBlur.Api/Auth/TokenHasher.cs) |
 | JWT | [JwtTokenService.cs](../src/api/MusicAntiBlur.Api/Auth/JwtTokenService.cs) |
 | Каталог / поиск | [CatalogEndpoints.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogEndpoints.cs), [CatalogService.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogService.cs), [CatalogValidation.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogValidation.cs), [CoverImageValidation.cs](../src/api/MusicAntiBlur.Api/Catalog/CoverImageValidation.cs), [PlaybackUrlService.cs](../src/api/MusicAntiBlur.Api/Catalog/PlaybackUrlService.cs) — обложка: `PUT /admin/albums/{id}/cover`, ключ `catalog/covers/{albumId}`, `coverUrl` в GET альбома/артиста/трека |
-| Playback snapshot | [Playback/](../src/api/MusicAntiBlur.Api/Playback/) — `GET/PUT /playback-state`, sessions/claim; writer и presence в Redis |
+| Playback snapshot | [Playback/](../src/api/MusicAntiBlur.Api/Playback/) — `GET/PUT /playback-state`, sessions/claim; writer и presence в Redis; [PlayHistoryService.cs](../src/api/MusicAntiBlur.Api/Playback/PlayHistoryService.cs) — `POST /me/plays`, `GET /me/history` |
 | Override / private | [Overrides/](../src/api/MusicAntiBlur.Api/Overrides/), [Uploads/PrivateUploadService.cs](../src/api/MusicAntiBlur.Api/Uploads/PrivateUploadService.cs) |
 | Загрузка / S3 | [Uploads/](../src/api/MusicAntiBlur.Api/Uploads/), [CatalogUploadEndpoints.cs](../src/api/MusicAntiBlur.Api/Uploads/CatalogUploadEndpoints.cs), [Storage/](../src/api/MusicAntiBlur.Api/Storage/), [Media/](../src/api/MusicAntiBlur.Api/Media/) |
 | Схема БД | [AppDbContext.cs](../src/api/MusicAntiBlur.Api/Data/AppDbContext.cs), [Data/Entities/](../src/api/MusicAntiBlur.Api/Data/Entities/), [Data/Migrations/](../src/api/MusicAntiBlur.Api/Data/Migrations/) — только EF-миграции |
@@ -117,7 +117,7 @@ src/api/MusicAntiBlur.Api/
 | Rate limit | [RedisRateLimiter.cs](../src/api/MusicAntiBlur.Api/RateLimiting/RedisRateLimiter.cs) |
 | Seed Development | [AdminSeeder.cs](../src/api/MusicAntiBlur.Api/Auth/AdminSeeder.cs), [CatalogSeeder.cs](../src/api/MusicAntiBlur.Api/Catalog/CatalogSeeder.cs) — только `IsDevelopment()`, имена каталога с префиксом `[SEED DATA]`. Аудио из `no_commit/music` сидер не трогает: это [seed-local-music.ps1](../devops/seed-local-music.ps1) после старта API. В Development лимиты `admin-import` и `private-import` не применяются. |
 
-Сущности: `User`, `UserSettings`, `RefreshToken`, `PasswordResetToken`, `EmailVerificationToken`, `Artist`, `Album`, `Track`, `CatalogUpload`, `TrackRendition`, `UserTrackOverride`, `UserPrivateUpload`, `UserPrivateRendition`, `ObjectDeletion`, `IdempotencyRecord`, `PlaybackState`. Новые таблицы — только если они есть в [02-database-overview.md](02-database-overview.md). `POST /me/identifiers/*` в коде есть, но [вне MVP](01-product-plan.md#52-out-of-scope): не расширять и не тащить в клиент.
+Сущности: `User`, `UserSettings`, `RefreshToken`, `PasswordResetToken`, `EmailVerificationToken`, `Artist`, `Album`, `Track`, `CatalogUpload`, `TrackRendition`, `UserTrackOverride`, `UserPrivateUpload`, `UserPrivateRendition`, `ObjectDeletion`, `IdempotencyRecord`, `PlaybackState`, `UserTrackStat`, `UserPlayHistory`. Новые таблицы — только если они есть в [02-database-overview.md](02-database-overview.md). `POST /me/identifiers/*` в коде есть, но [вне MVP](01-product-plan.md#52-out-of-scope): не расширять и не тащить в клиент.
 
 ### 3.2. Flutter — `src/mobile/`
 
@@ -126,7 +126,7 @@ src/api/MusicAntiBlur.Api/
 ```
 src/mobile/lib/
 ├── main.dart              экраны auth / settings, go_router
-├── catalog/               дом, поиск, карточки artist/album/track
+├── catalog/               дом, поиск, история, карточки artist/album/track
 ├── player/                AudioHandler, очередь, мини-плеер, SignalR snapshot, persist
 ├── overrides/             local binding (в т.ч. web no-op), SAF, private multipart, панель на карточке
 ├── theme.dart             тёмная тема Vize (токены макета; не расширять «для красоты», см. план §3)
