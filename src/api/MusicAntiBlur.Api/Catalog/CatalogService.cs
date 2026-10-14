@@ -1,13 +1,20 @@
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Http;
+using MusicAntiBlur.Api.Storage;
 
 namespace MusicAntiBlur.Api.Catalog;
 
-public sealed class CatalogService(AppDbContext db)
+public sealed class CatalogService(
+    AppDbContext db,
+    PlaybackUrlSigner signer,
+    ObjectStorageClient storage,
+    IHttpContextAccessor http)
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -33,7 +40,12 @@ public sealed class CatalogService(AppDbContext db)
             .Select(a => new { a.Id, a.Name, a.SortName })
             .ToListAsync(ct);
 
-        var page = rows.Take(take).Select(a => new ArtistListItemDto(a.Id, a.Name)).ToList();
+        var coverKeys = await ArtistCoverKeysAsync(rows.Take(take).Select(a => a.Id).ToList(), ct);
+        var page = rows.Take(take).Select(a =>
+        {
+            var cover = SignCover(coverKeys.GetValueOrDefault(a.Id));
+            return new ArtistListItemDto(a.Id, a.Name, cover.Url, cover.ExpiresAt);
+        }).ToList();
         string? next = null;
         if (rows.Count > take)
         {
@@ -56,7 +68,7 @@ public sealed class CatalogService(AppDbContext db)
                     .OrderBy(x => x.Year)
                     .ThenBy(x => x.Title)
                     .ThenBy(x => x.Id)
-                    .Select(x => new ArtistAlbumItemDto(x.Id, x.Title, x.Year))
+                    .Select(x => new { x.Id, x.Title, x.Year, x.CoverObjectKey })
                     .ToList()
             })
             .FirstOrDefaultAsync(ct);
@@ -66,7 +78,13 @@ public sealed class CatalogService(AppDbContext db)
             throw NotFound();
         }
 
-        return new ArtistDetailDto(artist.Id, artist.Name, artist.Albums);
+        var albums = artist.Albums.Select(x =>
+        {
+            var cover = SignCover(x.CoverObjectKey);
+            return new ArtistAlbumItemDto(x.Id, x.Title, x.Year, x.CoverObjectKey, cover.Url, cover.ExpiresAt);
+        }).ToList();
+        var artistCover = SignCover((await ArtistCoverKeysAsync([artist.Id], ct)).GetValueOrDefault(artist.Id));
+        return new ArtistDetailDto(artist.Id, artist.Name, artistCover.Url, artistCover.ExpiresAt, albums);
     }
 
     public async Task<PageDto<AlbumListItemDto>> ListAlbumsAsync(Guid? artistId, string? cursor, int? limit, CancellationToken ct)
@@ -106,8 +124,13 @@ public sealed class CatalogService(AppDbContext db)
             .ToListAsync(ct);
 
         var page = rows.Take(take)
-            .Select(a => new AlbumListItemDto(
-                a.Id, a.Title, a.Year, a.CoverObjectKey, new ArtistRefDto(a.ArtistId, a.ArtistName)))
+            .Select(a =>
+            {
+                var cover = SignCover(a.CoverObjectKey);
+                return new AlbumListItemDto(
+                    a.Id, a.Title, a.Year, a.CoverObjectKey, cover.Url, cover.ExpiresAt,
+                    new ArtistRefDto(a.ArtistId, a.ArtistName));
+            })
             .ToList();
         string? next = null;
         if (rows.Count > take)
@@ -144,11 +167,14 @@ public sealed class CatalogService(AppDbContext db)
             throw NotFound();
         }
 
+        var cover = SignCover(album.CoverObjectKey);
         return new AlbumDetailDto(
             album.Id,
             album.Title,
             album.Year,
             album.CoverObjectKey,
+            cover.Url,
+            cover.ExpiresAt,
             new ArtistRefDto(album.ArtistId, album.ArtistName),
             album.Tracks);
     }
@@ -167,7 +193,8 @@ public sealed class CatalogService(AppDbContext db)
                 ArtistId = t.Artist.Id,
                 ArtistName = t.Artist.Name,
                 AlbumId = t.Album.Id,
-                AlbumTitle = t.Album.Title
+                AlbumTitle = t.Album.Title,
+                CoverObjectKey = t.Album.CoverObjectKey
             })
             .FirstOrDefaultAsync(ct);
 
@@ -182,6 +209,7 @@ public sealed class CatalogService(AppDbContext db)
             .Select(r => new QualityDto(r.ProfileCode, r.BitrateKbps!.Value))
             .ToListAsync(ct);
 
+        var cover = SignCover(track.CoverObjectKey);
         return new TrackDetailDto(
             track.Id,
             track.Title,
@@ -190,7 +218,10 @@ public sealed class CatalogService(AppDbContext db)
             track.Isrc,
             new ArtistRefDto(track.ArtistId, track.ArtistName),
             new AlbumRefDto(track.AlbumId, track.AlbumTitle),
-            qualities);
+            qualities,
+            track.CoverObjectKey,
+            cover.Url,
+            cover.ExpiresAt);
     }
 
     public async Task<PageDto<SearchItemDto>> SearchAsync(string? q, string? cursor, int? limit, CancellationToken ct)
@@ -272,7 +303,7 @@ public sealed class CatalogService(AppDbContext db)
         };
         db.Artists.Add(artist);
         await db.SaveChangesAsync(ct);
-        return new ArtistDetailDto(artist.Id, artist.Name, []);
+        return new ArtistDetailDto(artist.Id, artist.Name, null, null, []);
     }
 
     public async Task<ArtistDetailDto> UpdateArtistAsync(Guid id, UpsertArtistRequest req, CancellationToken ct)
@@ -399,6 +430,100 @@ public sealed class CatalogService(AppDbContext db)
         track.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
         return await GetTrackAsync(id, ct);
+    }
+
+    public async Task<AlbumDetailDto> UploadCoverAsync(Guid id, IFormFile? file, CancellationToken ct)
+    {
+        var album = await db.Albums.FirstOrDefaultAsync(a => a.Id == id, ct)
+            ?? throw NotFound();
+        var errors = CatalogValidation.NewErrors();
+        var parsed = CoverImageValidation.Read(file, errors);
+        CatalogValidation.ThrowIfAny(errors);
+
+        storage.EnsureConfigured();
+        var key = ObjectKeys.Cover(id);
+        var ext = parsed!.ContentType == "image/png" ? ".png" : ".jpg";
+        var tmp = Path.Combine(Path.GetTempPath(), $"mab-cover-{id:D}{ext}");
+        try
+        {
+            await File.WriteAllBytesAsync(tmp, parsed.Bytes, ct);
+            await storage.PutFileAsync(key, tmp, parsed.ContentType, ct);
+        }
+        finally
+        {
+            if (File.Exists(tmp))
+            {
+                File.Delete(tmp);
+            }
+        }
+
+        album.CoverObjectKey = key;
+        await db.SaveChangesAsync(ct);
+        return await GetAlbumAsync(id, ct);
+    }
+
+    private Guid? CurrentUserId()
+    {
+        var user = http.HttpContext?.User;
+        var raw = user?.FindFirstValue(ClaimTypes.NameIdentifier) ?? user?.FindFirstValue("sub");
+        return raw is not null && Guid.TryParse(raw, out var id) ? id : null;
+    }
+
+    private async Task<Dictionary<Guid, string?>> ArtistCoverKeysAsync(IReadOnlyList<Guid> artistIds, CancellationToken ct)
+    {
+        var result = new Dictionary<Guid, string?>();
+        if (artistIds.Count == 0)
+        {
+            return result;
+        }
+
+        var albums = await db.Albums.AsNoTracking()
+            .Where(a => artistIds.Contains(a.ArtistId) && a.CoverObjectKey != null)
+            .Select(a => new { a.Id, a.ArtistId, a.CoverObjectKey, a.Year, a.Title })
+            .ToListAsync(ct);
+        var playsByAlbum = new Dictionary<Guid, int>();
+        if (CurrentUserId() is { } userId)
+        {
+            playsByAlbum = await (
+                from s in db.UserTrackStats.AsNoTracking()
+                where s.UserId == userId
+                join t in db.Tracks.AsNoTracking() on s.TrackId equals t.Id
+                where artistIds.Contains(t.ArtistId)
+                group s by t.AlbumId into g
+                select new { AlbumId = g.Key, Plays = g.Sum(x => x.PlayCount) }
+            ).ToDictionaryAsync(x => x.AlbumId, x => x.Plays, ct);
+        }
+
+        foreach (var artistId in artistIds)
+        {
+            var picked = albums
+                .Where(a => a.ArtistId == artistId)
+                .OrderByDescending(a => playsByAlbum.GetValueOrDefault(a.Id))
+                .ThenByDescending(a => a.Year ?? 0)
+                .ThenBy(a => a.Title)
+                .FirstOrDefault();
+            result[artistId] = picked?.CoverObjectKey;
+        }
+
+        return result;
+    }
+
+    public (string? Url, DateTimeOffset? ExpiresAt) SignCover(string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return (null, null);
+        }
+
+        try
+        {
+            var signed = signer.Sign(key, http.HttpContext?.Request.Host.Host, CoverImageValidation.UrlTtl);
+            return (signed.Url, signed.ExpiresAt);
+        }
+        catch (ApiException)
+        {
+            return (null, null);
+        }
     }
 
     private static ApiException NotFound() => new(404, "not_found", "Not found.");

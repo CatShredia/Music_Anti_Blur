@@ -116,6 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: CatalogTile(
                               icon: Icons.person_outline,
                               title: artist.name,
+                              coverUrl: artist.coverUrl,
                               onTap: () => context.push('/artist/${artist.id}'),
                             ),
                           ),
@@ -136,7 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 album.artist.name,
                                 if (album.year != null) '${album.year}',
                               ].join(' · '),
-                              coverObjectKey: album.coverObjectKey,
+                              coverUrl: album.coverUrl,
                               onTap: () => context.push('/album/${album.id}'),
                             ),
                           ),
@@ -304,6 +305,8 @@ class _ArtistScreenState extends State<ArtistScreen> {
               : ListView(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                   children: [
+                    CatalogCover(coverUrl: _artist!.coverUrl),
+                    const SizedBox(height: 16),
                     if (_artist!.albums.isEmpty)
                       const Text('Альбомов пока нет', style: TextStyle(color: VizeColors.accentMuted))
                     else
@@ -314,6 +317,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
                             icon: Icons.album_outlined,
                             title: album.title,
                             subtitle: album.year?.toString(),
+                            coverUrl: album.coverUrl,
                             onTap: () => context.push('/album/${album.id}'),
                           ),
                         ),
@@ -367,7 +371,7 @@ class _AlbumScreenState extends State<AlbumScreen> {
               : ListView(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                   children: [
-                    CatalogCover(coverObjectKey: album.coverObjectKey),
+                    CatalogCover(coverUrl: album.coverUrl),
                     const SizedBox(height: 16),
                     Text(album.artist.name, style: Theme.of(context).textTheme.titleMedium),
                     if (album.year != null)
@@ -493,7 +497,7 @@ class _TrackScreenState extends State<TrackScreen> {
               : ListView(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                   children: [
-                    CatalogCover(coverObjectKey: null),
+                    CatalogCover(coverUrl: track.coverUrl),
                     const SizedBox(height: 16),
                     Text(track.artist.name, style: Theme.of(context).textTheme.titleMedium),
                     const SizedBox(height: 4),
@@ -564,24 +568,82 @@ class _TrackScreenState extends State<TrackScreen> {
   }
 }
 
-class CatalogCover extends StatelessWidget {
-  const CatalogCover({super.key, this.coverObjectKey});
+class CatalogCover extends StatefulWidget {
+  const CatalogCover({
+    super.key,
+    this.coverUrl,
+    this.height = 160,
+    this.width,
+    this.icon = Icons.album_outlined,
+    this.iconSize = 56,
+    this.radius,
+  });
 
-  final String? coverObjectKey;
+  final String? coverUrl;
+  final double height;
+  final double? width;
+  final IconData icon;
+  final double iconSize;
+  final double? radius;
+
+  @override
+  State<CatalogCover> createState() => _CatalogCoverState();
+}
+
+class _CatalogCoverState extends State<CatalogCover> {
+  Widget? _image;
+
+  @override
+  void initState() {
+    super.initState();
+    _rebuildImage();
+  }
+
+  @override
+  void didUpdateWidget(CatalogCover oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.coverUrl != widget.coverUrl ||
+        oldWidget.height != widget.height ||
+        oldWidget.width != widget.width ||
+        oldWidget.icon != widget.icon ||
+        oldWidget.iconSize != widget.iconSize) {
+      _rebuildImage();
+    }
+  }
+
+  void _rebuildImage() {
+    final url = widget.coverUrl;
+    if (url == null || url.isEmpty) {
+      _image = null;
+      return;
+    }
+    _image = Image.network(
+      url,
+      key: ValueKey<String>(url),
+      fit: BoxFit.cover,
+      width: widget.width ?? double.infinity,
+      height: widget.height,
+      gaplessPlayback: true,
+      filterQuality: FilterQuality.medium,
+      errorBuilder: (_, _, _) => Icon(widget.icon, size: widget.iconSize, color: VizeColors.accentMuted),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 160,
-      decoration: BoxDecoration(
-        color: VizeColors.surface,
-        borderRadius: BorderRadius.circular(VizeRadii.card),
-        border: Border.all(color: VizeColors.stroke),
-      ),
-      child: Icon(
-        coverObjectKey == null ? Icons.album_outlined : Icons.image_outlined,
-        size: 56,
-        color: VizeColors.accentMuted,
+    final borderRadius = BorderRadius.circular(widget.radius ?? VizeRadii.card);
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: Container(
+        height: widget.height,
+        width: widget.width ?? double.infinity,
+        decoration: BoxDecoration(
+          color: VizeColors.surface,
+          borderRadius: borderRadius,
+          border: Border.all(color: VizeColors.stroke),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: _image ?? Icon(widget.icon, size: widget.iconSize, color: VizeColors.accentMuted),
       ),
     );
   }
@@ -594,13 +656,13 @@ class CatalogTile extends StatelessWidget {
     required this.title,
     required this.onTap,
     this.subtitle,
-    this.coverObjectKey,
+    this.coverUrl,
   });
 
   final IconData icon;
   final String title;
   final String? subtitle;
-  final String? coverObjectKey;
+  final String? coverUrl;
   final VoidCallback onTap;
 
   @override
@@ -609,18 +671,13 @@ class CatalogTile extends StatelessWidget {
       onTap: onTap,
       child: Row(
         children: [
-          Container(
-            width: 48,
+          CatalogCover(
+            coverUrl: coverUrl,
             height: 48,
-            decoration: BoxDecoration(
-              color: VizeColors.bgElevated,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: VizeColors.stroke),
-            ),
-            child: Icon(
-              coverObjectKey == null ? icon : Icons.image_outlined,
-              color: VizeColors.accentMuted,
-            ),
+            width: 48,
+            icon: icon,
+            iconSize: 22,
+            radius: 12,
           ),
           const SizedBox(width: 12),
           Expanded(

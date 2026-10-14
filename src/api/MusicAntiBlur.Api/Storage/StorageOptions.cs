@@ -57,4 +57,6 @@ public static class ObjectKeys
 
     public static string PrivateAac(Guid userId, Guid trackId, Guid generationId, string profileCode) =>
         $"users/{userId:D}/overrides/{trackId:D}/generations/{generationId:D}/{profileCode}.m4a";
+
+    public static string Cover(Guid albumId) => $"catalog/covers/{albumId:D}";
 }

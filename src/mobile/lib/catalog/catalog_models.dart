@@ -23,41 +23,55 @@ class AlbumRef {
 }
 
 class ArtistListItem {
-  ArtistListItem({required this.id, required this.name});
+  ArtistListItem({required this.id, required this.name, this.coverUrl});
 
   final String id;
   final String name;
+  final String? coverUrl;
 
   factory ArtistListItem.fromJson(Map<String, dynamic> json) => ArtistListItem(
         id: json['id'] as String,
         name: json['name'] as String,
+        coverUrl: json['coverUrl'] as String?,
       );
 }
 
 class ArtistAlbumItem {
-  ArtistAlbumItem({required this.id, required this.title, this.year});
+  ArtistAlbumItem({
+    required this.id,
+    required this.title,
+    this.year,
+    this.coverObjectKey,
+    this.coverUrl,
+  });
 
   final String id;
   final String title;
   final int? year;
+  final String? coverObjectKey;
+  final String? coverUrl;
 
   factory ArtistAlbumItem.fromJson(Map<String, dynamic> json) => ArtistAlbumItem(
         id: json['id'] as String,
         title: json['title'] as String,
         year: json['year'] as int?,
+        coverObjectKey: json['coverObjectKey'] as String?,
+        coverUrl: json['coverUrl'] as String?,
       );
 }
 
 class ArtistDetail {
-  ArtistDetail({required this.id, required this.name, required this.albums});
+  ArtistDetail({required this.id, required this.name, required this.albums, this.coverUrl});
 
   final String id;
   final String name;
+  final String? coverUrl;
   final List<ArtistAlbumItem> albums;
 
   factory ArtistDetail.fromJson(Map<String, dynamic> json) => ArtistDetail(
         id: json['id'] as String,
         name: json['name'] as String,
+        coverUrl: json['coverUrl'] as String?,
         albums: (json['albums'] as List<dynamic>)
             .map((e) => ArtistAlbumItem.fromJson(e as Map<String, dynamic>))
             .toList(),
@@ -71,12 +85,14 @@ class AlbumListItem {
     required this.artist,
     this.year,
     this.coverObjectKey,
+    this.coverUrl,
   });
 
   final String id;
   final String title;
   final int? year;
   final String? coverObjectKey;
+  final String? coverUrl;
   final ArtistRef artist;
 
   factory AlbumListItem.fromJson(Map<String, dynamic> json) => AlbumListItem(
@@ -84,6 +100,7 @@ class AlbumListItem {
         title: json['title'] as String,
         year: json['year'] as int?,
         coverObjectKey: json['coverObjectKey'] as String?,
+        coverUrl: json['coverUrl'] as String?,
         artist: ArtistRef.fromJson(json['artist'] as Map<String, dynamic>),
       );
 }
@@ -120,12 +137,14 @@ class AlbumDetail {
     required this.tracks,
     this.year,
     this.coverObjectKey,
+    this.coverUrl,
   });
 
   final String id;
   final String title;
   final int? year;
   final String? coverObjectKey;
+  final String? coverUrl;
   final ArtistRef artist;
   final List<TrackListItem> tracks;
 
@@ -134,6 +153,7 @@ class AlbumDetail {
         title: json['title'] as String,
         year: json['year'] as int?,
         coverObjectKey: json['coverObjectKey'] as String?,
+        coverUrl: json['coverUrl'] as String?,
         artist: ArtistRef.fromJson(json['artist'] as Map<String, dynamic>),
         tracks: (json['tracks'] as List<dynamic>)
             .map((e) => TrackListItem.fromJson(e as Map<String, dynamic>))
@@ -165,6 +185,8 @@ class TrackDetail {
     required this.availableQualities,
     this.durationMs,
     this.isrc,
+    this.coverUrl,
+    this.coverObjectKey,
   });
 
   final String id;
@@ -175,6 +197,8 @@ class TrackDetail {
   final ArtistRef artist;
   final AlbumRef album;
   final List<TrackQuality> availableQualities;
+  final String? coverUrl;
+  final String? coverObjectKey;
 
   factory TrackDetail.fromJson(Map<String, dynamic> json) => TrackDetail(
         id: json['id'] as String,
@@ -184,6 +208,8 @@ class TrackDetail {
         isrc: json['isrc'] as String?,
         artist: ArtistRef.fromJson(json['artist'] as Map<String, dynamic>),
         album: AlbumRef.fromJson(json['album'] as Map<String, dynamic>),
+        coverUrl: json['coverUrl'] as String?,
+        coverObjectKey: json['coverObjectKey'] as String?,
         availableQualities: (json['availableQualities'] as List<dynamic>? ?? const [])
             .whereType<Map<String, dynamic>>()
             .map(TrackQuality.fromJson)
@@ -212,6 +238,45 @@ class SearchItem {
         title: json['title'] as String,
         subtitle: json['subtitle'] as String?,
         rank: (json['rank'] as num).toDouble(),
+      );
+}
+
+class PlayHistoryItem {
+  PlayHistoryItem({
+    required this.id,
+    required this.trackId,
+    required this.title,
+    required this.artistId,
+    required this.artistName,
+    required this.albumId,
+    required this.albumTitle,
+    required this.playedAt,
+    required this.playCount,
+    this.coverUrl,
+  });
+
+  final String id;
+  final String trackId;
+  final String title;
+  final String artistId;
+  final String artistName;
+  final String albumId;
+  final String albumTitle;
+  final String? coverUrl;
+  final DateTime playedAt;
+  final int playCount;
+
+  factory PlayHistoryItem.fromJson(Map<String, dynamic> json) => PlayHistoryItem(
+        id: json['id'] as String,
+        trackId: json['trackId'] as String,
+        title: json['title'] as String,
+        artistId: json['artistId'] as String,
+        artistName: json['artistName'] as String,
+        albumId: json['albumId'] as String,
+        albumTitle: json['albumTitle'] as String,
+        coverUrl: json['coverUrl'] as String?,
+        playedAt: DateTime.parse(json['playedAt'] as String),
+        playCount: (json['playCount'] as num?)?.toInt() ?? 0,
       );
 }
 

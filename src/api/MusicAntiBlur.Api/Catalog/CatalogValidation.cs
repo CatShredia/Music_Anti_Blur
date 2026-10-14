@@ -28,6 +28,8 @@ public static class CatalogValidation
     public const string NameLength = "name_length";
     public const string TitleLength = "title_length";
     public const string CoverKey = "cover_object_key";
+    public const string CoverType = "cover_type";
+    public const string FileTooLarge = "file_too_large";
     public const string IsrcFormat = "isrc_format";
     public const string IdentifierTaken = AuthValidation.IdentifierTaken;
 

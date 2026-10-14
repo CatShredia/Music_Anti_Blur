@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import 'api/api_client.dart';
 import 'catalog/catalog_screens.dart';
+import 'catalog/history_screen.dart';
 import 'player/audio_handler.dart';
 import 'player/mini_player.dart';
 import 'player/player_controller.dart';
@@ -77,6 +78,7 @@ class MusicAntiBlurApp extends StatelessWidget {
       ),
       GoRoute(path: '/home', builder: (_, _) => HomeScreen(api: api)),
       GoRoute(path: '/search', builder: (_, _) => SearchScreen(api: api)),
+      GoRoute(path: '/history', builder: (_, _) => HistoryScreen(api: api)),
       GoRoute(
         path: '/artist/:id',
         builder: (_, state) => ArtistScreen(api: api, id: state.pathParameters['id']!),
@@ -683,11 +685,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return VizeScaffold(
-      tabIndex: 2,
+      tabIndex: 3,
       header: const VizeHeader(title: 'Настройки'),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
         children: [
+          VizeSettingRow(
+            icon: Icons.history,
+            label: 'История прослушивания',
+            value: 'Треки',
+            onTap: () => context.go('/history'),
+          ),
           VizeSettingRow(
             icon: Icons.headphones_outlined,
             label: 'Качество звука',

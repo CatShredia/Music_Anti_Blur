@@ -385,6 +385,20 @@ class ApiClient {
     return PlaybackUrl.fromJson(res.data as Map<String, dynamic>);
   }
 
+  Future<void> recordPlay(String trackId) async {
+    await _send(() => _dio.post('/api/v1/me/plays', data: {'trackId': trackId}));
+  }
+
+  Future<CatalogPage<PlayHistoryItem>> playHistory({String? cursor, int limit = 20}) async {
+    final res = await _send(
+      () => _dio.get('/api/v1/me/history', queryParameters: {
+        'cursor': ?cursor,
+        'limit': limit,
+      }),
+    );
+    return CatalogPage.fromJson(res.data as Map<String, dynamic>, PlayHistoryItem.fromJson);
+  }
+
   Future<TrackOverride?> trackOverride(String trackId) async {
     try {
       final res = await _send(() => _dio.get('/api/v1/tracks/$trackId/override'));
