@@ -1,3 +1,6 @@
+using System.Security.Claims;
+using MusicAntiBlur.Api.Http;
+
 namespace MusicAntiBlur.Api.Catalog;
 
 public static class CatalogEndpoints
@@ -19,8 +22,8 @@ public static class CatalogEndpoints
         v1.MapGet("/albums/{id:guid}", async (Guid id, CatalogService svc, CancellationToken ct) =>
             Results.Ok(await svc.GetAlbumAsync(id, ct)));
 
-        v1.MapGet("/tracks/{id:guid}", async (Guid id, CatalogService svc, CancellationToken ct) =>
-            Results.Ok(await svc.GetTrackAsync(id, ct)));
+        v1.MapGet("/tracks/{id:guid}", async (Guid id, CatalogService svc, ClaimsPrincipal user, CancellationToken ct) =>
+            Results.Ok(await svc.GetTrackAsync(id, UserId(user), ct)));
 
         v1.MapGet("/search", async (string? q, string? cursor, int? limit, CatalogService svc, CancellationToken ct) =>
             Results.Ok(await svc.SearchAsync(q, cursor, limit, ct)));
@@ -42,5 +45,16 @@ public static class CatalogEndpoints
 
         admin.MapPut("/tracks/{id:guid}", async (Guid id, UpsertTrackRequest req, CatalogService svc, CancellationToken ct) =>
             Results.Ok(await svc.UpdateTrackAsync(id, req, ct)));
+    }
+
+    private static Guid UserId(ClaimsPrincipal user)
+    {
+        var raw = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub");
+        if (raw is null || !Guid.TryParse(raw, out var id))
+        {
+            throw new ApiException(401, "invalid_token", "Invalid token.");
+        }
+
+        return id;
     }
 }

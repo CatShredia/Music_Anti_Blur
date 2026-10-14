@@ -90,6 +90,10 @@ class MusicAntiBlurApp extends StatelessWidget {
         builder: (_, state) => TrackScreen(api: api, id: state.pathParameters['id']!),
       ),
       GoRoute(path: '/settings', builder: (_, _) => SettingsScreen(api: api)),
+      GoRoute(
+        path: '/liked',
+        builder: (_, _) => LikedPlaylistScreen(api: api),
+      ),
       if (player case final activePlayer?)
         GoRoute(path: '/player', builder: (_, _) => PlayerScreen(player: activePlayer)),
     ],
@@ -688,6 +692,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
         children: [
+          VizeSettingRow(
+            icon: Icons.favorite_outline,
+            label: 'Мне нравится',
+            value: 'Плейлист',
+            onTap: () => context.push('/liked'),
+          ),
           VizeSettingRow(
             icon: Icons.headphones_outlined,
             label: 'Качество звука',

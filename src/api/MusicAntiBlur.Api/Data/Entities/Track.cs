@@ -16,4 +16,6 @@ public sealed class Track
     public Artist Artist { get; set; } = null!;
     public ICollection<CatalogUpload> Uploads { get; set; } = new List<CatalogUpload>();
     public ICollection<UserTrackOverride> Overrides { get; set; } = new List<UserTrackOverride>();
+    public ICollection<LikedTrack> LikedBy { get; set; } = new List<LikedTrack>();
+    public ICollection<PlaylistTrack> PlaylistEntries { get; set; } = new List<PlaylistTrack>();
 }

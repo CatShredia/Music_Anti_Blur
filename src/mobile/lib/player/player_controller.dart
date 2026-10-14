@@ -165,6 +165,43 @@ class PlayerController extends ChangeNotifier {
     await _playAndPersist(resumeIfSame: false);
   }
 
+  Future<void> playTrackIds(
+    Iterable<String> trackIds, {
+    String? startTrackId,
+    String? quality,
+  }) async {
+    requestedQuality = quality;
+    final ids = trackIds.toList();
+    if (ids.isEmpty) {
+      return;
+    }
+    queue = PlayerQueue.album(
+      ids,
+      startTrackId: startTrackId,
+    ).copyWith(repeat: queue.repeat, shuffle: queue.shuffle);
+    _orderBeforeShuffle = [...queue.items];
+    if (queue.shuffle) {
+      queue = _shuffleQueue(queue);
+    }
+    await _playAndPersist(resumeIfSame: false);
+  }
+
+  Future<bool> toggleLikeCurrent() async {
+    final current = track;
+    if (current == null) {
+      return false;
+    }
+    if (current.liked) {
+      await api.unlikeTrack(current.id);
+      track = current.copyWith(liked: false);
+    } else {
+      await api.likeTrack(current.id);
+      track = current.copyWith(liked: true);
+    }
+    notifyListeners();
+    return track!.liked;
+  }
+
   Future<void> setItemSource(String sourcePreference) async {
     if (_followingRemote) {
       return;

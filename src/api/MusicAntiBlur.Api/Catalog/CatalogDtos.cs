@@ -35,7 +35,8 @@ public sealed record TrackDetailDto(
     string? Isrc,
     ArtistRefDto Artist,
     AlbumRefDto Album,
-    IReadOnlyList<QualityDto> AvailableQualities);
+    IReadOnlyList<QualityDto> AvailableQualities,
+    bool Liked);
 
 public sealed record QualityDto(string Code, int BitrateKbps);
 

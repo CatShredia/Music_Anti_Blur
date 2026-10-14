@@ -17,4 +17,6 @@ public sealed class User
     public ICollection<PasswordResetToken> PasswordResetTokens { get; set; } = new List<PasswordResetToken>();
     public ICollection<EmailVerificationToken> EmailVerificationTokens { get; set; } = new List<EmailVerificationToken>();
     public ICollection<UserTrackOverride> Overrides { get; set; } = new List<UserTrackOverride>();
+    public ICollection<Playlist> Playlists { get; set; } = new List<Playlist>();
+    public ICollection<LikedTrack> LikedTracks { get; set; } = new List<LikedTrack>();
 }

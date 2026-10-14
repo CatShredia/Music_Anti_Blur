@@ -59,7 +59,8 @@ flowchart LR
 | S3 multipart upload ID | PostgreSQL в строке upload generation до complete/abort |
 | Rate limit API | Redis, матрица в `03-api-contract.md` |
 | Джобы Hangfire | схема `hangfire` (создаёт библиотека, не EF) |
-| ListenEvent, плейлисты, reco | **нет в MVP** — таблицы не создавать |
+| Лайки / «Мне нравится» | PostgreSQL `liked_tracks`, `playlists`, `playlist_tracks` |
+| ListenEvent, reco, пользовательские плейлисты (kind=`user`) | post-MVP |
 
 ---
 
@@ -1004,11 +1005,11 @@ WHERE user_id = :currentUserId AND track_id = :trackId;
 |---|---|
 | `listen_events` | рекомендации |
 | `track_popularity`, `track_similar` | рекомендации |
-| `playlists`, `playlist_tracks` | плейлисты / избранное |
-| `liked_tracks` | избранное |
 | `oauth_accounts` | Яндекс OAuth |
 | `devices` | если presence переедет из Redis |
 | `album_artists` M:N | сборники сложнее текущего `tracks.artist_id` |
+
+Уже в схеме (лайки): `liked_tracks`, `playlists` (kind `liked`|`user`), `playlist_tracks`. Системный плейлист «Мне нравится» — один на пользователя (`kind = 'liked'`). Содержимое лайков дублируется в `liked_tracks` (флаг/порядок по `liked_at`) и `playlist_tracks` плейлиста liked.
 
 Имена зарезервированы: не занимать их для другого смысла.
 

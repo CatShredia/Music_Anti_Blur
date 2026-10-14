@@ -99,18 +99,41 @@ class _PlayerScreenState extends State<PlayerScreen> {
               children: [
                 CatalogCover(coverObjectKey: player.coverObjectKey),
                 const SizedBox(height: 16),
-                Text(track?.title ?? 'Трек', style: Theme.of(context).textTheme.headlineMedium),
-                const SizedBox(height: 4),
-                Text(track?.artist.name ?? '', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 4),
-                Text(track?.album.title ?? '', style: Theme.of(context).textTheme.bodySmall),
-                if (player.resolvedSource != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    sourceLabel(player.resolvedSource!),
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(track?.title ?? 'Трек', style: Theme.of(context).textTheme.headlineMedium),
+                          const SizedBox(height: 4),
+                          Text(track?.artist.name ?? '', style: Theme.of(context).textTheme.titleMedium),
+                          const SizedBox(height: 4),
+                          Text(track?.album.title ?? '', style: Theme.of(context).textTheme.bodySmall),
+                          if (player.resolvedSource != null) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              sourceLabel(player.resolvedSource!),
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (track != null)
+                      IconButton(
+                        tooltip: track.liked ? 'Убрать из «Мне нравится»' : 'Нравится',
+                        onPressed: () => _run(() async {
+                          await player.toggleLikeCurrent();
+                        }),
+                        icon: Icon(
+                          track.liked ? Icons.favorite : Icons.favorite_border,
+                          color: track.liked ? VizeColors.danger : VizeColors.accentMuted,
+                        ),
+                      ),
+                  ],
+                ),
                 const SizedBox(height: 24),
                 Slider(
                   min: 0,

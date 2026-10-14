@@ -153,7 +153,7 @@ public sealed class CatalogService(AppDbContext db)
             album.Tracks);
     }
 
-    public async Task<TrackDetailDto> GetTrackAsync(Guid id, CancellationToken ct)
+    public async Task<TrackDetailDto> GetTrackAsync(Guid id, Guid userId, CancellationToken ct)
     {
         var track = await db.Tracks.AsNoTracking()
             .Where(t => t.Id == id)
@@ -182,6 +182,9 @@ public sealed class CatalogService(AppDbContext db)
             .Select(r => new QualityDto(r.ProfileCode, r.BitrateKbps!.Value))
             .ToListAsync(ct);
 
+        var liked = await db.LikedTracks.AsNoTracking()
+            .AnyAsync(l => l.UserId == userId && l.TrackId == id, ct);
+
         return new TrackDetailDto(
             track.Id,
             track.Title,
@@ -190,7 +193,8 @@ public sealed class CatalogService(AppDbContext db)
             track.Isrc,
             new ArtistRefDto(track.ArtistId, track.ArtistName),
             new AlbumRefDto(track.AlbumId, track.AlbumTitle),
-            qualities);
+            qualities,
+            liked);
     }
 
     public async Task<PageDto<SearchItemDto>> SearchAsync(string? q, string? cursor, int? limit, CancellationToken ct)
@@ -369,7 +373,7 @@ public sealed class CatalogService(AppDbContext db)
         };
         db.Tracks.Add(track);
         await db.SaveChangesAsync(ct);
-        return await GetTrackAsync(track.Id, ct);
+        return await GetTrackAsync(track.Id, userId: Guid.Empty, ct);
     }
 
     public async Task<TrackDetailDto> UpdateTrackAsync(Guid id, UpsertTrackRequest req, CancellationToken ct)
@@ -398,7 +402,7 @@ public sealed class CatalogService(AppDbContext db)
         track.Isrc = isrc;
         track.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
-        return await GetTrackAsync(id, ct);
+        return await GetTrackAsync(id, userId: Guid.Empty, ct);
     }
 
     private static ApiException NotFound() => new(404, "not_found", "Not found.");
