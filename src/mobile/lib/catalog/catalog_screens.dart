@@ -612,13 +612,19 @@ class _TrackScreenState extends State<TrackScreen> {
                           ),
                         ),
                         const SizedBox(width: 12),
-                        OutlinedButton.icon(
-                          onPressed: _likeBusy ? null : _toggleLike,
-                          icon: Icon(
-                            track.liked ? Icons.favorite : Icons.favorite_border,
-                            color: track.liked ? VizeColors.danger : VizeColors.accent,
+                        Flexible(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(minimumSize: const Size(0, 48)),
+                            onPressed: _likeBusy ? null : _toggleLike,
+                            icon: Icon(
+                              track.liked ? Icons.favorite : Icons.favorite_border,
+                              color: track.liked ? VizeColors.danger : VizeColors.accent,
+                            ),
+                            label: Text(
+                              track.liked ? 'В «Мне нравится»' : 'Нравится',
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                          label: Text(track.liked ? 'В «Мне нравится»' : 'Нравится'),
                         ),
                       ],
                     ),
