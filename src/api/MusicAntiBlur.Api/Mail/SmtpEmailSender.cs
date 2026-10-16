@@ -1,24 +1,27 @@
 using MailKit.Net.Smtp;
+using Microsoft.Extensions.Options;
 using MimeKit;
 
 namespace MusicAntiBlur.Api.Mail;
 
-public sealed class SmtpEmailSender(IConfiguration config, ILogger<SmtpEmailSender> logger)
+public sealed class SmtpEmailSender(IOptions<SmtpOptions> options, ILogger<SmtpEmailSender> logger)
 {
-    public async Task SendAsync(string to, string subject, string body, CancellationToken ct)
+    public async Task SendAsync(string to, string subject, string text, string html, CancellationToken ct)
     {
+        var smtp = options.Value;
         var message = new MimeMessage();
-        message.From.Add(MailboxAddress.Parse(config["Smtp:From"] ?? "noreply@localhost"));
+        var from = smtp.EffectiveFrom;
+        message.From.Add(string.IsNullOrWhiteSpace(smtp.FromName)
+            ? MailboxAddress.Parse(from)
+            : new MailboxAddress(smtp.FromName.Trim(), from));
         message.To.Add(MailboxAddress.Parse(to));
         message.Subject = subject;
-        message.Body = new TextPart("plain") { Text = body };
+        message.Body = new BodyBuilder { TextBody = text, HtmlBody = html }.ToMessageBody();
 
         using var client = new SmtpClient();
-        var host = config["Smtp:Host"] ?? "localhost";
-        var port = int.Parse(config["Smtp:Port"] ?? "1025");
-        await client.ConnectAsync(host, port, MailKit.Security.SecureSocketOptions.None, ct);
+        await SmtpConnection.ConnectAsync(client, smtp, ct);
         await client.SendAsync(message, ct);
         await client.DisconnectAsync(true, ct);
-        logger.LogInformation("Queued email {Subject} to recipient (redacted).", subject);
+        logger.LogInformation("Sent email {Subject}.", subject);
     }
 }

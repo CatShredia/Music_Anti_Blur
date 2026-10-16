@@ -8,6 +8,7 @@ using MailKit.Net.Smtp;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using MusicAntiBlur.Api.Auth;
@@ -59,6 +60,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 builder.Services.AddSingleton<RedisRateLimiter>();
 builder.Services.AddSingleton<PasswordHasher<User>>();
 builder.Services.AddSingleton<JwtTokenService>();
+builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection(SmtpOptions.Section));
 builder.Services.AddSingleton<SmtpEmailSender>();
 builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection(StorageOptions.Section));
 builder.Services.Configure<CdnOptions>(builder.Configuration.GetSection(CdnOptions.Section));
@@ -232,7 +234,7 @@ app.MapGet("/health", async (AppDbContext db, CancellationToken ct) =>
         : Results.Json(new { status = "fail" }, statusCode: 503);
 });
 
-app.MapGet("/health/deps", async (IConnectionMultiplexer mux, IConfiguration config, ObjectStorageClient storage, CancellationToken ct) =>
+app.MapGet("/health/deps", async (IConnectionMultiplexer mux, IOptions<SmtpOptions> smtpOptions, ObjectStorageClient storage, CancellationToken ct) =>
 {
     var redis = false;
     var smtp = false;
@@ -249,8 +251,7 @@ app.MapGet("/health/deps", async (IConnectionMultiplexer mux, IConfiguration con
     try
     {
         using var client = new SmtpClient();
-        await client.ConnectAsync(config["Smtp:Host"] ?? "localhost", int.Parse(config["Smtp:Port"] ?? "1025"),
-            MailKit.Security.SecureSocketOptions.None, ct);
+        await SmtpConnection.ConnectAsync(client, smtpOptions.Value, ct);
         await client.DisconnectAsync(true, ct);
         smtp = true;
     }

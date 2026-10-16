@@ -77,12 +77,14 @@ Idempotency records хранятся в PostgreSQL (`idempotency_records`). Тр
 
 ### 2.2. Сессии и reset
 
-`POST /auth/login { identifierType, identifier, password }` → `{ accessToken, accessExpiresAt, refreshToken, refreshExpiresAt, user }`. Неверные identifier/password имеют одинаковые status/body/timing class.
+`POST /auth/login { identifierType, identifier, password }` → `{ accessToken, accessExpiresAt, refreshToken, refreshExpiresAt, user }`. Неверные identifier/password имеют одинаковые status/body/timing class. Если у аккаунта подтверждён email, после выдачи сессии в очередь ставится письмо о входе. Ответ не ждёт SMTP. `POST /auth/refresh` письмо не шлёт. Нет email или он не подтверждён — письма нет.
 
 `POST /auth/refresh { refreshToken }` атомарно гасит текущий token и выдаёт потомка. Повтор rotated token → `401` и revoke family. Из двух конкурентных refresh успешен один.
 
 - `POST /auth/logout` → revoke family, `204`.
 - `POST /auth/logout-all` → revoke всех refresh пользователя, `204`.
+- `GET /me/devices` → активные сессии: `[{ deviceId, lastSeenAt, current }]`. `current` — устройство из заголовка `X-Device-Id`.
+- `DELETE /me/devices/{deviceId}` → `204`, гасит все живые refresh этого устройства. Чужой или уже погашенный id → `404`. Access-токен доживает до своего срока.
 - `POST /auth/forgot-password { email }` → всегда одинаковый `200`; письмо только verified email.
 - `POST /auth/reset-password { code, newPassword }` → одной транзакцией consume, смена password, invalidate reset codes и revoke всех refresh.
 

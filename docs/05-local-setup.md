@@ -182,7 +182,7 @@ flutter run
 
 Фон: iOS `UIBackgroundModes = audio`; Android media notification через `audio_service`. На Android 13+ запрашивается `POST_NOTIFICATIONS`; если отказать, трек всё равно играет, notification может не появиться. Windows desktop играет в процессе приложения, lock screen там не критерий.
 
-Письма verification/reset содержат 6-значный код. Смотреть в MailHog: http://localhost:8025.
+Письма подтверждения, сброса пароля и уведомление о входе уходят через SMTP. Локально это MailHog: http://localhost:8025 (`Smtp__Host=localhost`, `Smtp__Port=1025`, `Smtp__Security=None`, без `Smtp__User`). Отдельный сервер и личный ящик — те же ключи с `StartTls` или `SslOnConnect` и, если нужна авторизация, `Smtp__User` / `Smtp__Password`. Для личного ящика `Smtp__From` должен совпадать с `Smtp__User`. Пароль только в `.env`. Уведомление о входе приходит после успешного входа на уже подтверждённый email и не задерживает ответ API.
 
 ---
 

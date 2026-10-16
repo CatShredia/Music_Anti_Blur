@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import 'account/devices_screen.dart';
 import 'api/api_client.dart';
 import 'catalog/catalog_screens.dart';
 import 'catalog/history_screen.dart';
@@ -92,6 +93,7 @@ class MusicAntiBlurApp extends StatelessWidget {
         builder: (_, state) => TrackScreen(api: api, id: state.pathParameters['id']!),
       ),
       GoRoute(path: '/settings', builder: (_, _) => SettingsScreen(api: api)),
+      GoRoute(path: '/devices', builder: (_, _) => DevicesScreen(api: api)),
       if (player case final activePlayer?)
         GoRoute(path: '/player', builder: (_, _) => PlayerScreen(player: activePlayer)),
     ],
@@ -364,7 +366,7 @@ class _CheckEmailScreenState extends State<CheckEmailScreen> {
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
         children: [
           Text(
-            'Мы отправили 6-значный код на ${widget.email}. Локально письма смотрите в MailHog: http://localhost:8025',
+            'Мы отправили 6-значный код на ${widget.email}.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 16),
@@ -695,6 +697,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             label: 'История прослушивания',
             value: 'Треки',
             onTap: () => context.go('/history'),
+          ),
+          VizeSettingRow(
+            icon: Icons.devices_outlined,
+            label: 'Устройства',
+            value: 'Сессии',
+            onTap: () => context.push('/devices'),
           ),
           VizeSettingRow(
             icon: Icons.headphones_outlined,
