@@ -577,35 +577,50 @@ class _TrackScreenState extends State<TrackScreen> {
                         ],
                       ),
                     const SizedBox(height: 20),
-                    VizePrimaryButton(
-                      label: 'Play',
-                      busy: _busy,
-                      onPressed: PlayerScope.maybeOf(context) == null
-                          ? null
-                          : () async {
-                              final player = PlayerScope.maybeOf(context);
-                              if (player == null) {
-                                return;
-                              }
-                              setState(() => _busy = true);
-                              try {
-                                await player.playTrack(
-                                  track.id,
-                                  source: _overrideKey.currentState?.preference ?? 'auto',
-                                );
-                                if (context.mounted) {
-                                  openPlayer(context);
-                                }
-                              } catch (e) {
-                                if (context.mounted) {
-                                  showVizeError(context, e);
-                                }
-                              } finally {
-                                if (mounted) {
-                                  setState(() => _busy = false);
-                                }
-                              }
-                            },
+                    Row(
+                      children: [
+                        Expanded(
+                          child: VizePrimaryButton(
+                            label: 'Play',
+                            busy: _busy,
+                            onPressed: PlayerScope.maybeOf(context) == null
+                                ? null
+                                : () async {
+                                    final player = PlayerScope.maybeOf(context);
+                                    if (player == null) {
+                                      return;
+                                    }
+                                    setState(() => _busy = true);
+                                    try {
+                                      await player.playTrack(
+                                        track.id,
+                                        source: _overrideKey.currentState?.preference ?? 'auto',
+                                      );
+                                      if (context.mounted) {
+                                        openPlayer(context);
+                                      }
+                                    } catch (e) {
+                                      if (context.mounted) {
+                                        showVizeError(context, e);
+                                      }
+                                    } finally {
+                                      if (mounted) {
+                                        setState(() => _busy = false);
+                                      }
+                                    }
+                                  },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        OutlinedButton.icon(
+                          onPressed: _likeBusy ? null : _toggleLike,
+                          icon: Icon(
+                            track.liked ? Icons.favorite : Icons.favorite_border,
+                            color: track.liked ? VizeColors.danger : VizeColors.accent,
+                          ),
+                          label: Text(track.liked ? 'В «Мне нравится»' : 'Нравится'),
+                        ),
+                      ],
                     ),
                   ],
                 ),

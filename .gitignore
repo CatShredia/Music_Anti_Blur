@@ -37,3 +37,25 @@ Thumbs.db
 
 # Локальный запуск (pid, логи, publish)
 devops/.run/
+devops/.cache/
+
+# Локальные логи / временные файлы
+*.log
+src/mobile/flutter-run.log
+src/mobile/gradle-build.log
+
+# Android / Gradle (локальные)
+src/mobile/android/.gradle/
+src/mobile/android/local.properties
+src/mobile/android/app/debug/
+src/mobile/android/app/profile/
+src/mobile/android/app/release/
+*.apk
+*.aab
+*.keystore
+key.properties
+
+# Flutter extras
+src/mobile/.flutter-plugins-dependencies
+src/mobile/**/Generated.xcconfig
+src/mobile/**/flutter_export_environment.sh
