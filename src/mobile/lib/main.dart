@@ -100,6 +100,7 @@ class MusicAntiBlurApp extends StatelessWidget {
         builder: (_, state) => TrackScreen(api: api, id: state.pathParameters['id']!),
       ),
       GoRoute(path: '/settings', builder: (_, _) => SettingsScreen(api: api)),
+      GoRoute(path: '/devices', builder: (_, _) => DevicesScreen(api: api)),
       GoRoute(
         path: '/liked',
         builder: (_, _) => LikedPlaylistScreen(api: api),

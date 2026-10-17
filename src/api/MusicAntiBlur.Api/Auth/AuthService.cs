@@ -7,6 +7,7 @@ using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Http;
 using MusicAntiBlur.Api.Jobs;
 using MusicAntiBlur.Api.Library;
+using MusicAntiBlur.Api.Playback;
 using MusicAntiBlur.Api.RateLimiting;
 using StackExchange.Redis;
 
