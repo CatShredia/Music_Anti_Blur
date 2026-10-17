@@ -24,6 +24,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Playlist> Playlists => Set<Playlist>();
     public DbSet<PlaylistTrack> PlaylistTracks => Set<PlaylistTrack>();
     public DbSet<LikedTrack> LikedTracks => Set<LikedTrack>();
+    public DbSet<UserTrackStat> UserTrackStats => Set<UserTrackStat>();
+    public DbSet<UserPlayHistory> UserPlayHistories => Set<UserPlayHistory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -410,6 +412,33 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasOne(x => x.User).WithMany(x => x.LikedTracks).HasForeignKey(x => x.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Track).WithMany(x => x.LikedBy).HasForeignKey(x => x.TrackId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UserTrackStat>(e =>
+        {
+            e.ToTable("user_track_stats", t =>
+            {
+                t.HasCheckConstraint("ck_uts_play_count", "play_count >= 1");
+            });
+            e.HasKey(x => new { x.UserId, x.TrackId });
+            e.HasIndex(x => x.TrackId).HasDatabaseName("ix_user_track_stats_track");
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Track).WithMany().HasForeignKey(x => x.TrackId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UserPlayHistory>(e =>
+        {
+            e.ToTable("user_play_history");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.HasIndex(x => x.TrackId).HasDatabaseName("ix_user_play_history_track");
+            e.HasIndex(x => new { x.UserId, x.PlayedAt, x.Id }).HasDatabaseName("ix_user_play_history_user");
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Track).WithMany().HasForeignKey(x => x.TrackId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }

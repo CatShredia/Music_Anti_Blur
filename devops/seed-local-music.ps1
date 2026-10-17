@@ -179,6 +179,86 @@ function Get-OrCreateAlbum([string]$ArtistId, [string]$Title, $Year) {
     return $created.id
 }
 
+function Find-CoverFile([string]$Dir) {
+    $names = @("cover.jpg", "cover.jpeg", "cover.png", "folder.jpg", "folder.png")
+    foreach ($name in $names) {
+        $hit = @(Get-ChildItem -LiteralPath $Dir -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ieq $name } | Select-Object -First 1)
+        if ($hit.Count -gt 0) {
+            return $hit[0].FullName
+        }
+    }
+    return $null
+}
+
+function Get-EmbeddedCover([string]$AudioPath) {
+    if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ("mab-cover-" + [guid]::NewGuid().ToString("n") + ".jpg")
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & ffmpeg -hide_banner -loglevel error -y -i $AudioPath -an -frames:v 1 -f image2 $tmp 2>$null
+        if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $tmp) -and (Get-Item -LiteralPath $tmp).Length -gt 0) {
+            return $tmp
+        }
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    if (Test-Path -LiteralPath $tmp) {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+    return $null
+}
+
+function Invoke-CoverUpload([string]$AlbumId, [string]$FilePath) {
+    $url = "$ApiBase/api/v1/admin/albums/$AlbumId/cover"
+    if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) {
+        Write-Warn "Нет curl.exe — обложку не залить ($FilePath)."
+        return
+    }
+    $out = [IO.Path]::GetTempFileName()
+    try {
+        $form = "file=@`"$FilePath`""
+        $code = & curl.exe -sS -o $out -w "%{http_code}" -X PUT -H "Authorization: Bearer $($script:Token)" -F $form $url
+        if ("$code" -eq "401") {
+            Connect-Admin
+            $code = & curl.exe -sS -o $out -w "%{http_code}" -X PUT -H "Authorization: Bearer $($script:Token)" -F $form $url
+        }
+        if ("$code" -ne "200") {
+            Write-Warn "обложка $AlbumId -> HTTP $code"
+        } else {
+            Write-Info "обложка альбома $AlbumId"
+        }
+    } finally {
+        Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Ensure-AlbumCover([string]$AlbumId, [string]$Dir, [System.IO.FileInfo[]]$AudioFiles) {
+    $album = Invoke-Api -Method Get -Url "$ApiBase/api/v1/albums/$AlbumId"
+    if ($album.coverObjectKey) {
+        return
+    }
+    $file = Find-CoverFile $Dir
+    $temp = $null
+    if (-not $file -and $AudioFiles -and $AudioFiles.Count -gt 0) {
+        $temp = Get-EmbeddedCover $AudioFiles[0].FullName
+        $file = $temp
+    }
+    if (-not $file) {
+        return
+    }
+    try {
+        Invoke-CoverUpload $AlbumId $file
+    } finally {
+        if ($temp -and (Test-Path -LiteralPath $temp)) {
+            Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Get-OrCreateTrack([string]$AlbumId, [string]$ArtistId, [string]$Title, [int]$TrackNumber) {
     $title = Limit-Name $Title
     $album = Invoke-Api -Method Get -Url "$ApiBase/api/v1/albums/$AlbumId"
@@ -204,10 +284,12 @@ function Import-AlbumFiles {
         [string]$ArtistId,
         [string]$AlbumTitle,
         $Year,
+        [string]$Folder,
         [System.IO.FileInfo[]]$Files
     )
     if (-not $Files -or $Files.Count -eq 0) { return @() }
     $albumId = Get-OrCreateAlbum $ArtistId $AlbumTitle $Year
+    Ensure-AlbumCover $albumId $Folder @(Get-AudioFiles $Folder)
     $ids = @()
     $n = 0
     foreach ($file in $Files) {
@@ -250,15 +332,15 @@ foreach ($artistDir in $artistDirs) {
         foreach ($albumDir in $albumDirs) {
             $files = @(Select-FolderTracks $albumDir.FullName)
             $meta = Get-AlbumMeta $albumDir.Name $albumDir.Name
-            $pending += @(Import-AlbumFiles -ArtistId $artistId -AlbumTitle $meta.Title -Year $meta.Year -Files $files)
+            $pending += @(Import-AlbumFiles -ArtistId $artistId -AlbumTitle $meta.Title -Year $meta.Year -Folder $albumDir.FullName -Files $files)
         }
         if ($direct.Count -gt 0) {
-            $pending += @(Import-AlbumFiles -ArtistId $artistId -AlbumTitle $split.Album -Year $null -Files $direct)
+            $pending += @(Import-AlbumFiles -ArtistId $artistId -AlbumTitle $split.Album -Year $null -Folder $artistDir.FullName -Files $direct)
         }
     }
     else {
         if ($direct.Count -gt 0) {
-            $pending += @(Import-AlbumFiles -ArtistId $artistId -AlbumTitle $split.Album -Year $null -Files $direct)
+            $pending += @(Import-AlbumFiles -ArtistId $artistId -AlbumTitle $split.Album -Year $null -Folder $artistDir.FullName -Files $direct)
         }
     }
 }

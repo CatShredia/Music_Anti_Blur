@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Mvc;
 using MusicAntiBlur.Api.Http;
 
 namespace MusicAntiBlur.Api.Catalog;
@@ -39,6 +41,19 @@ public static class CatalogEndpoints
 
         admin.MapPut("/albums/{id:guid}", async (Guid id, UpsertAlbumRequest req, CatalogService svc, CancellationToken ct) =>
             Results.Ok(await svc.UpdateAlbumAsync(id, req, ct)));
+
+        admin.MapPut("/albums/{id:guid}/cover", async (Guid id, HttpRequest request, CatalogService svc, CancellationToken ct) =>
+        {
+            var limit = request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
+            if (limit is { IsReadOnly: false })
+            {
+                limit.MaxRequestBodySize = CoverImageValidation.MaxRequestBytes;
+            }
+
+            var form = await request.ReadFormAsync(ct);
+            return Results.Ok(await svc.UploadCoverAsync(id, form.Files.GetFile("file"), ct));
+        }).WithMetadata(new RequestSizeLimitAttribute(CoverImageValidation.MaxRequestBytes))
+            .DisableAntiforgery();
 
         admin.MapPost("/tracks", async (UpsertTrackRequest req, CatalogService svc, CancellationToken ct) =>
             Results.Json(await svc.CreateTrackAsync(req, ct), statusCode: StatusCodes.Status201Created));

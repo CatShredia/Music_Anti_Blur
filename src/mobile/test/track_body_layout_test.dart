@@ -18,7 +18,7 @@ void main() {
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                   children: [
-                    const CatalogCover(coverObjectKey: null),
+                    const CatalogCover(),
                     const Text('Artist'),
                     const SizedBox(height: 20),
                     Row(

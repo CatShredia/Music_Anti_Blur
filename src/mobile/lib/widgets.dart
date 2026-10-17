@@ -277,9 +277,17 @@ class VizeTabBar extends StatelessWidget {
           ),
           Expanded(
             child: _TabItem(
+              icon: Icons.history,
+              label: 'История',
+              selected: index == 2,
+              onTap: () => context.go('/history'),
+            ),
+          ),
+          Expanded(
+            child: _TabItem(
               icon: Icons.menu,
               label: 'Меню',
-              selected: index == 2,
+              selected: index == 3,
               onTap: () => context.go('/settings'),
             ),
           ),
@@ -305,14 +313,16 @@ class _TabItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = selected ? VizeColors.textOnAccent : VizeColors.accentMuted;
-    final child = Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+    final child = Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 22, color: color),
-        const SizedBox(width: 6),
+        Icon(icon, size: 20, color: color),
+        const SizedBox(height: 2),
         Text(
           label,
-          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: color),
         ),
       ],
     );
@@ -331,7 +341,7 @@ class _TabItem extends StatelessWidget {
           onTap: onTap,
           borderRadius: BorderRadius.circular(VizeRadii.pill),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             child: child,
           ),
         ),
