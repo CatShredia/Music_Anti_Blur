@@ -23,6 +23,9 @@ LANG_ARG="${START_LANG:-${LANG_UI:-}}"
 DEVICE1_ARG="${START_DEVICE1:-${DEVICE1:-}}"
 DEVICE2_ARG="${START_DEVICE2:-${DEVICE2:-}}"
 
+CALLER_DIR="$(pwd)"
+restore_caller_dir() { cd "$CALLER_DIR" 2>/dev/null || true; }
+trap restore_caller_dir EXIT
 cd "$ROOT"
 
 # --- i18n ---
@@ -98,6 +101,11 @@ t() {
         seed_ask) fmt="Import tracks from no_commit/music?" ;;
         seed_skip) fmt="Skipping no_commit/music import." ;;
         seed_fail) fmt="no_commit/music import failed." ;;
+        replay_ask) fmt="Run the last configuration" ;;
+        replay_summary) fmt="Last run: %s. Devices: %s, %s. Music import: %s." ;;
+        replay_summary_publish) fmt="Last run: publish (server, no Flutter)." ;;
+        replay_seed_yes) fmt="yes" ;;
+        replay_seed_no) fmt="no" ;;
         emu_already) fmt="Android emulator already running (%s)." ;;
         emu_none) fmt="No Android AVD. Create one in Android Studio, then flutter emulators." ;;
         emu_start) fmt="Launching emulator %s..." ;;
@@ -194,6 +202,11 @@ t() {
         seed_ask) fmt="Импортировать треки из no_commit/music?" ;;
         seed_skip) fmt="Импорт no_commit/music пропущен." ;;
         seed_fail) fmt="Импорт no_commit/music завершился с ошибкой." ;;
+        replay_ask) fmt="Запустить конфигурацию с прошлого раза" ;;
+        replay_summary) fmt="Прошлый запуск: %s. Устройства: %s, %s. Импорт музыки: %s." ;;
+        replay_summary_publish) fmt="Прошлый запуск: публикация (сервер без Flutter)." ;;
+        replay_seed_yes) fmt="да" ;;
+        replay_seed_no) fmt="нет" ;;
         emu_already) fmt="Android-эмулятор уже запущен (%s)." ;;
         emu_none) fmt="Нет Android-эмулятора (AVD). Создайте его в Android Studio, затем flutter emulators." ;;
         emu_start) fmt="Запускаем эмулятор %s..." ;;
@@ -243,7 +256,7 @@ confirm_yes() {
   local prompt="$1"
   local unknown_hint="${2:-$(t yes_unknown)}"
   local choice="" raw
-  read -r -p "$prompt [Y]: " choice || true
+  read -r -p "$prompt [Y/N]: " choice || true
   raw="$(printf '%s' "${choice:-}" | tr '[:upper:]' '[:lower:]')"
   case "$raw" in
     ""|y|yes|д|да) return 0 ;;
@@ -260,7 +273,52 @@ env_usable() {
   grep -q '[^[:space:]]' "$ROOT/.env" 2>/dev/null
 }
 
+LAST_START_FILE="$RUN_DIR/last-start.env"
+USE_REPLAY=0
+REPLAY_KIND=""
+REPLAY_D1=none
+REPLAY_D2=none
+REPLAY_SEED=1
+
+load_last_start() {
+  LAST_LANG=""
+  LAST_KIND=""
+  LAST_D1=""
+  LAST_D2=""
+  LAST_SEED=""
+  [[ -f "$LAST_START_FILE" ]] || return 1
+  local line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      lang) LAST_LANG="$value" ;;
+      kind) LAST_KIND="$value" ;;
+      device1) LAST_D1="$value" ;;
+      device2) LAST_D2="$value" ;;
+      seed) LAST_SEED="$value" ;;
+    esac
+  done < "$LAST_START_FILE"
+  [[ -n "$LAST_KIND" ]]
+}
+
+save_last_start() {
+  mkdir -p "$RUN_DIR"
+  cat > "$LAST_START_FILE" <<EOF
+lang=$UI_LANG
+kind=$1
+device1=${2:-none}
+device2=${3:-none}
+seed=$4
+EOF
+}
+
 choose_language() {
+  if [[ "$USE_REPLAY" == "1" ]]; then
+    return
+  fi
   if [[ -n "$LANG_ARG" ]]; then
     local v
     v="$(printf '%s' "$LANG_ARG" | tr '[:upper:]' '[:lower:]')"
@@ -359,6 +417,11 @@ resolve_kind() {
 }
 
 choose_kind() {
+  if [[ "$USE_REPLAY" == "1" ]]; then
+    case "$REPLAY_KIND" in
+      local|publish) echo "$REPLAY_KIND"; return ;;
+    esac
+  fi
   if [[ -n "$MODE_ARG" ]]; then
     local parsed
     parsed="$(resolve_kind "$MODE_ARG")"
@@ -932,6 +995,36 @@ is_usb_device_id() {
 
 # --- main ---
 
+if [[ -z "$MODE_ARG" && -z "$LANG_ARG" && -z "$DEVICE1_ARG" && -z "$DEVICE2_ARG" ]] && load_last_start; then
+  case "$LAST_LANG" in
+    en|ru) UI_LANG="$LAST_LANG" ;;
+  esac
+  accept_replay=1
+  if [[ -t 0 ]]; then
+    echo >&2
+    printf '\033[32m%s\033[0m\n' "$(t title)" >&2
+    if [[ "$LAST_KIND" == "publish" ]]; then
+      info "$(t replay_summary_publish)"
+    else
+      seed_word="$(t replay_seed_yes)"
+      [[ "$LAST_SEED" == "0" ]] && seed_word="$(t replay_seed_no)"
+      info "$(t replay_summary "$LAST_KIND" "${LAST_D1:-none}" "${LAST_D2:-none}" "$seed_word")"
+    fi
+    if confirm_yes "$(t replay_ask)"; then
+      accept_replay=1
+    else
+      accept_replay=0
+    fi
+  fi
+  if [[ "$accept_replay" == "1" ]]; then
+    USE_REPLAY=1
+    REPLAY_KIND="$LAST_KIND"
+    REPLAY_D1="${LAST_D1:-none}"
+    REPLAY_D2="${LAST_D2:-none}"
+    REPLAY_SEED="${LAST_SEED:-1}"
+  fi
+fi
+
 choose_language
 need_cmd docker
 need_cmd dotnet
@@ -961,7 +1054,10 @@ fi
 d1=none
 d2=none
 if [[ "$kind" == "local" ]]; then
-  if [[ -n "$MODE_ARG" && -z "$DEVICE1_ARG" && -z "$DEVICE2_ARG" && -n "$preset1" ]]; then
+  if [[ "$USE_REPLAY" == "1" ]]; then
+    d1="$REPLAY_D1"
+    d2="$REPLAY_D2"
+  elif [[ -n "$MODE_ARG" && -z "$DEVICE1_ARG" && -z "$DEVICE2_ARG" && -n "$preset1" ]]; then
     d1="$preset1"
     d2="$preset2"
   else
@@ -973,6 +1069,12 @@ if [[ "$kind" == "local" ]]; then
     d2="$(choose_device_slot 2 "$exclude")"
   fi
 fi
+
+pending_seed=1
+if [[ "$USE_REPLAY" == "1" ]]; then
+  pending_seed="$REPLAY_SEED"
+fi
+save_last_start "$kind" "$d1" "$d2" "$pending_seed"
 
 need_flutter=0
 for d in "$d1" "$d2"; do
@@ -1009,13 +1111,16 @@ wait_api
 
 if [[ "$kind" == "local" ]]; then
   do_seed=1
-  if [[ -t 0 ]]; then
+  if [[ "$USE_REPLAY" == "1" ]]; then
+    [[ "$REPLAY_SEED" == "0" ]] && do_seed=0
+  elif [[ -t 0 ]]; then
     if confirm_yes "$(t seed_ask)"; then
       do_seed=1
     else
       do_seed=0
     fi
   fi
+  save_last_start "$kind" "$d1" "$d2" "$do_seed"
   if [[ "$do_seed" -eq 1 ]]; then
     info "$(t seed)"
     if bash "$DEVOPS_ROOT/seed-local-music.sh"; then

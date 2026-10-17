@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Останавливает API, Flutter и Docker Compose (Postgres, Redis, MailHog, MinIO).
+# Останавливает API, Flutter, приложение в Android-эмуляторе и Docker Compose (Postgres, Redis, MailHog, MinIO).
 # --volumes | -v  — также удалить volumes Postgres и MinIO.
 set -euo pipefail
 
@@ -9,6 +9,9 @@ RUN_DIR="$DEVOPS_ROOT/.run"
 API_PID_FILE="$RUN_DIR/api.pid"
 REMOVE_VOLUMES=0
 
+CALLER_DIR="$(pwd)"
+restore_caller_dir() { cd "$CALLER_DIR" 2>/dev/null || true; }
+trap restore_caller_dir EXIT
 cd "$ROOT"
 
 info() { printf '\033[36m%s\033[0m\n' "$*"; }
@@ -97,6 +100,41 @@ stop_flutter() {
   stop_pattern "flutter run" "Flutter"
 }
 
+resolve_adb() {
+  if command -v adb >/dev/null 2>&1; then
+    command -v adb
+    return 0
+  fi
+  local sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+  if [[ -z "$sdk" && -n "${HOME:-}" ]]; then
+    sdk="$HOME/Android/Sdk"
+  fi
+  if [[ -n "$sdk" && -x "$sdk/platform-tools/adb" ]]; then
+    printf '%s\n' "$sdk/platform-tools/adb"
+    return 0
+  fi
+  return 1
+}
+
+stop_emulator_app() {
+  local adb
+  adb="$(resolve_adb || true)"
+  if [[ -z "$adb" ]]; then
+    warn "adb не найден, приложение в эмуляторе не останавливаем."
+    return 0
+  fi
+  local package="com.musicantiblur.music_anti_blur"
+  local line serial
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    serial="${line%%[[:space:]]*}"
+    [[ "$serial" =~ ^emulator-[0-9]+$ ]] || continue
+    [[ "$line" =~ [[:space:]]device($|[[:space:]]) ]] || continue
+    info "Останавливаем приложение в $serial..."
+    "$adb" -s "$serial" shell am force-stop "$package" \
+      || warn "Не удалось остановить приложение на $serial."
+  done < <("$adb" devices 2>/dev/null || true)
+}
+
 stop_infra() {
   if ! command -v docker >/dev/null 2>&1; then
     warn "docker не найден, Compose пропускаем."
@@ -125,6 +163,7 @@ echo
 printf '\033[32mMusic Anti Blur — остановка\033[0m\n'
 stop_api || warn "Остановка API прошла с ошибкой, продолжаем."
 stop_flutter || warn "Остановка Flutter прошла с ошибкой, продолжаем."
+stop_emulator_app || warn "Остановка приложения в эмуляторе прошла с ошибкой, продолжаем."
 stop_infra
 info "Инфраструктура выключена."
 if [[ "$REMOVE_VOLUMES" -eq 0 ]]; then

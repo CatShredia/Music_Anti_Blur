@@ -4,6 +4,26 @@
 
 Клиент MVP — **Flutter**. API — **ASP.NET Core**. Аудиобайты API не принимает и не стримит.
 
+## Запуск из корня
+
+Команды выполняются в корне репозитория. После `start` и `stop` терминал остаётся в той же папке.
+
+Windows:
+
+```text
+devops\start.cmd
+devops\stop.cmd
+```
+
+Linux и macOS:
+
+```bash
+bash devops/start.sh
+bash devops/stop.sh
+```
+
+Подробности wizard, MailHog и Flutter — [docs/05-local-setup.md](docs/05-local-setup.md).
+
 ## Документация
 
 Перед работой агентам: [docs/00-ai-agents.md](docs/00-ai-agents.md). Если документ и код расходятся — побеждает `docs/`.

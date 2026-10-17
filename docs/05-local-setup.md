@@ -42,6 +42,8 @@ API **не** стримит аудиобайты. Playback URL — S3 presigned 
 
 Интерактивный wizard (порядок):
 
+Если на этой машине `start` уже запускался, первый вопрос — «Запустить конфигурацию с прошлого раза» (Enter — да). `n` открывает обычный wizard. Запоминаются язык, тип, оба слота Flutter и ответ про импорт `no_commit/music` в `devops/.run/last-start.env` (в git не входит). Явные `-Mode` / аргумент режима этот вопрос пропускают.
+
 1. **Язык** — RU (Enter) / EN. Все следующие подсказки на выбранном языке.
 2. **`.env`** — если файла нет или он пуст:
    - [`.env.local.example`](../.env.local.example) — копируем и продолжаем (локальные дефолты, Postgres 5433);
@@ -81,7 +83,7 @@ bash devops/start.sh api     # local без Flutter
 
 ## 4. Остановка
 
-`stop` гасит API, Flutter и Compose. Тома Postgres и MinIO **сохраняются**.
+`stop` гасит API, Flutter, приложение в Android-эмуляторе (`com.musicantiblur.music_anti_blur`) и Compose. Окно эмулятора остаётся. Тома Postgres и MinIO **сохраняются**.
 
 Стереть данные БД и бакет MinIO: `devops\stop.cmd -Volumes` или `bash devops/stop.sh --volumes`. После этого нужно **войти заново**: JWT со старого user id в новой базе больше не действует.
 
