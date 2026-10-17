@@ -18,6 +18,7 @@ class PlaybackHubClient {
     required this.onSnapshot,
     this.onPresence,
     this.onRenditionReady,
+    this.onAccessRevoked,
     this.onReconnected,
     this.onReconnecting,
   });
@@ -28,6 +29,7 @@ class PlaybackHubClient {
   final void Function(PlaybackSnapshot snapshot) onSnapshot;
   final void Function(DevicePresence presence)? onPresence;
   final void Function(RenditionReady ready)? onRenditionReady;
+  final void Function(String deviceId)? onAccessRevoked;
   final Future<void> Function()? onReconnected;
   final Future<void> Function()? onReconnecting;
 
@@ -126,6 +128,7 @@ class PlaybackHubClient {
     connection.on('PlaybackSnapshot', _onSnapshotArgs);
     connection.on('DevicePresence', _onPresenceArgs);
     connection.on('RenditionReady', _onRenditionArgs);
+    connection.on('AccessRevoked', _onAccessRevokedArgs);
     connection.onreconnecting(({error}) {
       unawaited(_safe(onReconnecting));
     });
@@ -192,6 +195,18 @@ class PlaybackHubClient {
     if (ready != null) {
       onRenditionReady?.call(ready);
     }
+  }
+
+  void _onAccessRevokedArgs(List<Object?>? args) {
+    final deviceId = accessRevokedDeviceId(args);
+    if (deviceId == null) {
+      SyncLog.stage('hub-access-revoked-unparsed', {
+        'me': SyncLog.shortId(this.deviceId),
+        'argc': args?.length ?? 0,
+      });
+      return;
+    }
+    onAccessRevoked?.call(deviceId);
   }
 
   static Future<void> _safe(Future<void> Function()? fn) async {

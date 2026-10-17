@@ -19,6 +19,7 @@ public sealed class PlaybackHubProtocolTests
         Assert.Equal("PlaybackSnapshot", PlaybackHubEvents.PlaybackSnapshot);
         Assert.Equal("DevicePresence", PlaybackHubEvents.DevicePresence);
         Assert.Equal("RenditionReady", PlaybackHubEvents.RenditionReady);
+        Assert.Equal("AccessRevoked", PlaybackHubEvents.AccessRevoked);
     }
 
     [Fact]

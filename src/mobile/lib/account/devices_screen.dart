@@ -70,7 +70,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
         content: Text(
           device.current
               ? 'Сессия на этом телефоне или компьютере будет закрыта.'
-              : 'Устройство ${_label(device.deviceId)} больше не сможет обновлять вход.',
+              : 'Устройство ${_label(device.deviceId)} выйдет из аккаунта.',
           style: const TextStyle(color: VizeColors.accentMuted),
         ),
         actions: [
@@ -133,7 +133,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                     children: [
                       const Text(
-                        'Здесь сессии, которые ещё могут входить. Отключение гасит их refresh-токены.',
+                        'Здесь сессии, которые ещё могут входить. Отключение закрывает сеанс на этом устройстве.',
                         style: TextStyle(color: VizeColors.accentMuted),
                       ),
                       const SizedBox(height: 16),

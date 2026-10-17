@@ -6,6 +6,7 @@ using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Http;
 using MusicAntiBlur.Api.Jobs;
+using MusicAntiBlur.Api.Playback;
 using MusicAntiBlur.Api.RateLimiting;
 using StackExchange.Redis;
 
@@ -18,6 +19,7 @@ public sealed class AuthService(
     RedisRateLimiter limiter,
     IBackgroundJobClient jobs,
     IConnectionMultiplexer redis,
+    IPlaybackHubPublisher hub,
     ILogger<AuthService> logger)
 {
     private static readonly User DummyUser = new() { Id = Guid.Empty };
@@ -217,6 +219,15 @@ public sealed class AuthService(
         if (updated == 0)
         {
             throw new ApiException(404, "not_found", "Not found.");
+        }
+
+        try
+        {
+            await hub.AccessRevokedAsync(userId, deviceId, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "AccessRevoked broadcast failed for user {UserId} device {DeviceId}", userId, deviceId);
         }
     }
 

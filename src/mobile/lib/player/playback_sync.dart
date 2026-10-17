@@ -106,6 +106,19 @@ DevicePresence? presenceFromHubArgs(List<Object?>? args) {
   }
 }
 
+String? accessRevokedDeviceId(List<Object?>? args) {
+  try {
+    final id = _firstJsonMap(args)?['deviceId']?.toString();
+    if (id == null || id.isEmpty) {
+      return null;
+    }
+    return id;
+  } catch (e) {
+    SyncLog.stage('parse-fail', {'kind': 'AccessRevoked', 'error': '$e'});
+    return null;
+  }
+}
+
 RenditionReady? renditionReadyFromHubArgs(List<Object?>? args) {
   try {
     final map = _firstJsonMap(args);

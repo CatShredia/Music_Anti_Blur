@@ -45,6 +45,8 @@ public sealed record DevicePresenceDto(IReadOnlyList<DevicePresenceItemDto> Devi
 
 public sealed record RenditionReadyDto(Guid TrackId, Guid GenerationId, string Scope);
 
+public sealed record AccessRevokedDto(Guid DeviceId);
+
 public sealed record PutPlaybackStateRequest(
     long? ExpectedRevision,
     Guid? WriterSessionId,

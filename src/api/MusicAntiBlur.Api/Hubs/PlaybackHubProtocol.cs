@@ -10,4 +10,5 @@ public static class PlaybackHubEvents
     public const string PlaybackSnapshot = "PlaybackSnapshot";
     public const string DevicePresence = "DevicePresence";
     public const string RenditionReady = "RenditionReady";
+    public const string AccessRevoked = "AccessRevoked";
 }

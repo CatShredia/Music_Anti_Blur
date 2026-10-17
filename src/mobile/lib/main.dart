@@ -29,7 +29,14 @@ Future<void> main() async {
 }
 
 class MusicAntiBlurApp extends StatelessWidget {
-  MusicAntiBlurApp({super.key, required this.api, this.player});
+  MusicAntiBlurApp({super.key, required this.api, this.player}) {
+    player?.onLocalSessionRevoked = () {
+      _messengerKey.currentState?.showSnackBar(
+        const SnackBar(content: Text('Доступ этого устройства отозван')),
+      );
+      _router.go('/login');
+    };
+  }
 
   final ApiClient api;
   final PlayerController? player;
