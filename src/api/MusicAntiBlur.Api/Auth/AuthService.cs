@@ -6,7 +6,7 @@ using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Http;
 using MusicAntiBlur.Api.Jobs;
-using MusicAntiBlur.Api.Playback;
+using MusicAntiBlur.Api.Library;
 using MusicAntiBlur.Api.RateLimiting;
 using StackExchange.Redis;
 
@@ -65,6 +65,7 @@ public sealed class AuthService(
         };
         user.PasswordHash = hasher.HashPassword(user, req.Password!);
         db.Users.Add(user);
+        db.Playlists.Add(LibraryService.CreateLikedPlaylist(user.Id, now));
         await db.SaveChangesAsync(ct);
         await CreateVerificationAsync(user.Id, email!, "register", TimeSpan.FromHours(24), ct);
         var session = await IssueSessionAsync(user, deviceId, now, ct);

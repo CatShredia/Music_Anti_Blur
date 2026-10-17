@@ -21,6 +21,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<UserTrackOverride> UserTrackOverrides => Set<UserTrackOverride>();
     public DbSet<UserPrivateUpload> UserPrivateUploads => Set<UserPrivateUpload>();
     public DbSet<UserPrivateRendition> UserPrivateRenditions => Set<UserPrivateRendition>();
+    public DbSet<Playlist> Playlists => Set<Playlist>();
+    public DbSet<PlaylistTrack> PlaylistTracks => Set<PlaylistTrack>();
+    public DbSet<LikedTrack> LikedTracks => Set<LikedTrack>();
     public DbSet<UserTrackStat> UserTrackStats => Set<UserTrackStat>();
     public DbSet<UserPlayHistory> UserPlayHistories => Set<UserPlayHistory>();
 
@@ -361,6 +364,54 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasOne(x => x.Upload).WithMany(x => x.Renditions)
                 .HasForeignKey(x => new { x.UserId, x.TrackId, x.GenerationId })
                 .HasPrincipalKey(x => new { x.UserId, x.TrackId, x.GenerationId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Playlist>(e =>
+        {
+            e.ToTable("playlists", t =>
+            {
+                t.HasCheckConstraint("ck_playlists_kind", "kind IN ('liked', 'user')");
+                t.HasCheckConstraint("ck_playlists_title", "char_length(btrim(title)) BETWEEN 1 AND 200");
+                t.HasCheckConstraint("ck_playlists_liked_title",
+                    "kind <> 'liked' OR title = 'Мне нравится'");
+            });
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(x => x.Title).IsRequired();
+            e.Property(x => x.Kind).IsRequired();
+            e.HasIndex(x => x.UserId).HasDatabaseName("ix_playlists_user");
+            e.HasIndex(x => x.UserId).IsUnique().HasDatabaseName("ux_playlists_user_liked")
+                .HasFilter("kind = 'liked'");
+            e.HasOne(x => x.User).WithMany(x => x.Playlists).HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PlaylistTrack>(e =>
+        {
+            e.ToTable("playlist_tracks", t =>
+            {
+                t.HasCheckConstraint("ck_playlist_tracks_position", "position >= 0");
+            });
+            e.HasKey(x => new { x.PlaylistId, x.TrackId });
+            e.HasIndex(x => new { x.PlaylistId, x.Position }).IsUnique()
+                .HasDatabaseName("ux_playlist_tracks_position");
+            e.HasIndex(x => x.TrackId).HasDatabaseName("ix_playlist_tracks_track");
+            e.HasOne(x => x.Playlist).WithMany(x => x.Tracks).HasForeignKey(x => x.PlaylistId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Track).WithMany(x => x.PlaylistEntries).HasForeignKey(x => x.TrackId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<LikedTrack>(e =>
+        {
+            e.ToTable("liked_tracks");
+            e.HasKey(x => new { x.UserId, x.TrackId });
+            e.HasIndex(x => new { x.UserId, x.LikedAt }).HasDatabaseName("ix_liked_tracks_user_liked_at");
+            e.HasIndex(x => x.TrackId).HasDatabaseName("ix_liked_tracks_track");
+            e.HasOne(x => x.User).WithMany(x => x.LikedTracks).HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Track).WithMany(x => x.LikedBy).HasForeignKey(x => x.TrackId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

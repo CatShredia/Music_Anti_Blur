@@ -101,8 +101,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       Text('Каталог', style: Theme.of(context).textTheme.headlineMedium),
                       const SizedBox(height: 6),
                       const Text(
-                        'Исполнители и альбомы. Воспроизведение появится позже.',
+                        'Исполнители и альбомы.',
                         style: TextStyle(color: VizeColors.accentMuted, fontSize: 14),
+                      ),
+                      const SizedBox(height: 16),
+                      CatalogTile(
+                        icon: Icons.favorite,
+                        title: 'Мне нравится',
+                        subtitle: 'Лайкнутые треки',
+                        onTap: () => context.push('/liked'),
                       ),
                       const SizedBox(height: 20),
                       Text('Исполнители', style: Theme.of(context).textTheme.titleMedium),
@@ -436,6 +443,7 @@ class _TrackScreenState extends State<TrackScreen> {
   TrackDetail? _track;
   String? _error;
   bool _busy = false;
+  bool _likeBusy = false;
   PlayerController? _player;
   int _seenRendition = 0;
 
@@ -482,11 +490,52 @@ class _TrackScreenState extends State<TrackScreen> {
     }
   }
 
+  Future<void> _toggleLike() async {
+    final track = _track;
+    if (track == null || _likeBusy) {
+      return;
+    }
+    setState(() => _likeBusy = true);
+    try {
+      if (track.liked) {
+        await widget.api.unlikeTrack(track.id);
+        if (mounted) {
+          setState(() => _track = track.copyWith(liked: false));
+        }
+      } else {
+        await widget.api.likeTrack(track.id);
+        if (mounted) {
+          setState(() => _track = track.copyWith(liked: true));
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        showVizeError(context, e);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _likeBusy = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final track = _track;
     return VizeScaffold(
-      header: VizeHeader(title: track?.title ?? 'Трек'),
+      header: VizeHeader(
+        title: track?.title ?? 'Трек',
+        trailing: track == null
+            ? null
+            : IconButton(
+                tooltip: track.liked ? 'Убрать из «Мне нравится»' : 'Нравится',
+                onPressed: _likeBusy ? null : _toggleLike,
+                icon: Icon(
+                  track.liked ? Icons.favorite : Icons.favorite_border,
+                  color: track.liked ? VizeColors.danger : VizeColors.accentMuted,
+                ),
+              ),
+      ),
       body: _error != null
           ? Padding(
               padding: const EdgeInsets.all(20),
@@ -532,37 +581,192 @@ class _TrackScreenState extends State<TrackScreen> {
                         ],
                       ),
                     const SizedBox(height: 20),
-                    VizePrimaryButton(
-                      label: 'Play',
-                      busy: _busy,
-                      onPressed: PlayerScope.maybeOf(context) == null
-                          ? null
-                          : () async {
-                              final player = PlayerScope.maybeOf(context);
-                              if (player == null) {
-                                return;
-                              }
-                              setState(() => _busy = true);
-                              try {
-                                await player.playTrack(
-                                  track.id,
-                                  source: _overrideKey.currentState?.preference ?? 'auto',
-                                );
-                                if (context.mounted) {
-                                  openPlayer(context);
-                                }
-                              } catch (e) {
-                                if (context.mounted) {
-                                  showVizeError(context, e);
-                                }
-                              } finally {
-                                if (mounted) {
-                                  setState(() => _busy = false);
-                                }
-                              }
-                            },
+                    Row(
+                      children: [
+                        Expanded(
+                          child: VizePrimaryButton(
+                            label: 'Play',
+                            busy: _busy,
+                            onPressed: PlayerScope.maybeOf(context) == null
+                                ? null
+                                : () async {
+                                    final player = PlayerScope.maybeOf(context);
+                                    if (player == null) {
+                                      return;
+                                    }
+                                    setState(() => _busy = true);
+                                    try {
+                                      await player.playTrack(
+                                        track.id,
+                                        source: _overrideKey.currentState?.preference ?? 'auto',
+                                      );
+                                      if (context.mounted) {
+                                        openPlayer(context);
+                                      }
+                                    } catch (e) {
+                                      if (context.mounted) {
+                                        showVizeError(context, e);
+                                      }
+                                    } finally {
+                                      if (mounted) {
+                                        setState(() => _busy = false);
+                                      }
+                                    }
+                                  },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Flexible(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(minimumSize: const Size(0, 48)),
+                            onPressed: _likeBusy ? null : _toggleLike,
+                            icon: Icon(
+                              track.liked ? Icons.favorite : Icons.favorite_border,
+                              color: track.liked ? VizeColors.danger : VizeColors.accent,
+                            ),
+                            label: Text(
+                              track.liked ? 'В «Мне нравится»' : 'Нравится',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
+                ),
+    );
+  }
+}
+
+class LikedPlaylistScreen extends StatefulWidget {
+  const LikedPlaylistScreen({super.key, required this.api});
+  final ApiClient api;
+
+  @override
+  State<LikedPlaylistScreen> createState() => _LikedPlaylistScreenState();
+}
+
+class _LikedPlaylistScreenState extends State<LikedPlaylistScreen> {
+  PlaylistDetail? _playlist;
+  String? _error;
+  bool _loading = true;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final playlist = await widget.api.likedPlaylist();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _playlist = playlist;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = e is ApiException ? e.localizedMessage : e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _playAll({String? startTrackId}) async {
+    final playlist = _playlist;
+    final player = PlayerScope.maybeOf(context);
+    if (playlist == null || playlist.tracks.isEmpty || player == null) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await player.playTrackIds(
+        playlist.tracks.map((t) => t.id),
+        startTrackId: startTrackId,
+      );
+      if (!mounted) {
+        return;
+      }
+      openPlayer(context);
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      showVizeError(context, e);
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final playlist = _playlist;
+    return VizeScaffold(
+      header: VizeHeader(title: playlist?.title ?? 'Мне нравится', showBack: true),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(_error!, style: const TextStyle(color: VizeColors.danger)),
+                      const SizedBox(height: 16),
+                      VizePrimaryButton(label: 'Повторить', onPressed: _load),
+                    ],
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                    children: [
+                      Text(
+                        '${playlist?.trackCount ?? 0} треков',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 16),
+                      VizePrimaryButton(
+                        label: 'Играть',
+                        busy: _busy,
+                        onPressed: playlist == null || playlist.tracks.isEmpty
+                            ? null
+                            : () => _playAll(),
+                      ),
+                      const SizedBox(height: 20),
+                      if (playlist == null || playlist.tracks.isEmpty)
+                        const Text(
+                          'Пока пусто. Нажмите сердечко на треке.',
+                          style: TextStyle(color: VizeColors.accentMuted),
+                        )
+                      else
+                        ...playlist.tracks.map(
+                          (track) => Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: CatalogTile(
+                              icon: Icons.favorite,
+                              title: track.title,
+                              subtitle: '${track.artistName} · ${formatDuration(track.durationMs)}',
+                              onTap: () => context.push('/track/${track.id}'),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
     );
   }

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
+using MusicAntiBlur.Api.Library;
 
 namespace MusicAntiBlur.Api.Auth;
 
@@ -54,6 +55,7 @@ public static class AdminSeeder
 
         user.PasswordHash = hasher.HashPassword(user, password);
         db.Users.Add(user);
+        db.Playlists.Add(LibraryService.CreateLikedPlaylist(user.Id, now));
         await db.SaveChangesAsync();
     }
 }

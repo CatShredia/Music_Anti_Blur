@@ -391,6 +391,34 @@ class ApiClient {
     return TrackDetail.fromJson(res.data as Map<String, dynamic>);
   }
 
+  Future<bool> likeTrack(String trackId) async {
+    final res = await _send(() => _dio.put('/api/v1/tracks/$trackId/like'));
+    return (res.data as Map<String, dynamic>)['liked'] as bool? ?? true;
+  }
+
+  Future<void> unlikeTrack(String trackId) async {
+    await _send(() => _dio.delete('/api/v1/tracks/$trackId/like'));
+  }
+
+  Future<List<PlaylistListItem>> listPlaylists() async {
+    final res = await _send(() => _dio.get('/api/v1/me/playlists'));
+    final items = res.data as List<dynamic>? ?? const [];
+    return [
+      for (final item in items)
+        if (item is Map<String, dynamic>) PlaylistListItem.fromJson(item),
+    ];
+  }
+
+  Future<PlaylistDetail> likedPlaylist({String? cursor, int limit = 50}) async {
+    final res = await _send(
+      () => _dio.get('/api/v1/me/playlists/liked', queryParameters: {
+        'cursor': ?cursor,
+        'limit': limit,
+      }),
+    );
+    return PlaylistDetail.fromJson(res.data as Map<String, dynamic>);
+  }
+
   Future<PlaybackUrl> playbackUrl({
     required String trackId,
     String sourcePreference = 'auto',
