@@ -179,7 +179,7 @@ public sealed class CatalogService(
             album.Tracks);
     }
 
-    public async Task<TrackDetailDto> GetTrackAsync(Guid id, CancellationToken ct)
+    public async Task<TrackDetailDto> GetTrackAsync(Guid id, Guid userId, CancellationToken ct)
     {
         var track = await db.Tracks.AsNoTracking()
             .Where(t => t.Id == id)
@@ -209,7 +209,10 @@ public sealed class CatalogService(
             .Select(r => new QualityDto(r.ProfileCode, r.BitrateKbps!.Value))
             .ToListAsync(ct);
 
+        var liked = await db.LikedTracks.AsNoTracking()
+            .AnyAsync(l => l.UserId == userId && l.TrackId == id, ct);
         var cover = SignCover(track.CoverObjectKey);
+
         return new TrackDetailDto(
             track.Id,
             track.Title,
@@ -219,6 +222,7 @@ public sealed class CatalogService(
             new ArtistRefDto(track.ArtistId, track.ArtistName),
             new AlbumRefDto(track.AlbumId, track.AlbumTitle),
             qualities,
+            liked,
             track.CoverObjectKey,
             cover.Url,
             cover.ExpiresAt);
@@ -400,7 +404,7 @@ public sealed class CatalogService(
         };
         db.Tracks.Add(track);
         await db.SaveChangesAsync(ct);
-        return await GetTrackAsync(track.Id, ct);
+        return await GetTrackAsync(track.Id, userId: Guid.Empty, ct);
     }
 
     public async Task<TrackDetailDto> UpdateTrackAsync(Guid id, UpsertTrackRequest req, CancellationToken ct)
@@ -429,7 +433,7 @@ public sealed class CatalogService(
         track.Isrc = isrc;
         track.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
-        return await GetTrackAsync(id, ct);
+        return await GetTrackAsync(id, userId: Guid.Empty, ct);
     }
 
     public async Task<AlbumDetailDto> UploadCoverAsync(Guid id, IFormFile? file, CancellationToken ct)

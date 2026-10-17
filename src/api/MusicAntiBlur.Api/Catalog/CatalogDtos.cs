@@ -55,6 +55,7 @@ public sealed record TrackDetailDto(
     ArtistRefDto Artist,
     AlbumRefDto Album,
     IReadOnlyList<QualityDto> AvailableQualities,
+    bool Liked,
     string? CoverObjectKey,
     string? CoverUrl,
     DateTimeOffset? CoverUrlExpiresAt);

@@ -187,6 +187,7 @@ class TrackDetail {
     this.isrc,
     this.coverUrl,
     this.coverObjectKey,
+    this.liked = false,
   });
 
   final String id;
@@ -199,6 +200,21 @@ class TrackDetail {
   final List<TrackQuality> availableQualities;
   final String? coverUrl;
   final String? coverObjectKey;
+  final bool liked;
+
+  TrackDetail copyWith({bool? liked}) => TrackDetail(
+        id: id,
+        title: title,
+        trackNumber: trackNumber,
+        artist: artist,
+        album: album,
+        availableQualities: availableQualities,
+        durationMs: durationMs,
+        isrc: isrc,
+        coverUrl: coverUrl,
+        coverObjectKey: coverObjectKey,
+        liked: liked ?? this.liked,
+      );
 
   factory TrackDetail.fromJson(Map<String, dynamic> json) => TrackDetail(
         id: json['id'] as String,
@@ -214,6 +230,103 @@ class TrackDetail {
             .whereType<Map<String, dynamic>>()
             .map(TrackQuality.fromJson)
             .toList(),
+        liked: json['liked'] as bool? ?? false,
+      );
+}
+
+class PlaylistListItem {
+  PlaylistListItem({
+    required this.id,
+    required this.title,
+    required this.kind,
+    required this.trackCount,
+    required this.updatedAt,
+  });
+
+  final String id;
+  final String title;
+  final String kind;
+  final int trackCount;
+  final DateTime updatedAt;
+
+  factory PlaylistListItem.fromJson(Map<String, dynamic> json) => PlaylistListItem(
+        id: json['id'] as String,
+        title: json['title'] as String,
+        kind: json['kind'] as String,
+        trackCount: json['trackCount'] as int,
+        updatedAt: DateTime.parse(json['updatedAt'] as String),
+      );
+}
+
+class LikedPlaylistTrack {
+  LikedPlaylistTrack({
+    required this.id,
+    required this.title,
+    required this.trackNumber,
+    required this.artistId,
+    required this.artistName,
+    required this.albumId,
+    required this.albumTitle,
+    required this.likedAt,
+    this.durationMs,
+  });
+
+  final String id;
+  final String title;
+  final int trackNumber;
+  final int? durationMs;
+  final String artistId;
+  final String artistName;
+  final String albumId;
+  final String albumTitle;
+  final DateTime likedAt;
+
+  factory LikedPlaylistTrack.fromJson(Map<String, dynamic> json) => LikedPlaylistTrack(
+        id: json['id'] as String,
+        title: json['title'] as String,
+        trackNumber: json['trackNumber'] as int,
+        durationMs: json['durationMs'] as int?,
+        artistId: json['artistId'] as String,
+        artistName: json['artistName'] as String,
+        albumId: json['albumId'] as String,
+        albumTitle: json['albumTitle'] as String,
+        likedAt: DateTime.parse(json['likedAt'] as String),
+      );
+}
+
+class PlaylistDetail {
+  PlaylistDetail({
+    required this.id,
+    required this.title,
+    required this.kind,
+    required this.trackCount,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.tracks,
+    this.nextCursor,
+  });
+
+  final String id;
+  final String title;
+  final String kind;
+  final int trackCount;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final List<LikedPlaylistTrack> tracks;
+  final String? nextCursor;
+
+  factory PlaylistDetail.fromJson(Map<String, dynamic> json) => PlaylistDetail(
+        id: json['id'] as String,
+        title: json['title'] as String,
+        kind: json['kind'] as String,
+        trackCount: json['trackCount'] as int,
+        createdAt: DateTime.parse(json['createdAt'] as String),
+        updatedAt: DateTime.parse(json['updatedAt'] as String),
+        tracks: (json['tracks'] as List<dynamic>? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(LikedPlaylistTrack.fromJson)
+            .toList(),
+        nextCursor: json['nextCursor'] as String?,
       );
 }
 

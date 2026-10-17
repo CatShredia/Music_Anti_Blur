@@ -92,10 +92,19 @@ Idempotency records хранятся в PostgreSQL (`idempotency_records`). Тр
 
 - `GET /artists`, `GET /artists/{id}`
 - `GET /albums?artistId=`, `GET /albums/{id}`
-- `GET /tracks/{id}`
+- `GET /tracks/{id}` → включает `liked: bool` для текущего пользователя
 - `GET /search?q=&cursor=&limit=20`
 
 Альбом (list/detail) и альбомы в `GET /artists/{id}` отдают `coverObjectKey` (ключ в бакете) и, если ключ есть, `coverUrl` + `coverUrlExpiresAt` (presign/CDN, TTL 1 час, host как у playback). `GET /tracks/{id}` повторяет `coverObjectKey` / `coverUrl` / `coverUrlExpiresAt` с альбома. Поиск обложку не включает.
+
+Лайки и плейлист «Мне нравится»:
+
+- `PUT /tracks/{trackId}/like` → `{ liked: true }`; добавляет трек в `liked_tracks` и в системный плейлист kind=`liked`
+- `DELETE /tracks/{trackId}/like` → `204`
+- `GET /tracks/{trackId}/like` → `{ liked: bool }`
+- `GET /me/playlists` → список плейлистов пользователя (liked всегда первый)
+- `GET /me/playlists/liked?cursor=&limit=` → детали «Мне нравится» + треки (новые сверху)
+- `GET /me/playlists/{playlistId}` → то же для своего плейлиста (сейчас только liked)
 
 `limit` 1..50; cursor opaque. Search `q` 2..100 символов, wildcard экранируются. Результаты track/album/artist сортируются по rank DESC, display name, id:
 
