@@ -127,6 +127,7 @@ src/api/MusicAntiBlur.Api/
 src/mobile/lib/
 ├── main.dart              экраны auth / settings, go_router
 ├── catalog/               дом, поиск, история, карточки artist/album/track
+├── ai/                    GigaChat-чат на главной: клиент API, конфиг, окно рекомендаций
 ├── player/                AudioHandler, очередь, мини-плеер, SignalR snapshot, persist
 ├── overrides/             local binding (в т.ч. web no-op), SAF, private multipart, панель на карточке
 ├── theme.dart             тёмная тема Vize (токены макета; не расширять «для красоты», см. план §3)
@@ -138,6 +139,7 @@ src/mobile/lib/
 | Задача | Файл |
 |---|---|
 | Экраны и роуты | [main.dart](../src/mobile/lib/main.dart), [catalog/catalog_screens.dart](../src/mobile/lib/catalog/catalog_screens.dart), [player/](../src/mobile/lib/player/) |
+| GigaChat-чат | [ai/](../src/mobile/lib/ai/) — клиент, системный промпт, окно чата; ключ API только через `--dart-define` |
 | Подмена / private upload | [overrides/](../src/mobile/lib/overrides/) |
 | Тема / токены | [theme.dart](../src/mobile/lib/theme.dart) |
 | Общие виджеты | [widgets.dart](../src/mobile/lib/widgets.dart) |
@@ -178,6 +180,8 @@ src/mobile/lib/
 - смена / привязка login и email в профиле после регистрации
 - хранение аудиобайтов в PostgreSQL
 - стриминг аудио телом HTTP-ответа API
+
+Исключение по явному запросу заказчика: **GigaChat-чат** на главной странице ([src/mobile/lib/ai/](../src/mobile/lib/ai/)). Пользователь перечисляет исполнителей, внешний ассистент предлагает похожих. Это не reco-сервис: `listen_events`, `pgvector`, своя ML-модель и автоматические рекомендации по истории прослушиваний остаются вне MVP. Ключ GigaChat — только через `--dart-define` / `--dart-define-from-file` (локальный `gigachat.local.json` в `.gitignore`), в git не коммитить.
 
 Схему БД не «улучшать» в обход [02-database-overview.md](02-database-overview.md): не переименовывать таблицы, не менять каскады, не добавлять ENUM PostgreSQL вместо `text`+CHECK, не класть Hangfire-entity в DbContext.
 
@@ -334,6 +338,7 @@ src/mobile/lib/
 | `flutter_secure_storage` | https://pub.dev/packages/flutter_secure_storage |
 | `file_picker` | https://pub.dev/packages/file_picker |
 | `go_router` | https://pub.dev/packages/go_router |
+| GigaChat API (чат-рекомендации) | https://developers.sber.ru/docs/ru/gigachat/api/reference/rest/gigachat-api |
 | Android SAF | https://developer.android.com/training/data-storage/shared/documents-files |
 | iOS security-scoped bookmarks | https://developer.apple.com/documentation/foundation/url/1779698-startaccessingsecurityscopedreso |
 
