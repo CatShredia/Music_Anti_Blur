@@ -728,12 +728,16 @@ write_flutter_runner() {
   local script_path="$1"
   local pid_file="$2"
   local device_id="$3"
+  local giga_arg=""
+  if [[ -f "$MOBILE_DIR/gigachat.local.json" ]]; then
+    giga_arg=" --dart-define-from-file=gigachat.local.json"
+  fi
   cat >"$script_path" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 echo \$\$ >$(printf '%q' "$pid_file")
 cd $(printf '%q' "$MOBILE_DIR")
-flutter run -d $(printf '%q' "$device_id")
+flutter run -d $(printf '%q' "$device_id")$giga_arg
 EOF
   chmod +x "$script_path"
 }
