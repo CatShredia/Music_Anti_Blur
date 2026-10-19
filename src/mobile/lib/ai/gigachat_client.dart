@@ -216,7 +216,7 @@ class GigaChatClient {
     final friendly = _statusMessage(status);
     if (friendly == null) {
       return GigaChatException(
-        raw == null ? 'GigaChat вернул ошибку ${status ?? ''}'.trim() : raw,
+        raw ?? 'GigaChat вернул ошибку ${status ?? ''}'.trim(),
         status: status,
       );
     }
