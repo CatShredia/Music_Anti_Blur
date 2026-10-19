@@ -34,6 +34,7 @@ class PlayerController extends ChangeNotifier {
   final ApiClient api;
   final MusicAudioHandler handler;
   final LocalBindingStore bindings;
+  void Function()? onLocalSessionRevoked;
 
   PlayerQueue queue = PlayerQueue.empty;
   TrackDetail? track;
@@ -393,6 +394,22 @@ class PlayerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  var _droppingSession = false;
+
+  Future<void> dropRevokedSession() async {
+    if (_droppingSession) {
+      return;
+    }
+    _droppingSession = true;
+    try {
+      await resetLocal();
+      await api.clearSession();
+      onLocalSessionRevoked?.call();
+    } finally {
+      _droppingSession = false;
+    }
+  }
+
   Future<void> resetLocal() async {
     await _hub?.stop();
     _hub = null;
@@ -735,6 +752,9 @@ class PlayerController extends ChangeNotifier {
       },
       onPresence: _onPresence,
       onRenditionReady: _onRenditionReady,
+      onAccessRevoked: (revokedDeviceId) {
+        unawaited(_onAccessRevoked(revokedDeviceId));
+      },
       onReconnecting: () async {
         SyncLog.stage('hub-reconnecting', {'me': SyncLog.shortId(deviceId)});
         await api.refresh();
@@ -761,6 +781,15 @@ class PlayerController extends ChangeNotifier {
     }
     await api.refresh();
     return await api.accessToken() ?? '';
+  }
+
+  Future<void> _onAccessRevoked(String revokedDeviceId) async {
+    final mine = myDeviceId ?? await api.deviceId();
+    if (revokedDeviceId.toLowerCase() != mine.toLowerCase()) {
+      return;
+    }
+    SyncLog.stage('hub-access-revoked', {'me': SyncLog.shortId(mine)});
+    await dropRevokedSession();
   }
 
   Future<void> _onHubSnapshot(PlaybackSnapshot snapshot) => _applyAuthoritativeSnapshot(snapshot);

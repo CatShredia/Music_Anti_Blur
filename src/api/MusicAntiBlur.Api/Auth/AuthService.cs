@@ -7,6 +7,7 @@ using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Http;
 using MusicAntiBlur.Api.Jobs;
 using MusicAntiBlur.Api.Library;
+using MusicAntiBlur.Api.Playback;
 using MusicAntiBlur.Api.RateLimiting;
 using StackExchange.Redis;
 
@@ -19,6 +20,7 @@ public sealed class AuthService(
     RedisRateLimiter limiter,
     IBackgroundJobClient jobs,
     IConnectionMultiplexer redis,
+    IPlaybackHubPublisher hub,
     ILogger<AuthService> logger)
 {
     private static readonly User DummyUser = new() { Id = Guid.Empty };
@@ -113,7 +115,10 @@ public sealed class AuthService(
             throw new ApiException(403, "email_not_verified", "Email is not verified.");
         }
 
-        return await IssueSessionAsync(user, deviceId, DateTimeOffset.UtcNow, ct);
+        var now = DateTimeOffset.UtcNow;
+        var session = await IssueSessionAsync(user, deviceId, now, ct);
+        EnqueueLoginNotice(user, now);
+        return session;
     }
 
     public async Task<SessionResponse> RefreshAsync(string? refreshToken, Guid deviceId, string ip, CancellationToken ct)
@@ -189,6 +194,43 @@ public sealed class AuthService(
             .ExecuteUpdateAsync(s => s
                 .SetProperty(t => t.RevokedAt, now)
                 .SetProperty(t => t.RevokeReason, "logout_all"), ct);
+    }
+
+    public async Task<IReadOnlyList<DeviceSessionDto>> ListDevicesAsync(Guid userId, Guid currentDeviceId, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var rows = await db.RefreshTokens.AsNoTracking()
+            .Where(t => t.UserId == userId && t.RevokedAt == null && t.ExpiresAt > now)
+            .GroupBy(t => t.DeviceId)
+            .Select(g => new { DeviceId = g.Key, LastSeenAt = g.Max(t => t.CreatedAt) })
+            .OrderByDescending(x => x.LastSeenAt)
+            .ToListAsync(ct);
+        return rows
+            .Select(x => new DeviceSessionDto(x.DeviceId, x.LastSeenAt, x.DeviceId == currentDeviceId))
+            .ToList();
+    }
+
+    public async Task RevokeDeviceAsync(Guid userId, Guid deviceId, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var updated = await db.RefreshTokens
+            .Where(t => t.UserId == userId && t.DeviceId == deviceId && t.RevokedAt == null && t.ExpiresAt > now)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.RevokedAt, now)
+                .SetProperty(t => t.RevokeReason, "device_revoked"), ct);
+        if (updated == 0)
+        {
+            throw new ApiException(404, "not_found", "Not found.");
+        }
+
+        try
+        {
+            await hub.AccessRevokedAsync(userId, deviceId, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "AccessRevoked broadcast failed for user {UserId} device {DeviceId}", userId, deviceId);
+        }
     }
 
     public async Task ForgotPasswordAsync(string? emailRaw, string ip, CancellationToken ct)
@@ -484,6 +526,18 @@ public sealed class AuthService(
         await Task.CompletedTask;
     }
 
+    private void EnqueueLoginNotice(User user, DateTimeOffset at)
+    {
+        if (string.IsNullOrWhiteSpace(user.Email) || user.EmailVerifiedAt is null)
+        {
+            return;
+        }
+
+        var email = user.Email!;
+        jobs.Enqueue<EmailJobs>(x => x.SendLoginNotice(email, at));
+        logger.LogInformation("Enqueued login notice for user {UserId}.", user.Id);
+    }
+
     private async Task<SessionResponse> IssueSessionAsync(
         User user,
         Guid deviceId,
@@ -566,6 +620,8 @@ public sealed record LoginRequest(string? IdentifierType, string? Identifier, st
 public sealed record CodeRequest(string? Code);
 public sealed record RefreshRequest(string? RefreshToken);
 public sealed record LogoutRequest(string? RefreshToken);
+
+public sealed record DeviceSessionDto(Guid DeviceId, DateTimeOffset LastSeenAt, bool Current);
 public sealed record ForgotRequest(string? Email);
 public sealed record ResetRequest(string? Code, string? NewPassword);
 public sealed record EmailOnlyRequest(string? Email);

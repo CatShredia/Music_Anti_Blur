@@ -77,12 +77,14 @@ Idempotency records хранятся в PostgreSQL (`idempotency_records`). Тр
 
 ### 2.2. Сессии и reset
 
-`POST /auth/login { identifierType, identifier, password }` → `{ accessToken, accessExpiresAt, refreshToken, refreshExpiresAt, user }`. Неверные identifier/password имеют одинаковые status/body/timing class.
+`POST /auth/login { identifierType, identifier, password }` → `{ accessToken, accessExpiresAt, refreshToken, refreshExpiresAt, user }`. Неверные identifier/password имеют одинаковые status/body/timing class. Если у аккаунта подтверждён email, после выдачи сессии в очередь ставится письмо о входе. Ответ не ждёт SMTP. `POST /auth/refresh` письмо не шлёт. Нет email или он не подтверждён — письма нет.
 
 `POST /auth/refresh { refreshToken }` атомарно гасит текущий token и выдаёт потомка. Повтор rotated token → `401` и revoke family. Из двух конкурентных refresh успешен один.
 
 - `POST /auth/logout` → revoke family, `204`.
 - `POST /auth/logout-all` → revoke всех refresh пользователя, `204`.
+- `GET /me/devices` → активные сессии: `[{ deviceId, lastSeenAt, current }]`. `current` — устройство из заголовка `X-Device-Id`.
+- `DELETE /me/devices/{deviceId}` → `204`, гасит все живые refresh этого устройства и после commit шлёт SignalR `AccessRevoked` `{ "deviceId" }` в группу пользователя. Клиент с этим `deviceId` сбрасывает локальную сессию и уходит на вход. Чужой или уже погашенный id → `404`. Если клиент не подключён к хабу, access-токен доживает до своего срока; refresh уже не действует.
 - `POST /auth/forgot-password { email }` → всегда одинаковый `200`; письмо только verified email.
 - `POST /auth/reset-password { code, newPassword }` → одной транзакцией consume, смена password, invalidate reset codes и revoke всех refresh.
 
@@ -256,7 +258,7 @@ Admin catalog использует идентичные routes/DTO под рол
 
 Только текущий writer отправляет `command|progress`; non-writer получает `409 not_writer` и snapshot. Claim нового устройства — явный handoff: прежняя session получает committed `PlaybackSnapshot` и прекращает publish. Отдельного endpoint для pause/seek другого устройства нет. Успех увеличивает revision. Revision conflict → `409 revision_conflict` с snapshot. `progress` содержит только `{ positionMs, currentItemId }`; `command` содержит полный state без server fields.
 
-Инвариант: при непустой queue `trackId` равен `trackId` элемента `currentItemId`; при `currentItemId=null` — `trackId=null`, `isPlaying=false`, `positionMs=0`. Hub events: `PlaybackSnapshot` содержит **тот же полный DTO**, `RenditionReady`, `DevicePresence`. Broadcast только после commit; stale revision игнорируется. Reconnect: exponential backoff + jitter, refreshed JWT token factory, затем authoritative snapshot и новая session.
+Инвариант: при непустой queue `trackId` равен `trackId` элемента `currentItemId`; при `currentItemId=null` — `trackId=null`, `isPlaying=false`, `positionMs=0`. Hub events: `PlaybackSnapshot` содержит **тот же полный DTO**, `RenditionReady`, `DevicePresence`, `AccessRevoked` `{ "deviceId" }`. Broadcast только после commit; stale revision игнорируется. `AccessRevoked` получает вся группа пользователя; сессию сбрасывает только устройство с этим `deviceId`. Reconnect: exponential backoff + jitter, refreshed JWT token factory, затем authoritative snapshot и новая session.
 
 ---
 

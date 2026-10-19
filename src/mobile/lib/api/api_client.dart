@@ -116,6 +116,20 @@ class UserDto {
       );
 }
 
+class DeviceSession {
+  DeviceSession({required this.deviceId, required this.lastSeenAt, required this.current});
+
+  final String deviceId;
+  final DateTime lastSeenAt;
+  final bool current;
+
+  factory DeviceSession.fromJson(Map<String, dynamic> json) => DeviceSession(
+        deviceId: json['deviceId'] as String,
+        lastSeenAt: DateTime.parse(json['lastSeenAt'] as String),
+        current: json['current'] as bool? ?? false,
+      );
+}
+
 class ApiClient {
   ApiClient({String? baseUrl})
       : _dio = Dio(
@@ -317,6 +331,17 @@ class ApiClient {
   Future<SettingsDto> settings() async {
     final res = await _send(() => _dio.get('/api/v1/me/settings'));
     return SettingsDto.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<List<DeviceSession>> devices() async {
+    final res = await _send(() => _dio.get('/api/v1/me/devices'));
+    return (res.data as List<dynamic>)
+        .map((item) => DeviceSession.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> revokeDevice(String deviceId) async {
+    await _send(() => _dio.delete('/api/v1/me/devices/$deviceId'));
   }
 
   Future<SettingsDto> updateSettings(String preferredQuality) async {

@@ -9,6 +9,7 @@ public interface IPlaybackHubPublisher
     Task PlaybackSnapshotAsync(Guid userId, PlaybackSnapshotDto snapshot, CancellationToken ct);
     Task DevicePresenceAsync(Guid userId, DevicePresenceDto presence, CancellationToken ct);
     Task RenditionReadyAsync(Guid userId, RenditionReadyDto ready, CancellationToken ct);
+    Task AccessRevokedAsync(Guid userId, Guid deviceId, CancellationToken ct);
 }
 
 public sealed class PlaybackHubPublisher(IHubContext<PlaybackHub> hub, ILogger<PlaybackHubPublisher> logger)
@@ -23,6 +24,9 @@ public sealed class PlaybackHubPublisher(IHubContext<PlaybackHub> hub, ILogger<P
     public Task RenditionReadyAsync(Guid userId, RenditionReadyDto ready, CancellationToken ct) =>
         SendAsync(userId, PlaybackHubEvents.RenditionReady, ready, ct);
 
+    public Task AccessRevokedAsync(Guid userId, Guid deviceId, CancellationToken ct) =>
+        SendAsync(userId, PlaybackHubEvents.AccessRevoked, new AccessRevokedDto(deviceId), ct);
+
     private async Task SendAsync(Guid userId, string eventName, object payload, CancellationToken ct)
     {
         var group = PlaybackHubGroups.ForUser(userId);
@@ -35,7 +39,9 @@ public sealed class PlaybackHubPublisher(IHubContext<PlaybackHub> hub, ILogger<P
                 ? $"rev={snap.Revision} device={snap.DeviceId} track={snap.TrackId} playing={snap.IsPlaying} posMs={snap.PositionMs}"
                 : payload is DevicePresenceDto presence
                     ? $"devices={presence.Devices.Count}"
-                    : payload.GetType().Name);
+                    : payload is AccessRevokedDto revoked
+                        ? $"device={revoked.DeviceId}"
+                        : payload.GetType().Name);
         await hub.Clients.Group(group).SendAsync(eventName, payload, cancellationToken: ct);
     }
 }

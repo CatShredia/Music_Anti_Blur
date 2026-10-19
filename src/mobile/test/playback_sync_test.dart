@@ -164,5 +164,13 @@ void main() {
     ]);
     expect(ready?.scope, 'private');
     expect(ready?.trackId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+
+    expect(
+      accessRevokedDeviceId([
+        {'deviceId': 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'},
+      ]),
+      'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    );
+    expect(accessRevokedDeviceId([{'deviceId': ''}]), isNull);
   });
 }

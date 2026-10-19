@@ -42,6 +42,8 @@ API **не** стримит аудиобайты. Playback URL — S3 presigned 
 
 Интерактивный wizard (порядок):
 
+Если на этой машине `start` уже запускался, первый вопрос — «Запустить конфигурацию с прошлого раза» (Enter — да). `n` открывает обычный wizard. Запоминаются язык, тип, оба слота Flutter и ответ про импорт `no_commit/music` в `devops/.run/last-start.env` (в git не входит). Явные `-Mode` / аргумент режима этот вопрос пропускают.
+
 1. **Язык** — RU (Enter) / EN. Все следующие подсказки на выбранном языке.
 2. **`.env`** — если файла нет или он пуст:
    - [`.env.local.example`](../.env.local.example) — копируем и продолжаем (локальные дефолты, Postgres 5433);
@@ -81,7 +83,7 @@ bash devops/start.sh api     # local без Flutter
 
 ## 4. Остановка
 
-`stop` гасит API, Flutter и Compose. Тома Postgres и MinIO **сохраняются**.
+`stop` гасит API, Flutter, приложение в Android-эмуляторе (`com.musicantiblur.music_anti_blur`) и Compose. Окно эмулятора остаётся. Тома Postgres и MinIO **сохраняются**.
 
 Стереть данные БД и бакет MinIO: `devops\stop.cmd -Volumes` или `bash devops/stop.sh --volumes`. После этого нужно **войти заново**: JWT со старого user id в новой базе больше не действует.
 
@@ -182,7 +184,7 @@ flutter run
 
 Фон: iOS `UIBackgroundModes = audio`; Android media notification через `audio_service`. На Android 13+ запрашивается `POST_NOTIFICATIONS`; если отказать, трек всё равно играет, notification может не появиться. Windows desktop играет в процессе приложения, lock screen там не критерий.
 
-Письма verification/reset содержат 6-значный код. Смотреть в MailHog: http://localhost:8025.
+Письма подтверждения, сброса пароля и уведомление о входе уходят через SMTP. Локально это MailHog: http://localhost:8025 (`Smtp__Host=localhost`, `Smtp__Port=1025`, `Smtp__Security=None`, без `Smtp__User`). Отдельный сервер и личный ящик — те же ключи с `StartTls` или `SslOnConnect` и, если нужна авторизация, `Smtp__User` / `Smtp__Password`. Для личного ящика `Smtp__From` должен совпадать с `Smtp__User`. Пароль только в `.env`. Уведомление о входе приходит после успешного входа на уже подтверждённый email и не задерживает ответ API.
 
 ---
 
