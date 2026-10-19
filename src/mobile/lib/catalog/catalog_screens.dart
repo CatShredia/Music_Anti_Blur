@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../ai/recommend_chat.dart';
-import '../ai/recommend_window.dart';
 import '../api/api_client.dart';
 import '../overrides/override_panel.dart';
 import '../player/player_controller.dart';
@@ -21,9 +19,6 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  /// Окно GigaChat живёт на главной странице и сохраняет переписку.
-  final RecommendChat _chat = RecommendChat.shared;
-
   List<ArtistListItem> _artists = const [];
   List<AlbumListItem> _albums = const [];
   String? _error;
@@ -115,12 +110,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         title: 'Мне нравится',
                         subtitle: 'Лайкнутые треки',
                         onTap: () => context.push('/liked'),
-                      ),
-                      const SizedBox(height: 10),
-                      GigaChatRecommendCard(
-                        onTap: () {
-                          showGigaChatRecommendations(context, _chat);
-                        },
                       ),
                       const SizedBox(height: 20),
                       Text('Исполнители', style: Theme.of(context).textTheme.titleMedium),
