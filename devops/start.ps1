@@ -28,13 +28,12 @@ try {
 
 $DevopsRoot = $PSScriptRoot
 $Root = Split-Path -Parent $DevopsRoot
+$script:CallerLocation = (Get-Location).Path
 $RunDir = Join-Path $DevopsRoot ".run"
 $ApiProject = Join-Path $Root "src\api\MusicAntiBlur.Api\MusicAntiBlur.Api.csproj"
 $MobileDir = Join-Path $Root "src\mobile"
 $HealthUrl = "http://127.0.0.1:5080/health"
 $script:UiLang = "ru"
-
-Set-Location $Root
 
 # --- i18n ---
 
@@ -106,6 +105,11 @@ $script:Messages = @{
         seed_ask              = "Импортировать треки из no_commit/music?"
         seed_skip             = "Импорт no_commit/music пропущен."
         seed_fail             = "Импорт no_commit/music завершился с кодом {0}."
+        replay_ask            = "Запустить конфигурацию с прошлого раза"
+        replay_summary        = "Прошлый запуск: {0}. Устройства: {1}, {2}. Импорт музыки: {3}."
+        replay_summary_publish = "Прошлый запуск: публикация (сервер без Flutter)."
+        replay_seed_yes       = "да"
+        replay_seed_no        = "нет"
         emu_already           = "Android-эмулятор уже запущен."
         emu_none              = "Нет Android-эмулятора (AVD). Создайте его в Android Studio, затем flutter emulators."
         emu_disk_warn         = "На диске AVD свободно {0} ГБ. Эмулятор Android обычно требует несколько гигабайт."
@@ -206,6 +210,11 @@ $script:Messages = @{
         seed_ask              = "Import tracks from no_commit/music?"
         seed_skip             = "Skipping no_commit/music import."
         seed_fail             = "no_commit/music import exited with code {0}."
+        replay_ask            = "Run the last configuration"
+        replay_summary        = "Last run: {0}. Devices: {1}, {2}. Music import: {3}."
+        replay_summary_publish = "Last run: publish (server, no Flutter)."
+        replay_seed_yes       = "yes"
+        replay_seed_no        = "no"
         emu_already           = "Android emulator already running."
         emu_none              = "No Android AVD. Create one in Android Studio, then flutter emulators."
         emu_disk_warn         = "AVD disk has {0} GB free. Android emulator usually needs several GB."
@@ -283,7 +292,7 @@ function Confirm-Yes([string]$Prompt, [string]$UnknownHint = "") {
     if (-not $UnknownHint) {
         $UnknownHint = T "yes_unknown"
     }
-    $choice = Read-Host "$Prompt [Y]"
+    $choice = Read-Host "$Prompt [Y/N]"
     if ([string]::IsNullOrWhiteSpace($choice)) {
         return $true
     }
@@ -306,7 +315,37 @@ function Test-EnvFileUsable([string]$Path) {
     return -not [string]::IsNullOrWhiteSpace($raw)
 }
 
+function Get-LastStart {
+    $path = Join-Path $RunDir "last-start.env"
+    if (-not (Test-Path -LiteralPath $path)) {
+        return $null
+    }
+    $map = @{}
+    foreach ($line in Get-Content -LiteralPath $path) {
+        if ($line -match '^\s*([^=]+)=(.*)$') {
+            $map[$Matches[1].Trim()] = $Matches[2].Trim()
+        }
+    }
+    if (-not $map.ContainsKey("kind") -or [string]::IsNullOrWhiteSpace($map["kind"])) {
+        return $null
+    }
+    return $map
+}
+
+function Save-LastStart([string]$LangCode, [string]$KindValue, [string]$FirstDevice, [string]$SecondDevice, [bool]$Seed) {
+    New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
+    $seedBit = if ($Seed) { "1" } else { "0" }
+    if ([string]::IsNullOrWhiteSpace($FirstDevice)) { $FirstDevice = "none" }
+    if ([string]::IsNullOrWhiteSpace($SecondDevice)) { $SecondDevice = "none" }
+    $text = "lang=$LangCode`nkind=$KindValue`ndevice1=$FirstDevice`ndevice2=$SecondDevice`nseed=$seedBit`n"
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText((Join-Path $RunDir "last-start.env"), $text, $utf8)
+}
+
 function Choose-Language {
+    if ($script:UseReplay) {
+        return $script:UiLang
+    }
     if ($Lang) {
         $v = $Lang.Trim().ToLowerInvariant()
         if ($v -in @("en", "english")) { return "en" }
@@ -398,6 +437,12 @@ function Resolve-Kind([string]$Raw) {
 }
 
 function Choose-Kind {
+    if ($script:UseReplay) {
+        $saved = $script:ReplayKind
+        if ($saved -in @("local", "publish")) {
+            return $saved
+        }
+    }
     if ($Mode) {
         $parsed = Resolve-Kind $Mode
         if (-not $parsed) {
@@ -647,6 +692,7 @@ dotnet run --project '$ApiProject'
 "@
     $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoExit", "-Command", $cmd) -PassThru
     Set-Content -Path (Join-Path $RunDir "api.pid") -Value $proc.Id -Encoding ASCII
+    Move-ProcessToCallerDesktop $proc
 }
 
 function Start-ApiPublish {
@@ -667,6 +713,7 @@ dotnet '$dll'
 "@
     $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoExit", "-Command", $cmd) -PassThru
     Set-Content -Path (Join-Path $RunDir "api.pid") -Value $proc.Id -Encoding ASCII
+    Move-ProcessToCallerDesktop $proc
 }
 
 # --- Flutter devices ---
@@ -964,6 +1011,7 @@ function Start-PowerShellWindow([string]$Title, [string]$PidName, [string]$Scrip
     Set-Content -Path $runner -Value $ScriptBody -Encoding UTF8
     $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoExit", "-NoProfile", "-File", $runner) -PassThru
     Set-Content -Path (Join-Path $RunDir $PidName) -Value $proc.Id -Encoding ASCII
+    Move-ProcessToCallerDesktop $proc
 }
 
 function Start-FlutterWindow([string]$Title, [string]$DeviceId, [string]$PidName, [bool]$RunPubGet) {
@@ -1110,7 +1158,172 @@ function Test-IsUsbDeviceId([string]$Id) {
     return $false
 }
 
+function Initialize-CallerDesktop {
+    if (-not ('MabDesktop' -as [type])) {
+        $code = @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+public static class MabDesktop {
+    public static Guid DesktopId;
+    public static bool HasDesktop;
+
+    [DllImport("user32.dll")]
+    static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    static extern IntPtr GetConsoleWindow();
+
+    [DllImport("user32.dll")]
+    static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll")]
+    static extern bool IsWindowVisible(IntPtr hWnd);
+
+    delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [ComImport, Guid("aa509086-5ca9-4c25-8f95-589d3c07b48a")]
+    class VirtualDesktopManager { }
+
+    [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("a5cd92ff-29be-454c-8d04-d82879fb3f1b")]
+    interface IVirtualDesktopManager {
+        int IsWindowOnCurrentVirtualDesktop(IntPtr topLevelWindow, out int onCurrentDesktop);
+        int GetWindowDesktopId(IntPtr topLevelWindow, out Guid desktopId);
+        int MoveWindowToDesktop(IntPtr topLevelWindow, ref Guid desktopId);
+    }
+
+    static bool TryDesktop(IntPtr hwnd, out Guid desktopId) {
+        desktopId = Guid.Empty;
+        if (hwnd == IntPtr.Zero) return false;
+        var manager = (IVirtualDesktopManager)new VirtualDesktopManager();
+        if (manager.GetWindowDesktopId(hwnd, out desktopId) != 0) return false;
+        return desktopId != Guid.Empty;
+    }
+
+    public static void Capture() {
+        Guid id;
+        if (!TryDesktop(GetForegroundWindow(), out id) && !TryDesktop(GetConsoleWindow(), out id)) return;
+        DesktopId = id;
+        HasDesktop = true;
+    }
+
+    public static int MoveProcessTree(int[] processIds) {
+        if (!HasDesktop || processIds == null || processIds.Length == 0) return 0;
+        var ids = new HashSet<int>(processIds);
+        int moved = 0;
+        var manager = (IVirtualDesktopManager)new VirtualDesktopManager();
+        EnumWindowsProc callback = (hwnd, param) => {
+            uint pid;
+            GetWindowThreadProcessId(hwnd, out pid);
+            if (!ids.Contains((int)pid) || !IsWindowVisible(hwnd)) return true;
+            Guid target = DesktopId;
+            if (manager.MoveWindowToDesktop(hwnd, ref target) == 0) moved++;
+            return true;
+        };
+        EnumWindows(callback, IntPtr.Zero);
+        return moved;
+    }
+}
+'@
+        try {
+            Add-Type -TypeDefinition $code -Language CSharp
+        } catch {
+            if (-not ('MabDesktop' -as [type])) {
+                return
+            }
+        }
+    }
+    try {
+        [MabDesktop]::Capture()
+    } catch {}
+}
+
+function Get-ProcessTreeIds([int]$ProcessId) {
+    $ids = New-Object 'System.Collections.Generic.List[int]'
+    [void]$ids.Add($ProcessId)
+    $queue = New-Object 'System.Collections.Generic.Queue[int]'
+    $queue.Enqueue($ProcessId)
+    $guard = 0
+    while ($queue.Count -gt 0 -and $guard -lt 40) {
+        $guard++
+        $parent = $queue.Dequeue()
+        foreach ($child in @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$parent" -ErrorAction SilentlyContinue)) {
+            $childId = [int]$child.ProcessId
+            if (-not $ids.Contains($childId)) {
+                [void]$ids.Add($childId)
+                $queue.Enqueue($childId)
+            }
+        }
+    }
+    return ,$ids.ToArray()
+}
+
+function Move-ProcessToCallerDesktop([System.Diagnostics.Process]$Process) {
+    if (-not $Process) {
+        return
+    }
+    if (-not ('MabDesktop' -as [type]) -or -not [MabDesktop]::HasDesktop) {
+        return
+    }
+    $deadline = (Get-Date).AddSeconds(10)
+    do {
+        $moved = 0
+        try {
+            $moved = [MabDesktop]::MoveProcessTree(@(Get-ProcessTreeIds $Process.Id))
+        } catch {
+            return
+        }
+        if ($moved -gt 0) {
+            return
+        }
+        Start-Sleep -Milliseconds 200
+    } while ((Get-Date) -lt $deadline)
+}
+
 # --- main ---
+
+Set-Location $Root
+try {
+Initialize-CallerDesktop
+
+$script:UseReplay = $false
+$script:ReplayKind = ""
+$script:ReplayDevice1 = "none"
+$script:ReplayDevice2 = "none"
+$script:ReplaySeed = $true
+$lastStart = Get-LastStart
+$explicitArgs = [bool]($Mode -or $Lang -or $Device1 -or $Device2)
+if ($lastStart -and -not $explicitArgs) {
+    $savedLang = [string]$lastStart["lang"]
+    if ($savedLang -in @("en", "ru")) {
+        $script:UiLang = $savedLang
+    }
+    $acceptReplay = $true
+    if (Test-InteractivePrompt) {
+        Write-Host ""
+        Write-Host (T "title") -ForegroundColor Green
+        if ([string]$lastStart["kind"] -eq "publish") {
+            Write-Info (T "replay_summary_publish")
+        } else {
+            $seedWord = if ([string]$lastStart["seed"] -eq "0") { T "replay_seed_no" } else { T "replay_seed_yes" }
+            $shown1 = if ($lastStart["device1"]) { [string]$lastStart["device1"] } else { "none" }
+            $shown2 = if ($lastStart["device2"]) { [string]$lastStart["device2"] } else { "none" }
+            Write-Info (T "replay_summary" @([string]$lastStart["kind"], $shown1, $shown2, $seedWord))
+        }
+        $acceptReplay = Confirm-Yes (T "replay_ask")
+    }
+    if ($acceptReplay) {
+        $script:UseReplay = $true
+        $script:ReplayKind = [string]$lastStart["kind"]
+        $script:ReplayDevice1 = if ($lastStart["device1"]) { [string]$lastStart["device1"] } else { "none" }
+        $script:ReplayDevice2 = if ($lastStart["device2"]) { [string]$lastStart["device2"] } else { "none" }
+        $script:ReplaySeed = [string]$lastStart["seed"] -ne "0"
+    }
+}
 
 $script:UiLang = Choose-Language
 Assert-Command docker
@@ -1138,7 +1351,9 @@ if ($kindRaw -eq "dual") {
 
 $deviceChoices = @("none", "none")
 if ($kind -eq "local") {
-    if ($presetDevices.Count -eq 2 -and -not $Device1 -and -not $Device2 -and $Mode) {
+    if ($script:UseReplay) {
+        $deviceChoices = @($script:ReplayDevice1, $script:ReplayDevice2)
+    } elseif ($presetDevices.Count -eq 2 -and -not $Device1 -and -not $Device2 -and $Mode) {
         $deviceChoices = $presetDevices
     } else {
         $d1 = Choose-DeviceSlot 1 $false
@@ -1147,6 +1362,9 @@ if ($kind -eq "local") {
         $deviceChoices = @($d1, $d2)
     }
 }
+
+$script:PendingSeed = if ($script:UseReplay) { $script:ReplaySeed } else { $true }
+Save-LastStart $script:UiLang $kind $deviceChoices[0] $deviceChoices[1] $script:PendingSeed
 
 $needFlutter = $false
 foreach ($d in $deviceChoices) {
@@ -1184,9 +1402,13 @@ Wait-Api
 
 if ($kind -eq "local") {
     $doSeed = $true
-    if (Test-InteractivePrompt) {
+    if ($script:UseReplay) {
+        $doSeed = $script:ReplaySeed
+    } elseif (Test-InteractivePrompt) {
         $doSeed = Confirm-Yes (T "seed_ask")
     }
+    $script:PendingSeed = $doSeed
+    Save-LastStart $script:UiLang $kind $deviceChoices[0] $deviceChoices[1] $doSeed
     if ($doSeed) {
         $seedScript = Join-Path $DevopsRoot "seed-local-music.ps1"
         Write-Info (T "seed")
@@ -1230,4 +1452,10 @@ if ($needFlutter) {
     Write-Info (T "done_clients")
 } else {
     Write-Info (T "done_server")
+}
+
+} finally {
+    if ($script:CallerLocation) {
+        Set-Location -LiteralPath $script:CallerLocation
+    }
 }

@@ -70,6 +70,15 @@ public static class AuthEndpoints
         me.MapPatch("/settings", async (UpdateSettingsRequest req, AuthService svc, ClaimsPrincipal user, CancellationToken ct) =>
             Results.Ok(await svc.UpdateSettingsAsync(UserId(user), req.PreferredQuality, ct)));
 
+        me.MapGet("/devices", async (AuthService svc, ClaimsPrincipal user, HttpContext http, CancellationToken ct) =>
+            Results.Ok(await svc.ListDevicesAsync(UserId(user), DeviceId(http), ct)));
+
+        me.MapDelete("/devices/{deviceId:guid}", async (Guid deviceId, AuthService svc, ClaimsPrincipal user, CancellationToken ct) =>
+        {
+            await svc.RevokeDeviceAsync(UserId(user), deviceId, ct);
+            return Results.NoContent();
+        });
+
         me.MapPost("/identifiers/email", async (BindEmailRequest req, AuthService svc, ClaimsPrincipal user, HttpContext http, CancellationToken ct) =>
         {
             await svc.BindEmailAsync(UserId(user), req.Email, req.CurrentPassword, ClientIp(http), ct);

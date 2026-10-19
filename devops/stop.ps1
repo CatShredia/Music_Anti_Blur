@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  Останавливает API, Flutter и Docker Compose (Postgres, Redis, MailHog, MinIO).
+  Останавливает API, Flutter, приложение в Android-эмуляторе и Docker Compose (Postgres, Redis, MailHog, MinIO).
 
 .PARAMETER Volumes
   Также удалить volumes Postgres и MinIO.
@@ -17,6 +17,7 @@ try {
 
 $DevopsRoot = $PSScriptRoot
 $Root = Split-Path -Parent $DevopsRoot
+$script:CallerLocation = (Get-Location).Path
 $RunDir = Join-Path $DevopsRoot ".run"
 $ApiPidFile = Join-Path $RunDir "api.pid"
 
@@ -87,6 +88,47 @@ function Stop-Flutter {
     Stop-CommandMatch "flutter(\.bat)? run" "Flutter"
 }
 
+function Get-AdbExe {
+    $cmd = Get-Command adb -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
+    }
+    $sdk = $env:ANDROID_HOME
+    if (-not $sdk) {
+        $sdk = $env:ANDROID_SDK_ROOT
+    }
+    if (-not $sdk) {
+        $sdk = Join-Path $env:LOCALAPPDATA "Android\Sdk"
+    }
+    $exe = Join-Path $sdk "platform-tools\adb.exe"
+    if (Test-Path -LiteralPath $exe) {
+        return $exe
+    }
+    return $null
+}
+
+function Stop-EmulatorApp {
+    $adb = Get-AdbExe
+    if (-not $adb) {
+        Write-Warn "adb не найден, приложение в эмуляторе не останавливаем."
+        return
+    }
+    $package = "com.musicantiblur.music_anti_blur"
+    $serials = @()
+    foreach ($line in @(& $adb devices 2>$null)) {
+        if ("$line" -match '^(emulator-\d+)\s+device\b') {
+            $serials += $Matches[1]
+        }
+    }
+    foreach ($serial in $serials) {
+        Write-Info "Останавливаем приложение в $serial..."
+        & $adb -s $serial shell am force-stop $package
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "Не удалось остановить приложение на $serial."
+        }
+    }
+}
+
 function Stop-Infra {
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         Write-Warn "docker не найден, Compose пропускаем."
@@ -117,24 +159,35 @@ function Stop-Infra {
     }
 }
 
-Write-Host ""
-Write-Host "Music Anti Blur — остановка" -ForegroundColor Green
 try {
-    Stop-Api
-} catch {
-    Write-Warn "Остановка API прошла с ошибкой: $($_.Exception.Message). Продолжаем."
-}
-try {
-    Stop-Flutter
-} catch {
-    Write-Warn "Остановка Flutter прошла с ошибкой: $($_.Exception.Message). Продолжаем."
-}
-try {
-    Stop-Infra
-} catch {
-    Write-Warn "Compose: $($_.Exception.Message)"
-}
-Write-Info "Инфраструктура выключена."
-if (-not $Volumes) {
-    Write-Warn "Тома Postgres и MinIO на месте. Полная очистка: devops\stop.cmd -Volumes"
+    Write-Host ""
+    Write-Host "Music Anti Blur — остановка" -ForegroundColor Green
+    try {
+        Stop-Api
+    } catch {
+        Write-Warn "Остановка API прошла с ошибкой: $($_.Exception.Message). Продолжаем."
+    }
+    try {
+        Stop-Flutter
+    } catch {
+        Write-Warn "Остановка Flutter прошла с ошибкой: $($_.Exception.Message). Продолжаем."
+    }
+    try {
+        Stop-EmulatorApp
+    } catch {
+        Write-Warn "Остановка приложения в эмуляторе: $($_.Exception.Message). Продолжаем."
+    }
+    try {
+        Stop-Infra
+    } catch {
+        Write-Warn "Compose: $($_.Exception.Message)"
+    }
+    Write-Info "Инфраструктура выключена."
+    if (-not $Volumes) {
+        Write-Warn "Тома Postgres и MinIO на месте. Полная очистка: devops\stop.cmd -Volumes"
+    }
+} finally {
+    if ($script:CallerLocation) {
+        Set-Location -LiteralPath $script:CallerLocation
+    }
 }
