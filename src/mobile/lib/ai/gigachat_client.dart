@@ -202,7 +202,7 @@ class GigaChatClient {
       final value = raw.toInt();
       final date = value > 100000000000
           ? DateTime.fromMillisecondsSinceEpoch(value)
-          : DateTime.fromSeconds(value);
+          : DateTime.fromMillisecondsSinceEpoch(value * 1000);
       final safe = date.subtract(const Duration(seconds: 60));
       if (safe.isAfter(now)) {
         return safe;

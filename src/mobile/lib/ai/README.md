@@ -32,7 +32,7 @@
 }
 ```
 
-и запускайте:
+`devops/start` сам добавит `--dart-define-from-file=gigachat.local.json`, если файл лежит рядом с `pubspec.yaml`. Вручную:
 
 ```bash
 flutter run --dart-define-from-file=gigachat.local.json

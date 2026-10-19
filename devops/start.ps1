@@ -975,7 +975,11 @@ function Start-FlutterWindow([string]$Title, [string]$DeviceId, [string]$PidName
         [void]$lines.Add("flutter pub get")
         [void]$lines.Add("if (`$LASTEXITCODE -ne 0) { Write-Host 'flutter pub get failed.' -ForegroundColor Red; pause; exit `$LASTEXITCODE }")
     }
-    [void]$lines.Add("flutter run --device-id=$DeviceId")
+    $flutterCmd = "flutter run --device-id=$DeviceId"
+    if (Test-Path -LiteralPath (Join-Path $MobileDir "gigachat.local.json")) {
+        $flutterCmd += " --dart-define-from-file=gigachat.local.json"
+    }
+    [void]$lines.Add($flutterCmd)
     Start-PowerShellWindow -Title $Title -PidName $PidName -ScriptBody ($lines -join "`r`n")
 }
 
