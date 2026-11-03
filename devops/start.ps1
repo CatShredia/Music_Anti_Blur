@@ -729,23 +729,49 @@ function Out-ObjectArray {
     , $copy.ToArray()
 }
 
+# Windows PowerShell 5.1 turns any native stderr line into a terminating error under
+# $ErrorActionPreference = "Stop", even with 2>$null. Flutter writes banners and
+# "waiting for startup lock" there, so stdout is collected with errors relaxed.
+function Invoke-NativeStdout([string]$Exe, [string[]]$NativeArgs) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = @(& $Exe @NativeArgs 2>$null | ForEach-Object { [string]$_ })
+    } catch {
+        $out = @()
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    Out-ObjectArray $out
+}
+
+function Invoke-FlutterStdout([string[]]$FlutterArgs) {
+    Invoke-NativeStdout "flutter" $FlutterArgs
+}
+
 function Get-FlutterDeviceRows {
     $rows = New-Object System.Collections.Generic.List[object]
     if (Get-Command flutter -ErrorAction SilentlyContinue) {
-        foreach ($line in @(& flutter devices 2>$null)) {
-            $text = [string]$line
-            if ($text -notmatch '•') {
-                continue
+        $text = (Invoke-FlutterStdout @("devices", "--machine", "--device-timeout", "10")) -join "`n"
+        # Banners may precede the JSON array; take the array only.
+        $start = $text.IndexOf('[')
+        $end = $text.LastIndexOf(']')
+        if ($start -ge 0 -and $end -gt $start) {
+            try {
+                $devices = $text.Substring($start, $end - $start + 1) | ConvertFrom-Json
+            } catch {
+                $devices = @()
             }
-            $parts = @($text -split '•' | ForEach-Object { $_.Trim() })
-            if ($parts.Count -lt 2) {
-                continue
+            foreach ($d in @($devices)) {
+                if (-not $d.id) {
+                    continue
+                }
+                [void]$rows.Add([pscustomobject]@{
+                    Name     = [string]$d.name
+                    Id       = [string]$d.id
+                    Platform = [string]$d.targetPlatform
+                })
             }
-            [void]$rows.Add([pscustomobject]@{
-                Name     = $parts[0]
-                Id       = $parts[1]
-                Platform = $(if ($parts.Count -ge 3) { $parts[2] } else { "" })
-            })
         }
     }
     Out-ObjectArray $rows
@@ -782,7 +808,7 @@ function Get-FirstAndroidAvdId {
     if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) {
         return $null
     }
-    foreach ($line in @(& flutter emulators 2>$null)) {
+    foreach ($line in (Invoke-FlutterStdout @("emulators"))) {
         $text = [string]$line
         if ($text -notmatch '•') {
             continue
@@ -1112,15 +1138,16 @@ function Try-AdbReverse {
         Write-Warn (T "adb_missing")
         return
     }
-    $lines = @(& adb devices 2>$null)
+    $lines = Invoke-NativeStdout "adb" @("devices")
     $ready = @($lines | Where-Object { $_ -match '\tdevice$' })
     if ($ready.Count -eq 0) {
         Write-Warn (T "adb_no_device")
         return
     }
-    & adb reverse tcp:5080 tcp:5080 | Out-Null
-    & adb reverse tcp:9000 tcp:9000 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    [void](Invoke-NativeStdout "adb" @("reverse", "tcp:5080", "tcp:5080"))
+    $first = $LASTEXITCODE
+    [void](Invoke-NativeStdout "adb" @("reverse", "tcp:9000", "tcp:9000"))
+    if ($first -ne 0 -or $LASTEXITCODE -ne 0) {
         Write-Warn (T "adb_reverse_fail")
         return
     }

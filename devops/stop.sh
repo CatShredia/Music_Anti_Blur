@@ -3,6 +3,13 @@
 # --volumes | -v  — также удалить volumes Postgres и MinIO.
 set -euo pipefail
 
+# Launched as `bash ...` from PowerShell/cmd, Git Bash keeps the Windows PATH order:
+# C:\Windows\System32 (WSL bash.exe) comes before /usr/bin. Tools with a
+# `#!/usr/bin/env bash` shebang (flutter, dart) then hit WSL bash and fail with
+# "No such file or directory". Git's POSIX directories must come first.
+PATH="/usr/bin:/bin:$PATH"
+export PATH
+
 DEVOPS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$DEVOPS_ROOT/.." && pwd)"
 RUN_DIR="$DEVOPS_ROOT/.run"
