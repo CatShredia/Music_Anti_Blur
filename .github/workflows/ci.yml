@@ -73,6 +73,8 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('src/api/**/*.csproj') }}
           restore-keys: nuget-${{ runner.os }}-
       - run: dotnet tool restore
+      - name: Restore
+        run: dotnet restore src/api/MusicAntiBlur.Api/MusicAntiBlur.Api.csproj
       - name: Model matches migrations
         run: dotnet ef migrations has-pending-model-changes --project src/api/MusicAntiBlur.Api
       - name: Migrations apply to an empty database
