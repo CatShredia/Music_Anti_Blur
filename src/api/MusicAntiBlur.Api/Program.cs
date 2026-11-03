@@ -27,6 +27,7 @@ using MusicAntiBlur.Api.Uploads;
 using MusicAntiBlur.Api.Library;
 using MusicAntiBlur.Api.Overrides;
 using MusicAntiBlur.Api.Playback;
+using MusicAntiBlur.Api.Observability;
 using StackExchange.Redis;
 
 DotEnv.LoadFromAncestors(Directory.GetCurrentDirectory());
@@ -35,6 +36,7 @@ DotEnv.LoadFromAncestors(AppContext.BaseDirectory);
 var builder = WebApplication.CreateBuilder(args);
 
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 256 * 1024);
+builder.AddObservability();
 
 var jwtKey = builder.Configuration["Jwt:Key"]
     ?? throw new InvalidOperationException("Jwt:Key is required.");
@@ -176,12 +178,14 @@ builder.Services.AddSignalR()
     })
     .AddStackExchangeRedis(redisCs);
 
-builder.Services.AddHangfire(config => config
+builder.Services.AddSingleton<HangfireLogContextFilter>();
+builder.Services.AddHangfire((sp, config) => config
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
     .UseSimpleAssemblyNameTypeSerializer()
     .UseRecommendedSerializerSettings()
     .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(hangfireCs),
-        new PostgreSqlStorageOptions { SchemaName = "hangfire" }));
+        new PostgreSqlStorageOptions { SchemaName = "hangfire" })
+    .UseFilter(sp.GetRequiredService<HangfireLogContextFilter>()));
 builder.Services.AddHangfireServer(options => options.WorkerCount = 2);
 
 builder.Services.AddEndpointsApiExplorer();
@@ -203,6 +207,7 @@ builder.Services.AddSwaggerGen(options =>
 var app = builder.Build();
 
 app.UseMiddleware<RequestIdMiddleware>();
+app.UseRequestLogging();
 app.UseApiExceptionHandler();
 
 if (app.Environment.IsDevelopment())
@@ -213,6 +218,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseAuthentication();
+app.UseUserLogContext();
 app.UseAuthorization();
 
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
@@ -228,6 +234,7 @@ app.MapLibraryEndpoints();
 app.MapOverrideEndpoints();
 app.MapPlaybackEndpoints();
 app.MapHub<PlaybackHub>("/hubs/playback");
+app.MapMetrics();
 
 app.MapGet("/health", async (AppDbContext db, CancellationToken ct) =>
 {

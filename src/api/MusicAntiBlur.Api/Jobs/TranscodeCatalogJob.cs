@@ -5,6 +5,7 @@ using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Http;
 using MusicAntiBlur.Api.Media;
+using MusicAntiBlur.Api.Observability;
 using MusicAntiBlur.Api.Storage;
 
 namespace MusicAntiBlur.Api.Jobs;
@@ -40,6 +41,7 @@ public sealed class TranscodeCatalogJob(
 
         var workDir = Path.Combine(Path.GetTempPath(), "mab-transcode", generationId.ToString("D"));
         Directory.CreateDirectory(workDir);
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             await ExecuteAsync(upload, workDir, ct);
@@ -60,6 +62,8 @@ public sealed class TranscodeCatalogJob(
         finally
         {
             TryDeleteDir(workDir);
+            var result = upload.Status switch { "ready" => "ready", "failed" => "failed", _ => "retry" };
+            AppMetrics.TranscodeFinished("catalog", result, System.Diagnostics.Stopwatch.GetElapsedTime(started));
         }
     }
 

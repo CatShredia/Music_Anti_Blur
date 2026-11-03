@@ -98,6 +98,7 @@ src/api/MusicAntiBlur.Api/
 ├── Storage/        S3 (MinIO/Yandex), CDN/presign signer
 ├── Uploads/        playback-url, admin/private multipart, idempotency, object_deletions
 ├── Http/           problem+json, request id
+├── Observability/  Serilog, метрики OpenTelemetry, /metrics, лог-контекст Hangfire
 ├── RateLimiting/   Redis, fail closed
 └── Config/         загрузка корневого .env
 ```
@@ -359,6 +360,11 @@ src/mobile/lib/
 | Redis Docker | https://hub.docker.com/_/redis |
 | MinIO | https://min.io/docs/minio/container/index.html |
 | pgsty/minio (локальный образ) | https://hub.docker.com/r/pgsty/minio |
+| Serilog | https://github.com/serilog/serilog-aspnetcore |
+| OpenTelemetry .NET | https://opentelemetry.io/docs/languages/dotnet/ |
+| Prometheus | https://prometheus.io/docs/ |
+| Grafana Loki | https://grafana.com/docs/loki/latest/ |
+| Grafana Alerting provisioning | https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/ |
 
 Ожидаемый compose: Postgres 16 + Redis + MailHog + MinIO (локальный S3). API на хосте ходит в MinIO как `http://127.0.0.1:9000`, не `http://minio:9000`. FFmpeg локально — бинарники в PATH процесса API (`start` предлагает установку). Pin FFmpeg в container image — production-инвариант [04-operations.md](04-operations.md); отдельного образа API в репозитории ещё нет ([05-local-setup.md](05-local-setup.md)). Yandex — когда подключаем облако, не вместо MinIO в локальном `start`.
 

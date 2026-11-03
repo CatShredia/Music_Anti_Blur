@@ -135,6 +135,15 @@ OpenTelemetry trace связывает HTTP initiate/complete → Hangfire job �
 - PostgreSQL/Redis errors > 1% за 5 минут;
 - quota/storage growth anomaly и backup failure.
 
+### 6.1. Реализация
+
+- Логи: Serilog ([ObservabilitySetup.cs](../src/api/MusicAntiBlur.Api/Observability/ObservabilitySetup.cs)). Development — читаемая консоль, остальные окружения — compact JSON. При заданном `Loki__Url` логи дублируются в Loki с метками `app=musicantiblur-api`, `env`, `level`.
+- Поля в каждой строке: `RequestId` ([RequestIdMiddleware.cs](../src/api/MusicAntiBlur.Api/Http/RequestIdMiddleware.cs)), `UserId` для авторизованных запросов. Hangfire-задача получает `RequestId` запроса, который её поставил, плюс `JobId` и `JobName` ([HangfireLogContextFilter.cs](../src/api/MusicAntiBlur.Api/Observability/HangfireLogContextFilter.cs)).
+- Итоговая строка запроса: метод, путь, шаблон маршрута, статус, длительность. Query пишется с маскировкой `access_token`, `token`, `code`, `password`, `X-Amz-*` ([LogRedaction.cs](../src/api/MusicAntiBlur.Api/Observability/LogRedaction.cs)).
+- Метрики: OpenTelemetry → `/metrics` (Prometheus). С `Metrics__ScrapeToken` эндпоинт требует `Authorization: Bearer <token>`; без токена открыт только в Development, иначе 404.
+- Свои метрики ([AppMetrics.cs](../src/api/MusicAntiBlur.Api/Observability/AppMetrics.cs)): `mab_transcode_jobs_total{kind,result}`, `mab_transcode_duration_seconds`, `mab_uploads_total{kind,result}`, `mab_emails_total{type,result}`, `mab_signalr_connections`, `mab_playback_url_issued_total{source}`, `mab_rate_limited_total{scope}`, `mab_hangfire_jobs{state}`.
+- Алерты (Grafana Alerting, письмо на `ALERT_EMAIL_TO`): transcode failed, рост failed в Hangfire, 5xx > 5 % за 5 мин, p95 > 2 с за 10 мин, API недоступен 2 мин, ошибки SMTP. Правила — [rules.yml](../devops/observability/grafana/provisioning/alerting/rules.yml).
+
 ---
 
 ## 7. Backup и restore

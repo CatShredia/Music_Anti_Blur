@@ -185,6 +185,7 @@ public sealed class PrivateUploadService(
             }
 
             upload.Status = "uploaded";
+            Observability.AppMetrics.UploadCompleted("private", "uploaded");
             upload.MultipartUploadId = null;
             upload.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(ct);

@@ -160,6 +160,7 @@ public sealed class AdminUploadService(
             }
 
             upload.Status = "uploaded";
+            Observability.AppMetrics.UploadCompleted("catalog", "uploaded");
             upload.MultipartUploadId = null;
             upload.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(ct);

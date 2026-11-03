@@ -18,7 +18,7 @@ public sealed class EmailJobs(SmtpEmailSender smtp, IConnectionMultiplexer redis
             "Подтверждение почты",
             "Введите код в приложении. Он действует 24 часа.",
             code.ToString());
-        await smtp.SendAsync(toEmail, "Подтверждение почты", text, html, CancellationToken.None);
+        await SendTrackedAsync("verification", toEmail, "Подтверждение почты", text, html);
         await redis.GetDatabase().KeyDeleteAsync(redisKey);
     }
 
@@ -34,7 +34,7 @@ public sealed class EmailJobs(SmtpEmailSender smtp, IConnectionMultiplexer redis
             "Смена пароля",
             "Введите код в приложении. Он действует 30 минут.",
             code.ToString());
-        await smtp.SendAsync(toEmail, "Смена пароля", text, html, CancellationToken.None);
+        await SendTrackedAsync("password_reset", toEmail, "Смена пароля", text, html);
         await redis.GetDatabase().KeyDeleteAsync(redisKey);
     }
 
@@ -44,7 +44,21 @@ public sealed class EmailJobs(SmtpEmailSender smtp, IConnectionMultiplexer redis
         var (text, html) = MailLayout.Notice(
             "Вход в аккаунт",
             $"Вход выполнен {when} UTC. Если это были не вы, смените пароль.");
-        return smtp.SendAsync(toEmail, "Вход в аккаунт", text, html, CancellationToken.None);
+        return SendTrackedAsync("login_notice", toEmail, "Вход в аккаунт", text, html);
+    }
+
+    private async Task SendTrackedAsync(string type, string toEmail, string subject, string text, string html)
+    {
+        try
+        {
+            await smtp.SendAsync(toEmail, subject, text, html, CancellationToken.None);
+            Observability.AppMetrics.EmailSent(type, "sent");
+        }
+        catch
+        {
+            Observability.AppMetrics.EmailSent(type, "failed");
+            throw;
+        }
     }
 }
 

@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: api
+    metrics_path: /metrics
+    # The API runs on the host (dotnet run / start scripts), not inside compose.
+    static_configs:
+      - targets: ["host.docker.internal:5080"]
+    authorization:
+      type: Bearer
+      credentials_file: /prometheus/scrape_token
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
