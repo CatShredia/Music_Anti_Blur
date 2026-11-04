@@ -146,6 +146,10 @@ OpenTelemetry trace связывает HTTP initiate/complete → Hangfire job �
 
 ---
 
+### 6.2. Ключи Data Protection
+
+Секреты TOTP шифруются ключами ASP.NET Data Protection из таблицы `data_protection_keys` (application name `MusicAntiBlur`). Все экземпляры API читают одну таблицу. Restore БД без этой таблицы делает 2FA по приложению неработающей: пользователям придётся выключать её через администратора.
+
 ## 7. Backup и restore
 
 Цели MVP: PostgreSQL RPO ≤ 15 минут, RTO ≤ 4 часа.

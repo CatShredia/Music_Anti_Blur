@@ -86,7 +86,7 @@ MVP-клиент — только **Flutter**. API — **ASP.NET Core**. Ауд�
 ```
 src/api/MusicAntiBlur.Api/
 ├── Program.cs
-├── Auth/           register, login, refresh, reset, JWT, GET /me
+├── Auth/           register, login, refresh, reset, JWT, GET /me, 2FA (TOTP/email/резервные коды), журнал входов
 ├── Catalog/        чтение каталога, поиск, admin metadata
 ├── Overrides/      per-user override, private multipart, transcode retry
 ├── Playback/       HTTP snapshot playback_states, Redis writer sessions / presence
@@ -96,7 +96,7 @@ src/api/MusicAntiBlur.Api/
 ├── Mail/           SMTP (MailKit)
 ├── Media/          профили FFmpeg, ffprobe, process runner
 ├── Storage/        S3 (MinIO/Yandex), CDN/presign signer
-├── Uploads/        playback-url, admin/private multipart, idempotency, object_deletions
+├── Uploads/        playback-url, admin/private multipart, квоты, idempotency, object_deletions
 ├── Http/           problem+json, request id
 ├── Observability/  Serilog, метрики OpenTelemetry, /metrics, лог-контекст Hangfire
 ├── RateLimiting/   Redis, fail closed
