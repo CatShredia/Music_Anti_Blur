@@ -23,6 +23,18 @@ class PrivateUploader {
       throw ApiException(400, 'file_too_large', 'File is too large.');
     }
 
+    // Fail fast before hashing a large file; the server checks the quota again.
+    try {
+      final quota = await api.quota();
+      if (!quota.fits(size)) {
+        throw ApiException(413, 'quota_exceeded', 'Private storage quota exceeded.');
+      }
+    } on ApiException catch (e) {
+      if (e.code == 'quota_exceeded') {
+        rethrow;
+      }
+    }
+
     onStatus?.call('считаю хеш');
     final checksum = await sha256.bind(file.openRead()).first;
     final name = p.basename(file.path);
