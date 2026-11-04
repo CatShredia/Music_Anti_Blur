@@ -14,6 +14,7 @@ public sealed class StorageOptions
     public bool UseCdn { get; set; }
     public long CatalogMaxSourceBytes { get; set; } = 104_857_600;
     public long PrivateQuotaBytes { get; set; } = 2L * 1024 * 1024 * 1024;
+    public int PrivateQuotaFiles { get; set; } = 500;
 
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(Endpoint) &&

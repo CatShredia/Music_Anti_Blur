@@ -30,6 +30,9 @@ public static class AppMetrics
     private static readonly Counter<long> RateLimited =
         Meter.CreateCounter<long>("mab_rate_limited", description: "Requests rejected by the rate limiter.");
 
+    private static readonly Counter<long> QuotaRejections =
+        Meter.CreateCounter<long>("mab_quota_rejections", description: "Private uploads rejected by the quota.");
+
     static AppMetrics()
     {
         Meter.CreateObservableGauge("mab_hangfire_jobs", ObserveHangfire, description: "Hangfire jobs by state.");
@@ -57,6 +60,8 @@ public static class AppMetrics
 
     public static void RateLimitHit(string scope) =>
         RateLimited.Add(1, new KeyValuePair<string, object?>("scope", scope));
+
+    public static void QuotaRejected() => QuotaRejections.Add(1);
 
     private static IEnumerable<Measurement<long>> ObserveHangfire()
     {

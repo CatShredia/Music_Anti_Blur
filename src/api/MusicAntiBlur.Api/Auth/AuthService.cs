@@ -21,6 +21,7 @@ public sealed class AuthService(
     IBackgroundJobClient jobs,
     IConnectionMultiplexer redis,
     IPlaybackHubPublisher hub,
+    TwoFactorService twoFactor,
     ILogger<AuthService> logger)
 {
     private static readonly User DummyUser = new() { Id = Guid.Empty };
@@ -74,7 +75,11 @@ public sealed class AuthService(
         return session;
     }
 
-    public async Task<SessionResponse> LoginAsync(LoginRequest req, Guid deviceId, string ip, CancellationToken ct)
+    /// <summary>
+    /// Returns <see cref="SessionResponse"/>, or <see cref="TwoFactorRequiredResponse"/> when the account
+    /// has a second factor. Accounts without 2FA get the same response as before.
+    /// </summary>
+    public async Task<object> LoginAsync(LoginRequest req, Guid deviceId, ClientInfo client, CancellationToken ct)
     {
         var errors = AuthValidation.NewErrors();
         var type = AuthValidation.AddIdentifierType(errors, req.IdentifierType);
@@ -90,7 +95,7 @@ public sealed class AuthService(
 
         AuthValidation.ThrowIfAny(errors);
 
-        await limiter.HitAsync($"rl:login:{ip}:{TokenHasher.Hash(identKey!.ToLowerInvariant())}", 10, TimeSpan.FromMinutes(5), ct);
+        await limiter.HitAsync($"rl:login:{client.Ip}:{TokenHasher.Hash(identKey!.ToLowerInvariant())}", 10, TimeSpan.FromMinutes(5), ct);
 
         User? user;
         if (type == "email")
@@ -107,6 +112,12 @@ public sealed class AuthService(
         var verify = hasher.VerifyHashedPassword(user ?? DummyUser, hash, req.Password ?? "");
         if (user is null || verify == PasswordVerificationResult.Failed)
         {
+            if (user is not null)
+            {
+                LoginEventService.Add(db, user.Id, deviceId, client, "bad_password", "password", DateTimeOffset.UtcNow);
+                await db.SaveChangesAsync(ct);
+            }
+
             throw new ApiException(401, "invalid_credentials", "Invalid credentials.");
         }
 
@@ -116,12 +127,41 @@ public sealed class AuthService(
         }
 
         var now = DateTimeOffset.UtcNow;
+        var challenge = await twoFactor.CreateChallengeIfRequiredAsync(user, deviceId, ct);
+        if (challenge is not null)
+        {
+            LoginEventService.Add(db, user.Id, deviceId, client, "2fa_required", "password", now);
+            await db.SaveChangesAsync(ct);
+            return challenge;
+        }
+
+        LoginEventService.Add(db, user.Id, deviceId, client, "success", "password", now);
         var session = await IssueSessionAsync(user, deviceId, now, ct);
-        EnqueueLoginNotice(user, now);
+        EnqueueLoginNotice(user, now, client, "password");
         return session;
     }
 
-    public async Task<SessionResponse> RefreshAsync(string? refreshToken, Guid deviceId, string ip, CancellationToken ct)
+    public async Task<SessionResponse> VerifyTwoFactorAsync(VerifyTwoFactorRequest req, ClientInfo client, CancellationToken ct)
+    {
+        var result = await twoFactor.VerifyAsync(req.ChallengeId, req.Method, req.Code, client.Ip, ct);
+        var now = DateTimeOffset.UtcNow;
+        if (!result.Ok)
+        {
+            LoginEventService.Add(db, result.UserId, result.DeviceId, client, "2fa_failed", result.Method, now);
+            await db.SaveChangesAsync(ct);
+            throw result.Burnt
+                ? new ApiException(401, "challenge_expired", "Too many attempts. Sign in again.")
+                : TwoFactorService.InvalidCode();
+        }
+
+        var user = await db.Users.FirstAsync(u => u.Id == result.UserId, ct);
+        LoginEventService.Add(db, user.Id, result.DeviceId, client, "success", result.Method, now);
+        var session = await IssueSessionAsync(user, result.DeviceId, now, ct);
+        EnqueueLoginNotice(user, now, client, result.Method);
+        return session;
+    }
+
+    public async Task<SessionResponse> RefreshAsync(string? refreshToken, Guid deviceId, ClientInfo client, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(refreshToken))
         {
@@ -136,7 +176,7 @@ public sealed class AuthService(
             throw new ApiException(401, "invalid_token", "Invalid token.");
         }
 
-        await limiter.HitAsync($"rl:refresh:{ip}:{row.FamilyId:D}", 30, TimeSpan.FromMinutes(5), ct);
+        await limiter.HitAsync($"rl:refresh:{client.Ip}:{row.FamilyId:D}", 30, TimeSpan.FromMinutes(5), ct);
 
         var now = DateTimeOffset.UtcNow;
         if (row.RevokedAt is not null)
@@ -144,6 +184,7 @@ public sealed class AuthService(
             if (row.RevokeReason == "rotated")
             {
                 await RevokeFamilyAsync(row.FamilyId, now, "reuse", ct);
+                LoginEventService.Add(db, row.UserId, row.DeviceId, client, "refresh_reuse", "refresh", now);
                 await db.SaveChangesAsync(ct);
             }
 
@@ -526,7 +567,7 @@ public sealed class AuthService(
         await Task.CompletedTask;
     }
 
-    private void EnqueueLoginNotice(User user, DateTimeOffset at)
+    private void EnqueueLoginNotice(User user, DateTimeOffset at, ClientInfo client, string method)
     {
         if (string.IsNullOrWhiteSpace(user.Email) || user.EmailVerifiedAt is null)
         {
@@ -534,7 +575,9 @@ public sealed class AuthService(
         }
 
         var email = user.Email!;
-        jobs.Enqueue<EmailJobs>(x => x.SendLoginNotice(email, at));
+        var ip = client.Ip;
+        var device = LoginNotice.DescribeUserAgent(client.UserAgent);
+        jobs.Enqueue<EmailJobs>(x => x.SendLoginNoticeDetailed(email, at, ip, device, method));
         logger.LogInformation("Enqueued login notice for user {UserId}.", user.Id);
     }
 

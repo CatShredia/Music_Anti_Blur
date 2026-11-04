@@ -43,6 +43,8 @@ public sealed class AppProblem
     public bool? CatalogReady { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public object? Snapshot { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public object? Quota { get; init; }
 }
 
 public static class ProblemResults
@@ -61,7 +63,8 @@ public static class ProblemResults
             LocalAvailable = ExtraBool(extras, "localAvailable"),
             PrivateReady = ExtraBool(extras, "privateReady"),
             CatalogReady = ExtraBool(extras, "catalogReady"),
-            Snapshot = extras is not null && extras.TryGetValue("snapshot", out var snapshot) ? snapshot : null
+            Snapshot = extras is not null && extras.TryGetValue("snapshot", out var snapshot) ? snapshot : null,
+            Quota = extras is not null && extras.TryGetValue("quota", out var quota) ? quota : null
         };
         return Microsoft.AspNetCore.Http.Results.Json(body, statusCode: status, contentType: "application/problem+json");
     }

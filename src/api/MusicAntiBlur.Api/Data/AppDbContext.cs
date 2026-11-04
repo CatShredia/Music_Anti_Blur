@@ -1,9 +1,10 @@
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using MusicAntiBlur.Api.Data.Entities;
 
 namespace MusicAntiBlur.Api.Data;
 
-public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
+public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options), IDataProtectionKeyContext
 {
     public DbSet<User> Users => Set<User>();
     public DbSet<UserSettings> UserSettings => Set<UserSettings>();
@@ -26,6 +27,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<LikedTrack> LikedTracks => Set<LikedTrack>();
     public DbSet<UserTrackStat> UserTrackStats => Set<UserTrackStat>();
     public DbSet<UserPlayHistory> UserPlayHistories => Set<UserPlayHistory>();
+    public DbSet<UserTwoFactor> UserTwoFactors => Set<UserTwoFactor>();
+    public DbSet<UserRecoveryCode> UserRecoveryCodes => Set<UserRecoveryCode>();
+    public DbSet<LoginEvent> LoginEvents => Set<LoginEvent>();
+    public DbSet<UserQuota> UserQuotas => Set<UserQuota>();
+    public DbSet<Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey> DataProtectionKeys =>
+        Set<Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -440,6 +447,63 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Track).WithMany().HasForeignKey(x => x.TrackId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UserTwoFactor>(e =>
+        {
+            e.ToTable("user_two_factor", t =>
+            {
+                t.HasCheckConstraint("ck_2fa_totp", "(totp_secret_protected IS NULL) = (totp_enabled_at IS NULL)");
+            });
+            e.HasKey(x => x.UserId);
+            e.HasOne(x => x.User).WithOne().HasForeignKey<UserTwoFactor>(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UserRecoveryCode>(e =>
+        {
+            e.ToTable("user_recovery_codes");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.HasIndex(x => new { x.UserId, x.CodeHash }).IsUnique().HasDatabaseName("ux_recovery_codes_user_hash");
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<LoginEvent>(e =>
+        {
+            e.ToTable("login_events", t =>
+            {
+                t.HasCheckConstraint("ck_login_events_result",
+                    "result IN ('success', 'bad_password', '2fa_required', '2fa_failed', 'refresh_reuse')");
+                t.HasCheckConstraint("ck_login_events_method",
+                    "method IN ('password', 'totp', 'email', 'recovery', 'refresh')");
+            });
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(x => x.Ip).HasMaxLength(64);
+            e.Property(x => x.UserAgent).HasMaxLength(512);
+            e.HasIndex(x => new { x.UserId, x.At, x.Id }).HasDatabaseName("ix_login_events_user_at");
+            e.HasIndex(x => x.At).HasDatabaseName("ix_login_events_at");
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UserQuota>(e =>
+        {
+            e.ToTable("user_quotas", t =>
+            {
+                t.HasCheckConstraint("ck_user_quotas_bytes", "max_bytes IS NULL OR max_bytes >= 0");
+                t.HasCheckConstraint("ck_user_quotas_files", "max_files IS NULL OR max_files >= 0");
+            });
+            e.HasKey(x => x.UserId);
+            e.HasOne(x => x.User).WithOne().HasForeignKey<UserQuota>(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey>(e =>
+        {
+            e.ToTable("data_protection_keys");
         });
     }
 }

@@ -24,6 +24,29 @@ namespace MusicAntiBlur.Api.Data.Migrations
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "pgcrypto");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("FriendlyName")
+                        .HasColumnType("text")
+                        .HasColumnName("friendly_name");
+
+                    b.Property<string>("Xml")
+                        .HasColumnType("text")
+                        .HasColumnName("xml");
+
+                    b.HasKey("Id")
+                        .HasName("pk_data_protection_keys");
+
+                    b.ToTable("data_protection_keys", (string)null);
+                });
+
             modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.Album", b =>
                 {
                     b.Property<Guid>("Id")
@@ -337,6 +360,94 @@ namespace MusicAntiBlur.Api.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.LikedTrack", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<Guid>("TrackId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("track_id");
+
+                    b.Property<DateTimeOffset>("LikedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("liked_at");
+
+                    b.HasKey("UserId", "TrackId")
+                        .HasName("pk_liked_tracks");
+
+                    b.HasIndex("TrackId")
+                        .HasDatabaseName("ix_liked_tracks_track");
+
+                    b.HasIndex("UserId", "LikedAt")
+                        .HasDatabaseName("ix_liked_tracks_user_liked_at");
+
+                    b.ToTable("liked_tracks", (string)null);
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.LoginEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("At")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("at");
+
+                    b.Property<Guid?>("DeviceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("device_id");
+
+                    b.Property<string>("Ip")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("ip");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("method");
+
+                    b.Property<DateTimeOffset?>("NotMeAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("not_me_at");
+
+                    b.Property<string>("Result")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("result");
+
+                    b.Property<string>("UserAgent")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("user_agent");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_login_events");
+
+                    b.HasIndex("At")
+                        .HasDatabaseName("ix_login_events_at");
+
+                    b.HasIndex("UserId", "At", "Id")
+                        .HasDatabaseName("ix_login_events_user_at");
+
+                    b.ToTable("login_events", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_login_events_method", "method IN ('password', 'totp', 'email', 'recovery', 'refresh')");
+
+                            t.HasCheckConstraint("ck_login_events_result", "result IN ('success', 'bad_password', '2fa_required', '2fa_failed', 'refresh_reuse')");
+                        });
+                });
+
             modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.ObjectDeletion", b =>
                 {
                     b.Property<Guid>("Id")
@@ -538,6 +649,88 @@ namespace MusicAntiBlur.Api.Data.Migrations
                             t.HasCheckConstraint("ck_ps_revision", "revision >= 0");
 
                             t.HasCheckConstraint("ck_ps_source", "source IS NULL OR source IN ('catalog', 'local', 'private')");
+                        });
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.Playlist", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("title");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_playlists");
+
+                    b.HasIndex("UserId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_playlists_user_liked")
+                        .HasFilter("kind = 'liked'");
+
+                    b.ToTable("playlists", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_playlists_kind", "kind IN ('liked', 'user')");
+
+                            t.HasCheckConstraint("ck_playlists_liked_title", "kind <> 'liked' OR title = 'Мне нравится'");
+
+                            t.HasCheckConstraint("ck_playlists_title", "char_length(btrim(title)) BETWEEN 1 AND 200");
+                        });
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.PlaylistTrack", b =>
+                {
+                    b.Property<Guid>("PlaylistId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("playlist_id");
+
+                    b.Property<Guid>("TrackId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("track_id");
+
+                    b.Property<DateTimeOffset>("AddedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("added_at");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.HasKey("PlaylistId", "TrackId")
+                        .HasName("pk_playlist_tracks");
+
+                    b.HasIndex("TrackId")
+                        .HasDatabaseName("ix_playlist_tracks_track");
+
+                    b.HasIndex("PlaylistId", "Position")
+                        .IsUnique()
+                        .HasDatabaseName("ux_playlist_tracks_position");
+
+                    b.ToTable("playlist_tracks", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_playlist_tracks_position", "position >= 0");
                         });
                 });
 
@@ -849,6 +1042,38 @@ namespace MusicAntiBlur.Api.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserPlayHistory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<DateTimeOffset>("PlayedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("played_at");
+
+                    b.Property<Guid>("TrackId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("track_id");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_user_play_history");
+
+                    b.HasIndex("TrackId")
+                        .HasDatabaseName("ix_user_play_history_track");
+
+                    b.HasIndex("UserId", "PlayedAt", "Id")
+                        .HasDatabaseName("ix_user_play_history_user");
+
+                    b.ToTable("user_play_history", (string)null);
+                });
+
             modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserPrivateRendition", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1038,6 +1263,70 @@ namespace MusicAntiBlur.Api.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserQuota", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<long?>("MaxBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("max_bytes");
+
+                    b.Property<int?>("MaxFiles")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_files");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("UserId")
+                        .HasName("pk_user_quotas");
+
+                    b.ToTable("user_quotas", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_user_quotas_bytes", "max_bytes IS NULL OR max_bytes >= 0");
+
+                            t.HasCheckConstraint("ck_user_quotas_files", "max_files IS NULL OR max_files >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserRecoveryCode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("code_hash");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("UsedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("used_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_user_recovery_codes");
+
+                    b.HasIndex("UserId", "CodeHash")
+                        .IsUnique()
+                        .HasDatabaseName("ux_recovery_codes_user_hash");
+
+                    b.ToTable("user_recovery_codes", (string)null);
+                });
+
             modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserSettings", b =>
                 {
                     b.Property<Guid>("UserId")
@@ -1061,68 +1350,6 @@ namespace MusicAntiBlur.Api.Data.Migrations
                     b.ToTable("user_settings", null, t =>
                         {
                             t.HasCheckConstraint("ck_settings_quality", "preferred_quality IN ('auto', 'aac_128', 'aac_256', 'src')");
-                        });
-                });
-
-            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserPlayHistory", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("id")
-                        .HasDefaultValueSql("gen_random_uuid()");
-
-                    b.Property<DateTimeOffset>("PlayedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("played_at");
-
-                    b.Property<Guid>("TrackId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("track_id");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("user_id");
-
-                    b.HasKey("Id")
-                        .HasName("pk_user_play_history");
-
-                    b.HasIndex("TrackId")
-                        .HasDatabaseName("ix_user_play_history_track");
-
-                    b.HasIndex("UserId", "PlayedAt", "Id")
-                        .HasDatabaseName("ix_user_play_history_user");
-
-                    b.ToTable("user_play_history", (string)null);
-                });
-
-            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserTrackStat", b =>
-                {
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("user_id");
-
-                    b.Property<Guid>("TrackId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("track_id");
-
-                    b.Property<DateTimeOffset>("LastPlayedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_played_at");
-
-                    b.Property<int>("PlayCount")
-                        .HasColumnType("integer")
-                        .HasColumnName("play_count");
-
-                    b.HasKey("UserId", "TrackId")
-                        .HasName("pk_user_track_stats");
-
-                    b.HasIndex("TrackId")
-                        .HasDatabaseName("ix_user_track_stats_track");
-
-                    b.ToTable("user_track_stats", null, t =>
-                        {
-                            t.HasCheckConstraint("ck_uts_play_count", "play_count >= 1");
                         });
                 });
 
@@ -1175,7 +1402,7 @@ namespace MusicAntiBlur.Api.Data.Migrations
                         });
                 });
 
-            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.LikedTrack", b =>
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserTrackStat", b =>
                 {
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid")
@@ -1185,104 +1412,54 @@ namespace MusicAntiBlur.Api.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("track_id");
 
-                    b.Property<DateTimeOffset>("LikedAt")
+                    b.Property<DateTimeOffset>("LastPlayedAt")
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("liked_at");
+                        .HasColumnName("last_played_at");
+
+                    b.Property<int>("PlayCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("play_count");
 
                     b.HasKey("UserId", "TrackId")
-                        .HasName("pk_liked_tracks");
+                        .HasName("pk_user_track_stats");
 
                     b.HasIndex("TrackId")
-                        .HasDatabaseName("ix_liked_tracks_track");
+                        .HasDatabaseName("ix_user_track_stats_track");
 
-                    b.HasIndex("UserId", "LikedAt")
-                        .HasDatabaseName("ix_liked_tracks_user_liked_at");
-
-                    b.ToTable("liked_tracks", (string)null);
+                    b.ToTable("user_track_stats", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_uts_play_count", "play_count >= 1");
+                        });
                 });
 
-            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.Playlist", b =>
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserTwoFactor", b =>
                 {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
+                    b.Property<Guid>("UserId")
                         .HasColumnType("uuid")
-                        .HasColumnName("id")
-                        .HasDefaultValueSql("gen_random_uuid()");
+                        .HasColumnName("user_id");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
+                    b.Property<bool>("EmailOtpEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("email_otp_enabled");
+
+                    b.Property<DateTimeOffset?>("TotpEnabledAt")
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
+                        .HasColumnName("totp_enabled_at");
 
-                    b.Property<string>("Kind")
-                        .IsRequired()
+                    b.Property<string>("TotpSecretProtected")
                         .HasColumnType("text")
-                        .HasColumnName("kind");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("title");
+                        .HasColumnName("totp_secret_protected");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("user_id");
+                    b.HasKey("UserId")
+                        .HasName("pk_user_two_factor");
 
-                    b.HasKey("Id")
-                        .HasName("pk_playlists");
-
-                    b.HasIndex("UserId")
-                        .HasDatabaseName("ix_playlists_user");
-
-                    b.HasIndex("UserId")
-                        .IsUnique()
-                        .HasDatabaseName("ux_playlists_user_liked")
-                        .HasFilter("kind = 'liked'");
-
-                    b.ToTable("playlists", null, t =>
+                    b.ToTable("user_two_factor", null, t =>
                         {
-                            t.HasCheckConstraint("ck_playlists_kind", "kind IN ('liked', 'user')");
-
-                            t.HasCheckConstraint("ck_playlists_liked_title", "kind <> 'liked' OR title = 'Мне нравится'");
-
-                            t.HasCheckConstraint("ck_playlists_title", "char_length(btrim(title)) BETWEEN 1 AND 200");
-                        });
-                });
-
-            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.PlaylistTrack", b =>
-                {
-                    b.Property<Guid>("PlaylistId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("playlist_id");
-
-                    b.Property<Guid>("TrackId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("track_id");
-
-                    b.Property<DateTimeOffset>("AddedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("added_at");
-
-                    b.Property<int>("Position")
-                        .HasColumnType("integer")
-                        .HasColumnName("position");
-
-                    b.HasKey("PlaylistId", "TrackId")
-                        .HasName("pk_playlist_tracks");
-
-                    b.HasIndex("TrackId")
-                        .HasDatabaseName("ix_playlist_tracks_track");
-
-                    b.HasIndex("PlaylistId", "Position")
-                        .IsUnique()
-                        .HasDatabaseName("ux_playlist_tracks_position");
-
-                    b.ToTable("playlist_tracks", null, t =>
-                        {
-                            t.HasCheckConstraint("ck_playlist_tracks_position", "position >= 0");
+                            t.HasCheckConstraint("ck_2fa_totp", "(totp_secret_protected IS NULL) = (totp_enabled_at IS NULL)");
                         });
                 });
 
@@ -1351,6 +1528,18 @@ namespace MusicAntiBlur.Api.Data.Migrations
                         .HasConstraintName("fk_liked_tracks_users_user_id");
 
                     b.Navigation("Track");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.LoginEvent", b =>
+                {
+                    b.HasOne("MusicAntiBlur.Api.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_login_events_users_user_id");
 
                     b.Navigation("User");
                 });
@@ -1485,6 +1674,27 @@ namespace MusicAntiBlur.Api.Data.Migrations
                     b.Navigation("Upload");
                 });
 
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserPlayHistory", b =>
+                {
+                    b.HasOne("MusicAntiBlur.Api.Data.Entities.Track", "Track")
+                        .WithMany()
+                        .HasForeignKey("TrackId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_user_play_history_tracks_track_id");
+
+                    b.HasOne("MusicAntiBlur.Api.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_user_play_history_users_user_id");
+
+                    b.Navigation("Track");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserPrivateRendition", b =>
                 {
                     b.HasOne("MusicAntiBlur.Api.Data.Entities.UserPrivateUpload", "Upload")
@@ -1510,6 +1720,30 @@ namespace MusicAntiBlur.Api.Data.Migrations
                     b.Navigation("Override");
                 });
 
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserQuota", b =>
+                {
+                    b.HasOne("MusicAntiBlur.Api.Data.Entities.User", "User")
+                        .WithOne()
+                        .HasForeignKey("MusicAntiBlur.Api.Data.Entities.UserQuota", "UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_user_quotas_users_user_id");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserRecoveryCode", b =>
+                {
+                    b.HasOne("MusicAntiBlur.Api.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_user_recovery_codes_users_user_id");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserSettings", b =>
                 {
                     b.HasOne("MusicAntiBlur.Api.Data.Entities.User", "User")
@@ -1522,21 +1756,21 @@ namespace MusicAntiBlur.Api.Data.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserPlayHistory", b =>
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserTrackOverride", b =>
                 {
                     b.HasOne("MusicAntiBlur.Api.Data.Entities.Track", "Track")
-                        .WithMany()
+                        .WithMany("Overrides")
                         .HasForeignKey("TrackId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_user_play_history_tracks_track_id");
+                        .HasConstraintName("fk_user_track_overrides_tracks_track_id");
 
                     b.HasOne("MusicAntiBlur.Api.Data.Entities.User", "User")
-                        .WithMany()
+                        .WithMany("Overrides")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_user_play_history_users_user_id");
+                        .HasConstraintName("fk_user_track_overrides_users_user_id");
 
                     b.Navigation("Track");
 
@@ -1564,23 +1798,14 @@ namespace MusicAntiBlur.Api.Data.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserTrackOverride", b =>
+            modelBuilder.Entity("MusicAntiBlur.Api.Data.Entities.UserTwoFactor", b =>
                 {
-                    b.HasOne("MusicAntiBlur.Api.Data.Entities.Track", "Track")
-                        .WithMany("Overrides")
-                        .HasForeignKey("TrackId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_user_track_overrides_tracks_track_id");
-
                     b.HasOne("MusicAntiBlur.Api.Data.Entities.User", "User")
-                        .WithMany("Overrides")
-                        .HasForeignKey("UserId")
+                        .WithOne()
+                        .HasForeignKey("MusicAntiBlur.Api.Data.Entities.UserTwoFactor", "UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_user_track_overrides_users_user_id");
-
-                    b.Navigation("Track");
+                        .HasConstraintName("fk_user_two_factor_users_user_id");
 
                     b.Navigation("User");
                 });
