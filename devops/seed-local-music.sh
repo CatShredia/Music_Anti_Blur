@@ -3,6 +3,13 @@
 # Каждая папка с аудио — минимум 4 трека (или все, если файлов меньше).
 set -euo pipefail
 
+# Launched as `bash ...` from PowerShell/cmd, Git Bash keeps the Windows PATH order:
+# C:\Windows\System32 (WSL bash.exe) comes before /usr/bin. Tools with a
+# `#!/usr/bin/env bash` shebang (flutter, dart) then hit WSL bash and fail with
+# "No such file or directory". Git's POSIX directories must come first.
+PATH="/usr/bin:/bin:$PATH"
+export PATH
+
 DEVOPS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$DEVOPS_ROOT/.." && pwd)"
 API_BASE="${API_BASE:-http://127.0.0.1:5080}"

@@ -5,6 +5,7 @@ using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Http;
 using MusicAntiBlur.Api.Media;
+using MusicAntiBlur.Api.Observability;
 using MusicAntiBlur.Api.Playback;
 using MusicAntiBlur.Api.Storage;
 using MusicAntiBlur.Api.Uploads;
@@ -43,6 +44,7 @@ public sealed class TranscodePrivateJob(
 
         var workDir = Path.Combine(Path.GetTempPath(), "mab-private-transcode", generationId.ToString("D"));
         Directory.CreateDirectory(workDir);
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             await ExecuteAsync(upload, workDir, ct);
@@ -63,6 +65,8 @@ public sealed class TranscodePrivateJob(
         finally
         {
             TryDeleteDir(workDir);
+            var result = upload.Status switch { "ready" => "ready", "failed" => "failed", _ => "retry" };
+            AppMetrics.TranscodeFinished("private", result, System.Diagnostics.Stopwatch.GetElapsedTime(started));
         }
     }
 

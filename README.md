@@ -36,17 +36,19 @@ bash devops/stop.sh
 | [docs/03-api-contract.md](docs/03-api-contract.md) | HTTP / SignalR, ошибки, rate limits |
 | [docs/04-operations.md](docs/04-operations.md) | FFmpeg, jobs, CDN/S3, health, backup, deploy |
 | [docs/05-local-setup.md](docs/05-local-setup.md) | Локальный запуск стека |
+| [docs/06-admin-and-operations.md](docs/06-admin-and-operations.md) | Админ-API, Hangfire, Grafana, скрипты запуска, проверка квот |
 
 ## Репозиторий
 
 | Путь | Зачем |
 |---|---|
 | [docs/05-local-setup.md](docs/05-local-setup.md) | Как поднять Compose, API и Flutter |
-| [docker-compose.yml](docker-compose.yml) | Postgres, Redis, MailHog, MinIO |
+| [docker-compose.yml](docker-compose.yml) | Postgres, Redis, MailHog, MinIO; профиль `observability` — Prometheus, Loki, Grafana |
 | [.env.local.example](.env.local.example) | Шаблон секретов для локалки (копировать в `.env`) |
 | [.env.example](.env.example) | Имена переменных окружения |
 | [devops/](devops/) | `start` / `stop`, seed, upload в каталог |
 | [devops/yandex-storage-cdn.md](devops/yandex-storage-cdn.md) | Локальный MinIO и (позже) Yandex |
 | [src/api/](src/api/) | ASP.NET Core (.NET 10) |
 | [src/mobile/](src/mobile/) | Flutter-клиент |
-| [.github/workflows/ci.yml](.github/workflows/ci.yml) | CI на ветке `develop` |
+| [devops/observability/](devops/observability/) | Конфиги Prometheus, Loki, дашборды и алерты Grafana |
+| [.github/workflows/ci.yml](.github/workflows/ci.yml) | CI для `develop` и `main`: тесты, миграции, APK |

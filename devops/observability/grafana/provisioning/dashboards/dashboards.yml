@@ -1,0 +1,9 @@
+apiVersion: 1
+
+providers:
+  - name: music-anti-blur
+    folder: MusicAntiBlur
+    type: file
+    disableDeletion: true
+    options:
+      path: /var/lib/grafana/dashboards

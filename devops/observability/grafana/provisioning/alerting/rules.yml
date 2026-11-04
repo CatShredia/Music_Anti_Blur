@@ -1,0 +1,304 @@
+apiVersion: 1
+groups:
+- orgId: 1
+  name: music-anti-blur
+  folder: MusicAntiBlur
+  interval: 1m
+  rules:
+  - uid: mab-transcode-failed
+    title: Transcode failed
+    condition: C
+    for: 0m
+    noDataState: OK
+    execErrState: Error
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 900
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: sum(increase(mab_transcode_jobs_total{result="failed"}[10m]))
+        instant: true
+        datasource:
+          type: prometheus
+          uid: prometheus
+    - refId: B
+      datasourceUid: __expr__
+      model:
+        refId: B
+        type: reduce
+        expression: A
+        reducer: last
+        datasource:
+          type: __expr__
+          uid: __expr__
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+        datasource:
+          type: __expr__
+          uid: __expr__
+    annotations:
+      summary: Перекодирование завершилось ошибкой
+      description: 'Хотя бы один transcode за 10 минут ушёл в Failed. Причина — в
+        Hangfire и в ErrorMessage загрузки. Дашборд: ${GRAFANA_PUBLIC_URL}/d/mab-jobs
+        · Hangfire: ${API_PUBLIC_URL}/hangfire'
+    labels:
+      severity: warning
+  - uid: mab-hangfire-failed
+    title: Hangfire failed jobs grow
+    condition: C
+    for: 0m
+    noDataState: OK
+    execErrState: Error
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 900
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: delta(mab_hangfire_jobs{state="failed"}[15m])
+        instant: true
+        datasource:
+          type: prometheus
+          uid: prometheus
+    - refId: B
+      datasourceUid: __expr__
+      model:
+        refId: B
+        type: reduce
+        expression: A
+        reducer: last
+        datasource:
+          type: __expr__
+          uid: __expr__
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+        datasource:
+          type: __expr__
+          uid: __expr__
+    annotations:
+      summary: Растёт число упавших задач Hangfire
+      description: 'За 15 минут прибавились задачи в состоянии Failed. Дашборд: ${GRAFANA_PUBLIC_URL}/d/mab-jobs
+        · Hangfire: ${API_PUBLIC_URL}/hangfire'
+    labels:
+      severity: warning
+  - uid: mab-api-5xx
+    title: API 5xx ratio
+    condition: C
+    for: 5m
+    noDataState: OK
+    execErrState: Error
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 900
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: sum(rate(http_server_request_duration_seconds_count{job="api",http_response_status_code=~"5.."}[5m]))
+          / clamp_min(sum(rate(http_server_request_duration_seconds_count{job="api"}[5m])),
+          1e-9)
+        instant: true
+        datasource:
+          type: prometheus
+          uid: prometheus
+    - refId: B
+      datasourceUid: __expr__
+      model:
+        refId: B
+        type: reduce
+        expression: A
+        reducer: last
+        datasource:
+          type: __expr__
+          uid: __expr__
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0.05
+        datasource:
+          type: __expr__
+          uid: __expr__
+    annotations:
+      summary: Доля ответов 5xx выше 5 %
+      description: 'Доля ошибок сервера выше 5 % в течение 5 минут. Дашборд: ${GRAFANA_PUBLIC_URL}/d/mab-api
+        · Hangfire: ${API_PUBLIC_URL}/hangfire'
+    labels:
+      severity: warning
+  - uid: mab-api-latency
+    title: API p95 latency
+    condition: C
+    for: 10m
+    noDataState: OK
+    execErrState: Error
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 900
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{job="api"}[5m])))
+        instant: true
+        datasource:
+          type: prometheus
+          uid: prometheus
+    - refId: B
+      datasourceUid: __expr__
+      model:
+        refId: B
+        type: reduce
+        expression: A
+        reducer: last
+        datasource:
+          type: __expr__
+          uid: __expr__
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 2
+        datasource:
+          type: __expr__
+          uid: __expr__
+    annotations:
+      summary: p95 латентности API выше 2 с
+      description: 'p95 латентности выше 2 секунд 10 минут подряд. Дашборд: ${GRAFANA_PUBLIC_URL}/d/mab-api
+        · Hangfire: ${API_PUBLIC_URL}/hangfire'
+    labels:
+      severity: warning
+  - uid: mab-api-down
+    title: API down
+    condition: C
+    for: 2m
+    noDataState: Alerting
+    execErrState: Error
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 900
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: up{job="api"}
+        instant: true
+        datasource:
+          type: prometheus
+          uid: prometheus
+    - refId: B
+      datasourceUid: __expr__
+      model:
+        refId: B
+        type: reduce
+        expression: A
+        reducer: last
+        datasource:
+          type: __expr__
+          uid: __expr__
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: lt
+            params:
+            - 1
+        datasource:
+          type: __expr__
+          uid: __expr__
+    annotations:
+      summary: API не отвечает
+      description: 'Prometheus не может собрать метрики API 2 минуты. Возможна и ошибка
+        токена /metrics. Дашборд: ${GRAFANA_PUBLIC_URL}/d/mab-api · Hangfire: ${API_PUBLIC_URL}/hangfire'
+    labels:
+      severity: critical
+  - uid: mab-email-failed
+    title: Emails failing
+    condition: C
+    for: 0m
+    noDataState: OK
+    execErrState: Error
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 900
+        to: 0
+      datasourceUid: prometheus
+      model:
+        refId: A
+        expr: sum(increase(mab_emails_total{result="failed"}[15m]))
+        instant: true
+        datasource:
+          type: prometheus
+          uid: prometheus
+    - refId: B
+      datasourceUid: __expr__
+      model:
+        refId: B
+        type: reduce
+        expression: A
+        reducer: last
+        datasource:
+          type: __expr__
+          uid: __expr__
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: B
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+        datasource:
+          type: __expr__
+          uid: __expr__
+    annotations:
+      summary: Письма не уходят
+      description: 'За 15 минут были ошибки отправки писем через SMTP. Дашборд: ${GRAFANA_PUBLIC_URL}/d/mab-jobs
+        · Hangfire: ${API_PUBLIC_URL}/hangfire'
+    labels:
+      severity: warning

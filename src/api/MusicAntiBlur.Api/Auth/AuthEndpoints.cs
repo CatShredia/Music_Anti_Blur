@@ -16,10 +16,19 @@ public static class AuthEndpoints
             Results.Json(await svc.RegisterAsync(req, DeviceId(http), ClientIp(http), ct), statusCode: StatusCodes.Status201Created));
 
         auth.MapPost("/login", async (LoginRequest req, AuthService svc, HttpContext http, CancellationToken ct) =>
-            Results.Ok(await svc.LoginAsync(req, DeviceId(http), ClientIp(http), ct)));
+            Results.Ok(await svc.LoginAsync(req, DeviceId(http), Client(http), ct)));
+
+        auth.MapPost("/2fa/email", async (ChallengeRequest req, TwoFactorService svc, HttpContext http, CancellationToken ct) =>
+        {
+            await svc.SendEmailCodeAsync(req.ChallengeId, ClientIp(http), ct);
+            return Results.StatusCode(StatusCodes.Status202Accepted);
+        });
+
+        auth.MapPost("/2fa/verify", async (VerifyTwoFactorRequest req, AuthService svc, HttpContext http, CancellationToken ct) =>
+            Results.Ok(await svc.VerifyTwoFactorAsync(req, Client(http), ct)));
 
         auth.MapPost("/refresh", async (RefreshRequest req, AuthService svc, HttpContext http, CancellationToken ct) =>
-            Results.Ok(await svc.RefreshAsync(req.RefreshToken, DeviceId(http), ClientIp(http), ct)));
+            Results.Ok(await svc.RefreshAsync(req.RefreshToken, DeviceId(http), Client(http), ct)));
 
         auth.MapPost("/logout", async (LogoutRequest req, AuthService svc, CancellationToken ct) =>
         {
@@ -91,6 +100,39 @@ public static class AuthEndpoints
             return Results.NoContent();
         });
 
+        var twoFa = me.MapGroup("/2fa");
+        twoFa.MapGet("", async (TwoFactorService svc, ClaimsPrincipal user, CancellationToken ct) =>
+            Results.Ok(await svc.GetStatusAsync(UserId(user), ct)));
+        twoFa.MapPost("/totp/setup", async (PasswordRequest req, TwoFactorService svc, ClaimsPrincipal user, CancellationToken ct) =>
+            Results.Ok(await svc.BeginTotpSetupAsync(UserId(user), req.CurrentPassword, ct)));
+        twoFa.MapPost("/totp/confirm", async (CodeOnlyRequest req, TwoFactorService svc, ClaimsPrincipal user, CancellationToken ct) =>
+            Results.Ok(await svc.ConfirmTotpAsync(UserId(user), req.Code, ct)));
+        twoFa.MapPost("/email/enable", async (PasswordRequest req, TwoFactorService svc, ClaimsPrincipal user, CancellationToken ct) =>
+        {
+            var codes = await svc.EnableEmailAsync(UserId(user), req.CurrentPassword, ct);
+            return codes is null ? Results.NoContent() : Results.Ok(codes);
+        });
+        twoFa.MapPost("/email/disable", async (PasswordRequest req, TwoFactorService svc, ClaimsPrincipal user, CancellationToken ct) =>
+        {
+            await svc.DisableEmailAsync(UserId(user), req.CurrentPassword, ct);
+            return Results.NoContent();
+        });
+        twoFa.MapPost("/recovery-codes/regenerate", async (PasswordRequest req, TwoFactorService svc, ClaimsPrincipal user, CancellationToken ct) =>
+            Results.Ok(await svc.RegenerateRecoveryCodesAsync(UserId(user), req.CurrentPassword, ct)));
+        twoFa.MapPost("/disable", async (DisableTwoFactorRequest req, TwoFactorService svc, ClaimsPrincipal user, CancellationToken ct) =>
+        {
+            await svc.DisableAllAsync(UserId(user), req.CurrentPassword, req.Code, ct);
+            return Results.NoContent();
+        });
+
+        me.MapGet("/login-events", async (string? cursor, int? limit, LoginEventService svc, ClaimsPrincipal user, HttpContext http, CancellationToken ct) =>
+            Results.Ok(await svc.ListAsync(UserId(user), DeviceId(http), cursor, limit, ct)));
+        me.MapPost("/login-events/{eventId:guid}/not-me", async (Guid eventId, LoginEventService svc, ClaimsPrincipal user, CancellationToken ct) =>
+        {
+            await svc.NotMeAsync(UserId(user), eventId, ct);
+            return Results.NoContent();
+        });
+
         me.MapPost("/identifiers/login", async (BindLoginRequest req, AuthService svc, ClaimsPrincipal user, CancellationToken ct) =>
         {
             await svc.BindLoginAsync(UserId(user), req.Login, req.CurrentPassword, ct);
@@ -115,8 +157,15 @@ public static class AuthEndpoints
         return Guid.TryParse(header, out var id) ? id : Guid.NewGuid();
     }
 
+    /// <summary>
+    /// Client address. X-Forwarded-For is honoured only through UseForwardedHeaders,
+    /// which trusts the proxies listed in ForwardedHeaders:KnownProxies.
+    /// </summary>
     private static string ClientIp(HttpContext http) =>
         http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    private static ClientInfo Client(HttpContext http) =>
+        new(ClientIp(http), http.Request.Headers.UserAgent.FirstOrDefault());
 }
 
 public static class ExceptionHandling

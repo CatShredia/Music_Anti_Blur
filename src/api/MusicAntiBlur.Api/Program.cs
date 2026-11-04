@@ -6,6 +6,8 @@ using Hangfire;
 using Hangfire.PostgreSql;
 using MailKit.Net.Smtp;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -27,6 +29,7 @@ using MusicAntiBlur.Api.Uploads;
 using MusicAntiBlur.Api.Library;
 using MusicAntiBlur.Api.Overrides;
 using MusicAntiBlur.Api.Playback;
+using MusicAntiBlur.Api.Observability;
 using StackExchange.Redis;
 
 DotEnv.LoadFromAncestors(Directory.GetCurrentDirectory());
@@ -35,6 +38,7 @@ DotEnv.LoadFromAncestors(AppContext.BaseDirectory);
 var builder = WebApplication.CreateBuilder(args);
 
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 256 * 1024);
+builder.AddObservability();
 
 var jwtKey = builder.Configuration["Jwt:Key"]
     ?? throw new InvalidOperationException("Jwt:Key is required.");
@@ -83,6 +87,28 @@ builder.Services.AddSingleton<PlaybackPresenceStore>();
 builder.Services.AddSingleton<IPlaybackHubPublisher, PlaybackHubPublisher>();
 builder.Services.AddScoped<PlaybackStateService>();
 builder.Services.AddScoped<PlayHistoryService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddScoped<TwoFactorService>();
+builder.Services.AddScoped<LoginEventService>();
+builder.Services.AddScoped<QuotaService>();
+// TOTP secrets are protected with these keys; they live in Postgres and must be backed up with it.
+builder.Services.AddDataProtection()
+    .SetApplicationName("MusicAntiBlur")
+    .PersistKeysToDbContext<AppDbContext>();
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+    foreach (var raw in (builder.Configuration["ForwardedHeaders:KnownProxies"] ?? "")
+                 .Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries))
+    {
+        if (System.Net.IPAddress.TryParse(raw, out var ip))
+        {
+            options.KnownProxies.Add(ip);
+        }
+    }
+});
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -176,12 +202,14 @@ builder.Services.AddSignalR()
     })
     .AddStackExchangeRedis(redisCs);
 
-builder.Services.AddHangfire(config => config
+builder.Services.AddSingleton<HangfireLogContextFilter>();
+builder.Services.AddHangfire((sp, config) => config
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
     .UseSimpleAssemblyNameTypeSerializer()
     .UseRecommendedSerializerSettings()
     .UsePostgreSqlStorage(options => options.UseNpgsqlConnection(hangfireCs),
-        new PostgreSqlStorageOptions { SchemaName = "hangfire" }));
+        new PostgreSqlStorageOptions { SchemaName = "hangfire" })
+    .UseFilter(sp.GetRequiredService<HangfireLogContextFilter>()));
 builder.Services.AddHangfireServer(options => options.WorkerCount = 2);
 
 builder.Services.AddEndpointsApiExplorer();
@@ -202,7 +230,14 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+// Without configured proxies the list is empty and X-Forwarded-For is ignored (no IP spoofing).
+if (!string.IsNullOrWhiteSpace(app.Configuration["ForwardedHeaders:KnownProxies"]))
+{
+    app.UseForwardedHeaders();
+}
+
 app.UseMiddleware<RequestIdMiddleware>();
+app.UseRequestLogging();
 app.UseApiExceptionHandler();
 
 if (app.Environment.IsDevelopment())
@@ -213,6 +248,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseAuthentication();
+app.UseUserLogContext();
 app.UseAuthorization();
 
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
@@ -226,8 +262,10 @@ app.MapPlayHistoryEndpoints();
 app.MapCatalogMediaEndpoints();
 app.MapLibraryEndpoints();
 app.MapOverrideEndpoints();
+app.MapQuotaEndpoints();
 app.MapPlaybackEndpoints();
 app.MapHub<PlaybackHub>("/hubs/playback");
+app.MapMetrics();
 
 app.MapGet("/health", async (AppDbContext db, CancellationToken ct) =>
 {

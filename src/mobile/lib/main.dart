@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'account/devices_screen.dart';
+import 'account/security_models.dart';
+import 'account/two_factor_screens.dart';
 import 'api/api_client.dart';
 import 'catalog/catalog_screens.dart';
 import 'catalog/history_screen.dart';
@@ -101,6 +103,16 @@ class MusicAntiBlurApp extends StatelessWidget {
       ),
       GoRoute(path: '/settings', builder: (_, _) => SettingsScreen(api: api)),
       GoRoute(path: '/devices', builder: (_, _) => DevicesScreen(api: api)),
+      GoRoute(path: '/security', builder: (_, _) => SecurityScreen(api: api)),
+      GoRoute(path: '/login-history', builder: (_, _) => LoginHistoryScreen(api: api)),
+      GoRoute(
+        path: '/2fa',
+        redirect: (_, state) => state.extra is TwoFactorChallenge ? null : '/login',
+        builder: (_, state) => TwoFactorLoginScreen(
+          api: api,
+          challenge: state.extra! as TwoFactorChallenge,
+        ),
+      ),
       GoRoute(
         path: '/liked',
         builder: (_, _) => LikedPlaylistScreen(api: api),
@@ -213,15 +225,20 @@ class _LoginScreenState extends State<LoginScreen> {
                 _feedback = FormFeedback.empty;
               });
               try {
-                await widget.api.login(
+                final result = await widget.api.login(
                   identifierType: _type,
                   identifier: _id.text.trim(),
                   password: _password.text,
                 );
-                if (context.mounted) {
-                  unawaited(PlayerScope.maybeOf(context)?.restoreIfNeeded());
-                  context.go('/home');
+                if (!context.mounted) {
+                  return;
                 }
+                if (result is TwoFactorChallenge) {
+                  context.push('/2fa', extra: result);
+                  return;
+                }
+                unawaited(PlayerScope.maybeOf(context)?.restoreIfNeeded());
+                context.go('/home');
               } catch (e) {
                 if (mounted) {
                   setState(() => _feedback = FormFeedback.fromError(e));
@@ -624,6 +641,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   String _quality = 'auto';
   bool _loaded = false;
+  StorageQuota? _quota;
   FormFeedback _feedback = FormFeedback.empty;
 
   static const _qualities = ['auto', 'aac_128', 'aac_256', 'src'];
@@ -651,6 +669,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() => _loaded = true);
       }
     });
+    widget.api.quota().then((q) {
+      if (mounted) {
+        setState(() => _quota = q);
+      }
+    }).catchError((_) {});
+  }
+
+  String get _quotaLabel {
+    final q = _quota;
+    if (q == null) {
+      return '…';
+    }
+    return '${StorageQuota.formatBytes(q.usedBytes)} из ${StorageQuota.formatBytes(q.maxBytes)}';
+  }
+
+  Future<void> _showQuota() async {
+    final q = _quota;
+    if (q == null) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: VizeColors.bgElevated,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Приватное хранилище', style: Theme.of(context).textTheme.headlineMedium),
+              const SizedBox(height: 8),
+              const Text(
+                'Здесь лежат ваши копии треков, загруженные на сервер.',
+                style: TextStyle(color: VizeColors.accentMuted),
+              ),
+              const SizedBox(height: 16),
+              Text('Объём: $_quotaLabel', style: const TextStyle(color: VizeColors.text)),
+              const SizedBox(height: 6),
+              LinearProgressIndicator(value: q.bytesRatio),
+              const SizedBox(height: 16),
+              Text('Файлы: ${q.usedFiles} из ${q.maxFiles}', style: const TextStyle(color: VizeColors.text)),
+              const SizedBox(height: 6),
+              LinearProgressIndicator(value: q.filesRatio),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _pickQuality() async {
@@ -720,6 +790,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
             label: 'Устройства',
             value: 'Сессии',
             onTap: () => context.push('/devices'),
+          ),
+          VizeSettingRow(
+            icon: Icons.shield_outlined,
+            label: 'Двухфакторная защита',
+            value: 'Вход',
+            onTap: () => context.push('/security'),
+          ),
+          VizeSettingRow(
+            icon: Icons.manage_history_outlined,
+            label: 'Журнал входов',
+            value: '90 дней',
+            onTap: () => context.push('/login-history'),
+          ),
+          VizeSettingRow(
+            icon: Icons.cloud_outlined,
+            label: 'Хранилище',
+            value: _quotaLabel,
+            onTap: _showQuota,
           ),
           VizeSettingRow(
             icon: Icons.headphones_outlined,
