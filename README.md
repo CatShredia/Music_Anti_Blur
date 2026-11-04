@@ -36,6 +36,7 @@ bash devops/stop.sh
 | [docs/03-api-contract.md](docs/03-api-contract.md) | HTTP / SignalR, ошибки, rate limits |
 | [docs/04-operations.md](docs/04-operations.md) | FFmpeg, jobs, CDN/S3, health, backup, deploy |
 | [docs/05-local-setup.md](docs/05-local-setup.md) | Локальный запуск стека |
+| [docs/06-admin-and-operations.md](docs/06-admin-and-operations.md) | Админ-API, Hangfire, Grafana, скрипты запуска, проверка квот |
 
 ## Репозиторий
 
