@@ -36,6 +36,35 @@ String? routeForText(String text) {
   return uri == null ? null : routeForLink(uri);
 }
 
+/// Почему ссылка не подошла (текст для пользователя) или `null`, если она корректна.
+String? describeLinkProblem(String text) {
+  final value = text.trim();
+  if (value.isEmpty) {
+    return 'Вставьте ссылку';
+  }
+  final uri = Uri.tryParse(value);
+  if (uri == null || (!uri.hasScheme && !value.startsWith('/'))) {
+    return 'Это не ссылка. Пример: https://…/s/playlist/…';
+  }
+  if (routeForLink(uri) != null) {
+    return null;
+  }
+  final segments = [...uri.pathSegments.where((s) => s.isNotEmpty)];
+  if (uri.scheme == 'musicantiblur' && uri.host.isNotEmpty && uri.host != 'app') {
+    segments.insert(0, uri.host);
+  }
+  if (segments.isNotEmpty && segments.first == 's') {
+    segments.removeAt(0);
+  }
+  if (segments.length == 2 && shareTypes.contains(segments[0])) {
+    return 'В ссылке неверный идентификатор';
+  }
+  if (segments.isNotEmpty && shareTypes.contains(segments[0])) {
+    return 'Ссылка неполная: не хватает идентификатора';
+  }
+  return 'Ссылка должна вести на трек, альбом или плейлист';
+}
+
 /// Нужен ли вход для маршрута: ссылки на контент открываются только авторизованным.
 bool isContentRoute(String path) =>
     path.startsWith('/track/') || path.startsWith('/album/') || path.startsWith('/playlist/') || path.startsWith('/s/');

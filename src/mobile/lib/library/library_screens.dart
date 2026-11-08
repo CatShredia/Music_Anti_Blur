@@ -374,11 +374,21 @@ class _LinkDialog extends StatefulWidget {
 
 class _LinkDialogState extends State<_LinkDialog> {
   final _controller = TextEditingController();
+  String? _error;
 
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  void _submit() {
+    final problem = describeLinkProblem(_controller.text);
+    if (problem != null) {
+      setState(() => _error = problem);
+      return;
+    }
+    Navigator.pop(context, routeForText(_controller.text));
   }
 
   @override
@@ -388,13 +398,20 @@ class _LinkDialogState extends State<_LinkDialog> {
       content: TextField(
         controller: _controller,
         autofocus: true,
-        decoration: const InputDecoration(hintText: 'https://…/s/playlist/…'),
+        keyboardType: TextInputType.url,
+        onChanged: (_) {
+          if (_error != null) {
+            setState(() => _error = null);
+          }
+        },
+        onSubmitted: (_) => _submit(),
+        decoration: InputDecoration(hintText: 'https://…/s/playlist/…', errorText: _error),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
         FilledButton(
           style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
-          onPressed: () => Navigator.pop(context, _controller.text),
+          onPressed: _submit,
           child: const Text('Открыть'),
         ),
       ],
@@ -478,16 +495,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _openLink() async {
-    final text = await showDialog<String>(context: context, builder: (_) => const _LinkDialog());
-    if (text == null || !mounted) {
+    final route = await showDialog<String>(context: context, builder: (_) => const _LinkDialog());
+    if (route == null || !mounted) {
       return;
     }
-    final route = routeForText(text);
-    if (route == null) {
-      showVizeMessage(context, 'Это не ссылка на трек, альбом или плейлист');
+    // Даём диалогу полностью закрыться, прежде чем менять стек маршрутов.
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (!mounted) {
       return;
     }
-    await context.push(route);
+    try {
+      await context.push(route);
+    } catch (e) {
+      if (mounted) {
+        showVizeError(context, e);
+      }
+      return;
+    }
     if (mounted) {
       await _load();
     }
@@ -656,6 +680,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
   PlaylistDetail? _playlist;
   List<LikedPlaylistTrack> _tracks = const [];
   String? _error;
+  bool _notFound = false;
   bool _loading = true;
   bool _busy = false;
 
@@ -669,6 +694,7 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
     setState(() {
       _loading = _playlist == null;
       _error = null;
+      _notFound = false;
     });
     try {
       PlaylistDetail detail;
@@ -690,8 +716,10 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final missing = e is ApiException && e.status == 404;
         setState(() {
-          _error = _errorText(e);
+          _notFound = missing;
+          _error = missing ? 'Плейлист не найден или стал приватным' : _errorText(e);
           _loading = false;
         });
       }
@@ -989,7 +1017,13 @@ class _PlaylistScreenState extends State<PlaylistScreen> {
                     children: [
                       Text(_error ?? 'Не найдено', style: const TextStyle(color: VizeColors.danger)),
                       const SizedBox(height: 16),
-                      VizePrimaryButton(label: 'Повторить', onPressed: _load),
+                      if (_notFound)
+                        VizePrimaryButton(
+                          label: 'К библиотеке',
+                          onPressed: () => context.canPop() ? context.pop() : context.go('/library'),
+                        )
+                      else
+                        VizePrimaryButton(label: 'Повторить', onPressed: _load),
                     ],
                   ),
                 )

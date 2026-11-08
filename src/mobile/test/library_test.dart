@@ -49,6 +49,19 @@ void main() {
       expect(routeForText('hello world'), isNull);
     });
 
+    test('describeLinkProblem is null for valid links', () {
+      expect(describeLinkProblem('https://api/s/playlist/$_id'), isNull);
+      expect(describeLinkProblem('  musicantiblur://app/album/$_id '), isNull);
+    });
+
+    test('describeLinkProblem explains what is wrong', () {
+      expect(describeLinkProblem('   '), 'Вставьте ссылку');
+      expect(describeLinkProblem('hello'), startsWith('Это не ссылка'));
+      expect(describeLinkProblem('https://api/s/album/1234'), 'В ссылке неверный идентификатор');
+      expect(describeLinkProblem('musicantiblur://app/track'), startsWith('Ссылка неполная'));
+      expect(describeLinkProblem('https://api/s/artist/$_id'), startsWith('Ссылка должна вести'));
+    });
+
     test('content routes need a session', () {
       expect(isContentRoute('/playlist/$_id'), isTrue);
       expect(isContentRoute('/home'), isFalse);
