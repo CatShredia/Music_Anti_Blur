@@ -95,6 +95,8 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze --fatal-infos
       - run: flutter test --coverage
+      - name: Build web admin
+        run: flutter build web -t lib/main_admin.dart --output build/web_admin
       - uses: actions/upload-artifact@v4
         if: always()
         with:

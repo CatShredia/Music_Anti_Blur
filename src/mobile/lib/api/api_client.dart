@@ -737,6 +737,10 @@ class ApiClient {
     return CatalogPage.fromJson(res.data as Map<String, dynamic>, SearchItem.fromJson);
   }
 
+  /// Для расширений (админка): запрос через общий Dio с токеном и разбором ошибок API.
+  Future<Response<dynamic>> send(Future<Response<dynamic>> Function(Dio dio) run) =>
+      _send(() => run(_dio));
+
   Future<Response<dynamic>> _send(Future<Response<dynamic>> Function() run) async {
     try {
       return await run();

@@ -154,5 +154,6 @@ public static class RecurringJobSetup
         RecurringJob.AddOrUpdate<MaintenanceJobs>("cleanup-auth-tokens", x => x.CleanupExpiredAuthTokens(), "15 * * * *");
         RecurringJob.AddOrUpdate<StorageCleanupJobs>("storage-sweep", x => x.Sweep(), "*/5 * * * *");
         RecurringJob.AddOrUpdate<MaintenanceJobs>("cleanup-login-events", x => x.CleanupLoginEvents(), "30 3 * * *");
+        RecurringJob.AddOrUpdate<StorageCleanupJobs>("purge-deleted-tracks", x => x.PurgeDeletedTracks(), "45 3 * * *");
     }
 }

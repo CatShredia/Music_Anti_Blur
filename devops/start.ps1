@@ -125,6 +125,8 @@ $script:Messages = @{
         flutter_pub_offline   = "Нет сети (pub.dev) — flutter pub get пропускаем, используем локальный кэш."
         flutter_pub_fail      = "flutter pub get не удался."
         flutter_start         = "Запуск Flutter ({0}) в отдельном окне..."
+        admin_start           = "Запуск веб-админки (Chrome, порт 8090) в отдельном окне..."
+        admin_no_flutter      = "Flutter не найден — веб-админка не запущена."
         flutter_bad_id        = "Некорректный id устройства Flutter: '{0}'."
         chrome_missing        = "В flutter devices нет chrome."
         done_server           = "Сервер запущен без Flutter. Остановка: devops\stop.cmd"
@@ -230,6 +232,8 @@ $script:Messages = @{
         flutter_pub_offline   = "No network (pub.dev) — skipping flutter pub get, using local cache."
         flutter_pub_fail      = "flutter pub get failed."
         flutter_start         = "Starting Flutter ({0}) in a new window..."
+        admin_start           = "Starting web admin (Chrome, port 8090) in a new window..."
+        admin_no_flutter      = "Flutter not found - web admin skipped."
         flutter_bad_id        = "Invalid Flutter device id: '{0}'."
         chrome_missing        = "chrome not found in flutter devices."
         done_server           = "Server running without Flutter. Stop: devops\stop.cmd"
@@ -1040,7 +1044,7 @@ function Start-PowerShellWindow([string]$Title, [string]$PidName, [string]$Scrip
     Move-ProcessToCallerDesktop $proc
 }
 
-function Start-FlutterWindow([string]$Title, [string]$DeviceId, [string]$PidName, [bool]$RunPubGet) {
+function Start-FlutterWindow([string]$Title, [string]$DeviceId, [string]$PidName, [bool]$RunPubGet, [string]$ExtraArgs = "") {
     $titleEsc = $Title.Replace("'", "''")
     $lines = New-Object System.Collections.Generic.List[string]
     [void]$lines.Add("`$Host.UI.RawUI.WindowTitle = '$titleEsc'")
@@ -1049,7 +1053,11 @@ function Start-FlutterWindow([string]$Title, [string]$DeviceId, [string]$PidName
         [void]$lines.Add("flutter pub get")
         [void]$lines.Add("if (`$LASTEXITCODE -ne 0) { Write-Host 'flutter pub get failed.' -ForegroundColor Red; pause; exit `$LASTEXITCODE }")
     }
-    [void]$lines.Add("flutter run --device-id=$DeviceId")
+    $runLine = "flutter run --device-id=$DeviceId"
+    if ($ExtraArgs) {
+        $runLine = "$runLine $ExtraArgs"
+    }
+    [void]$lines.Add($runLine)
     Start-PowerShellWindow -Title $Title -PidName $PidName -ScriptBody ($lines -join "`r`n")
 }
 
@@ -1116,6 +1124,20 @@ function Start-FlutterDev {
         $safe = $id -replace '[^\w.-]', '-'
         Start-FlutterWindow -Title "Music Anti Blur — Flutter ($id)" -DeviceId $id -PidName "flutter-$slot-$safe.pid" -RunPubGet $false
     }
+}
+
+# Веб-админка каталога: всегда в локальном режиме, независимо от выбранных клиентов.
+function Start-AdminWeb([bool]$PubGetDone) {
+    if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) {
+        Write-Warn (T "admin_no_flutter")
+        return
+    }
+    New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
+    if (-not $PubGetDone) {
+        Invoke-FlutterPubGet
+    }
+    Write-Info (T "admin_start")
+    Start-FlutterWindow -Title "Music Anti Blur — Admin web" -DeviceId "chrome" -PidName "flutter-admin.pid" -RunPubGet $false -ExtraArgs "-t lib/main_admin.dart --web-port 8090"
 }
 
 function Get-LanIPv4 {
@@ -1459,6 +1481,10 @@ if ($kind -eq "local" -and $needFlutter) {
     Start-FlutterDev -DeviceIds $resolvedIds
 }
 
+if ($kind -eq "local") {
+    Start-AdminWeb -PubGetDone ([bool]$needFlutter)
+}
+
 Write-Host ""
 Write-Host "HTTP API     http://127.0.0.1:5080" -ForegroundColor DarkGray
 Write-Host "Swagger      http://127.0.0.1:5080/swagger  (Development)" -ForegroundColor DarkGray
@@ -1466,6 +1492,9 @@ Write-Host "MailHog      http://127.0.0.1:8025" -ForegroundColor DarkGray
 Write-Host "MinIO S3     http://127.0.0.1:9000" -ForegroundColor DarkGray
 Write-Host "MinIO UI     http://127.0.0.1:9001  (minio / minio-local-only)" -ForegroundColor DarkGray
 Write-Host "Hangfire     http://127.0.0.1:5080/hangfire" -ForegroundColor DarkGray
+if ($kind -eq "local") {
+    Write-Host "Web admin    http://127.0.0.1:8090  (admin / AdminPassword123)" -ForegroundColor DarkGray
+}
 
 if ($wantUsbHints -or (-not $needFlutter -and $kind -eq "local")) {
     Write-PhoneHints

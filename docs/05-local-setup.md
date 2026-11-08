@@ -181,6 +181,18 @@ flutter run
 | Windows / iOS simulator | `http://127.0.0.1:5080` |
 | Физическое устройство | `--dart-define=API_BASE_URL=http://<LAN-IP-ПК>:5080` |
 
+**Веб-админка** (раздел Flutter web, отдельная точка входа):
+
+`devops/start.*` в локальном режиме (в том числе `api`) сам открывает админку в отдельном окне: Chrome, `http://127.0.0.1:8090`. Если `flutter` не найден, шаг пропускается с предупреждением. Вручную:
+
+```bash
+cd src/mobile
+flutter run -d chrome -t lib/main_admin.dart --web-port 8090
+# сборка: flutter build web -t lib/main_admin.dart --output build/web_admin
+```
+
+Нужна роль `admin` (локально `admin` / `AdminPassword123`). Локально CORS открыт для loopback, а MinIO отвечает на PUT частей из браузера с `ETag` (`MINIO_API_CORS_ALLOW_ORIGIN=*`). Для внешнего API задайте `Cors__AllowedOrigins`, для реального S3 — CORS бакета (см. [devops/yandex-storage-cdn.md](../devops/yandex-storage-cdn.md)). Подробности — [06-admin-and-operations.md](06-admin-and-operations.md) §9.
+
 Тот же `API_BASE_URL` нужен, чтобы плеер ходил в API по LAN; signed MinIO URL берёт hostname из `Host` запроса к API.
 
 Фон: iOS `UIBackgroundModes = audio`; Android media notification через `audio_service`. На Android 13+ запрашивается `POST_NOTIFICATIONS`; если отказать, трек всё равно играет, notification может не появиться. Windows desktop играет в процессе приложения, lock screen там не критерий.
@@ -204,7 +216,7 @@ flutter run
 GitHub Actions ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) на ветке `develop`: push и pull request.
 
 - API: `dotnet restore`, `dotnet build -c Release` и `dotnet test` проекта `src/api/MusicAntiBlur.Api.Tests`
-- Flutter: `flutter pub get`, `flutter analyze --fatal-infos`, `flutter test` в `src/mobile`
+- Flutter: `flutter pub get`, `flutter analyze --fatal-infos`, `flutter test` в `src/mobile`, сборка веб-админки `flutter build web -t lib/main_admin.dart`
 
 - Migrations: Postgres в service container, `dotnet ef migrations has-pending-model-changes` (модель совпадает с миграциями) и `dotnet ef database update` на пустую БД. `dotnet-ef` берётся из [dotnet-tools.json](../dotnet-tools.json) (`dotnet tool restore`).
 - APK: `flutter build apk --release` после зелёного Flutter, только на push; файл — артефакт `app-release-apk`.

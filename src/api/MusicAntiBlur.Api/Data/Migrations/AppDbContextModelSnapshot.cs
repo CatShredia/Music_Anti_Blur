@@ -829,6 +829,10 @@ namespace MusicAntiBlur.Api.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
                     b.Property<int?>("DurationMs")
                         .HasColumnType("integer")
                         .HasColumnName("duration_ms");
@@ -856,10 +860,14 @@ namespace MusicAntiBlur.Api.Data.Migrations
                     b.HasIndex("ArtistId")
                         .HasDatabaseName("ix_tracks_artist");
 
+                    b.HasIndex("DeletedAt")
+                        .HasDatabaseName("ix_tracks_deleted_at")
+                        .HasFilter("deleted_at IS NOT NULL");
+
                     b.HasIndex("Isrc")
                         .IsUnique()
                         .HasDatabaseName("ux_tracks_isrc")
-                        .HasFilter("isrc IS NOT NULL");
+                        .HasFilter("isrc IS NOT NULL AND deleted_at IS NULL");
 
                     b.HasIndex("Title")
                         .HasDatabaseName("gin_tracks_title");
@@ -869,7 +877,8 @@ namespace MusicAntiBlur.Api.Data.Migrations
 
                     b.HasIndex("AlbumId", "TrackNumber")
                         .IsUnique()
-                        .HasDatabaseName("ux_tracks_album_number");
+                        .HasDatabaseName("ux_tracks_album_number")
+                        .HasFilter("deleted_at IS NULL");
 
                     b.ToTable("tracks", null, t =>
                         {

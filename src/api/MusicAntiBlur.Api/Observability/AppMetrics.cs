@@ -30,6 +30,9 @@ public static class AppMetrics
     private static readonly Counter<long> RateLimited =
         Meter.CreateCounter<long>("mab_rate_limited", description: "Requests rejected by the rate limiter.");
 
+    private static readonly Counter<long> TracksPurged =
+        Meter.CreateCounter<long>("mab_tracks_purged", description: "Soft-deleted tracks removed after the retention period.");
+
     private static readonly Counter<long> QuotaRejections =
         Meter.CreateCounter<long>("mab_quota_rejections", description: "Private uploads rejected by the quota.");
 
@@ -62,6 +65,8 @@ public static class AppMetrics
         RateLimited.Add(1, new KeyValuePair<string, object?>("scope", scope));
 
     public static void QuotaRejected() => QuotaRejections.Add(1);
+
+    public static void TracksPurgedAdd(int count) => TracksPurged.Add(count);
 
     private static IEnumerable<Measurement<long>> ObserveHangfire()
     {

@@ -101,8 +101,8 @@ public sealed class LibraryService(AppDbContext db)
                 p.Kind,
                 p.UpdatedAt,
                 TrackCount = p.Kind == Playlist.KindLiked
-                    ? db.LikedTracks.Count(l => l.UserId == userId)
-                    : p.Tracks.Count
+                    ? db.LikedTracks.Count(l => l.UserId == userId && db.Tracks.Any(t => t.Id == l.TrackId))
+                    : p.Tracks.Count(x => db.Tracks.Any(t => t.Id == x.TrackId))
             })
             .ToListAsync(ct);
 
@@ -201,7 +201,7 @@ public sealed class LibraryService(AppDbContext db)
             next = EncodeLikedCursor(last.LikedAt, last.Id);
         }
 
-        var trackCount = await db.LikedTracks.AsNoTracking().CountAsync(l => l.UserId == userId, ct);
+        var trackCount = await db.LikedTracks.AsNoTracking().CountAsync(l => l.UserId == userId && db.Tracks.Any(t => t.Id == l.TrackId), ct);
 
         return new PlaylistDetailDto(
             playlist.Id,

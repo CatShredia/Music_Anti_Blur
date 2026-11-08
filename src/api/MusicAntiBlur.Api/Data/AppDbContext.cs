@@ -170,10 +170,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
             e.Property(x => x.Title).IsRequired();
+            e.HasQueryFilter(x => x.DeletedAt == null);
             e.HasIndex(x => new { x.AlbumId, x.TrackNumber }).IsUnique()
-                .HasDatabaseName("ux_tracks_album_number");
+                .HasDatabaseName("ux_tracks_album_number")
+                .HasFilter("deleted_at IS NULL");
             e.HasIndex(x => x.Isrc).IsUnique().HasDatabaseName("ux_tracks_isrc")
-                .HasFilter("isrc IS NOT NULL");
+                .HasFilter("isrc IS NOT NULL AND deleted_at IS NULL");
+            e.HasIndex(x => x.DeletedAt).HasDatabaseName("ix_tracks_deleted_at")
+                .HasFilter("deleted_at IS NOT NULL");
             e.HasIndex(x => x.ArtistId).HasDatabaseName("ix_tracks_artist");
             e.HasIndex(x => x.Title).HasDatabaseName("gin_tracks_title").HasMethod("gin")
                 .HasOperators("gin_trgm_ops");

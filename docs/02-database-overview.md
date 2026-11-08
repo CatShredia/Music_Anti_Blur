@@ -603,12 +603,14 @@ CHECK: `year IS NULL OR year BETWEEN 1000 AND 9999`.
 | `isrc` | `text` | да | под будущий импорт библиотек; в MVP пусто |
 | `created_at` | `timestamptz` | нет | |
 | `updated_at` | `timestamptz` | нет | |
+| `deleted_at` | `timestamptz` | да | мягкое удаление; NULL = трек активен. EF global query filter скрывает такие строки, задача `purge-deleted-tracks` стирает их после `Catalog__DeletedRetentionDays` (180) |
 
 ```text
 CHECK (track_number >= 1)
 CHECK (duration_ms IS NULL OR duration_ms > 0)
-UNIQUE INDEX ux_tracks_isrc ON tracks (isrc) WHERE isrc IS NOT NULL
-UNIQUE INDEX ux_tracks_album_number ON tracks (album_id, track_number)
+UNIQUE INDEX ux_tracks_isrc ON tracks (isrc) WHERE isrc IS NOT NULL AND deleted_at IS NULL
+UNIQUE INDEX ux_tracks_album_number ON tracks (album_id, track_number) WHERE deleted_at IS NULL
+INDEX ix_tracks_deleted_at ON tracks (deleted_at) WHERE deleted_at IS NOT NULL
 INDEX ix_tracks_artist ON tracks (artist_id)
 GIN (title gin_trgm_ops)
 ```

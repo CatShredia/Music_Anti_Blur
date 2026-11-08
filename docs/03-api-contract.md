@@ -156,6 +156,13 @@ Admin metadata (роль `admin`, использует seed/upload-скрипт�
 - `POST /admin/albums`, `PUT /admin/albums/{id}`
 - `PUT /admin/albums/{id}/cover` — multipart поле `file` (JPEG/PNG, до 5 МБ). Пишет `catalog/covers/{albumId}`, ставит `coverObjectKey`. `400` `cover_type` / `file_too_large`; `404` нет альбома.
 - `POST /admin/tracks`, `PUT /admin/tracks/{id}`
+- `GET /admin/albums/{id}/tracks` — треки альбома со сводкой рендиций: `status` (`none` | `processing` | `ready` | `failed` по последней не отменённой загрузке), `readyRenditions`, `totalRenditions`.
+- `DELETE /admin/tracks/{id}` → `204`. Мягкое удаление (`deleted_at`): трек исчезает из каталога, поиска, лайков, плейлистов и playback-url. Хранится `Catalog__DeletedRetentionDays` (по умолчанию 180 дней), затем задача `purge-deleted-tracks` удаляет запись и ставит файлы в очередь удаления S3.
+- `GET /admin/tracks/deleted` — корзина (до 200 записей): `id`, `title`, `trackNumber`, `artist`, `album`, `deletedAt`, `purgeAt`.
+- `POST /admin/tracks/{id}/restore` → `200` с карточкой трека. `409 restore_conflict` (поля `trackNumber` / `isrc` = `taken`), если номер в альбоме или ISRC уже заняты; `404`, если трека нет в корзине.
+- `DELETE /admin/albums/{id}`, `DELETE /admin/artists/{id}` → `204`. `409 has_dependents`, если есть треки (для альбома считаются и удалённые, ещё не стёртые) или альбомы. Файл обложки альбома уходит в очередь удаления S3.
+
+CORS для браузерного клиента: в Development открыт loopback; в остальных режимах — только origin из `Cors__AllowedOrigins` (через запятую).
 
 Admin catalog upload — тот же generation-aware multipart flow, что private, под `/admin/tracks/{trackId}/uploads` (см. §5).
 

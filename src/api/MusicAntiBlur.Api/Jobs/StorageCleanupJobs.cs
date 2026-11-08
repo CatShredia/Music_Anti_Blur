@@ -1,13 +1,54 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using MusicAntiBlur.Api.Catalog;
 using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
+using MusicAntiBlur.Api.Observability;
 using MusicAntiBlur.Api.Storage;
 using MusicAntiBlur.Api.Uploads;
 
 namespace MusicAntiBlur.Api.Jobs;
 
-public sealed class StorageCleanupJobs(AppDbContext db, ObjectStorageClient storage, ILogger<StorageCleanupJobs> logger)
+public sealed class StorageCleanupJobs(
+    AppDbContext db,
+    ObjectStorageClient storage,
+    IOptions<CatalogOptions> catalogOptions,
+    ILogger<StorageCleanupJobs> logger)
 {
+    /// <summary>Физически удаляет треки из корзины старше срока хранения; файлы уходят в очередь удаления S3.</summary>
+    public async Task PurgeDeletedTracks()
+    {
+        var ct = CancellationToken.None;
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-Math.Max(1, catalogOptions.Value.DeletedRetentionDays));
+        var tracks = await db.Tracks.IgnoreQueryFilters()
+            .Where(t => t.DeletedAt != null && t.DeletedAt < cutoff)
+            .Include(t => t.Uploads).ThenInclude(u => u.Renditions)
+            .OrderBy(t => t.DeletedAt)
+            .Take(100)
+            .ToListAsync(ct);
+
+        foreach (var track in tracks)
+        {
+            foreach (var upload in track.Uploads)
+            {
+                ObjectDeletionQueue.Enqueue(db, upload.SourceBucketKey, null);
+                foreach (var rendition in upload.Renditions.Where(r => r.BucketKey != null))
+                {
+                    ObjectDeletionQueue.Enqueue(db, rendition.BucketKey!, null);
+                }
+            }
+
+            db.Tracks.Remove(track);
+            await db.SaveChangesAsync(ct);
+        }
+
+        if (tracks.Count > 0)
+        {
+            AppMetrics.TracksPurgedAdd(tracks.Count);
+            logger.LogInformation("Purged {Count} deleted tracks older than retention.", tracks.Count);
+        }
+    }
+
     public async Task Sweep()
     {
         var ct = CancellationToken.None;

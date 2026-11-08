@@ -75,7 +75,9 @@ builder.Services.AddSingleton<PlaybackUrlSigner>();
 builder.Services.AddSingleton<MediaProcessRunner>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddHttpContextAccessor();
+builder.Services.Configure<CatalogOptions>(builder.Configuration.GetSection(CatalogOptions.Section));
 builder.Services.AddScoped<CatalogService>();
+builder.Services.AddScoped<AdminCatalogService>();
 builder.Services.AddScoped<LibraryService>();
 builder.Services.AddScoped<AdminUploadService>();
 builder.Services.AddScoped<IdempotencyStore>();
@@ -181,13 +183,17 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 builder.Services.AddAuthorization();
 
-if (builder.Environment.IsDevelopment())
+var corsOrigins = (builder.Configuration["Cors:AllowedOrigins"] ?? "")
+    .Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+if (builder.Environment.IsDevelopment() || corsOrigins.Length > 0)
 {
     builder.Services.AddCors(options =>
     {
         options.AddDefaultPolicy(policy =>
-            policy.SetIsOriginAllowed(static origin =>
-                    Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.IsLoopback)
+            policy.SetIsOriginAllowed(origin =>
+                    corsOrigins.Contains(origin.TrimEnd('/'), StringComparer.OrdinalIgnoreCase) ||
+                    (builder.Environment.IsDevelopment() &&
+                     Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.IsLoopback))
                 .AllowAnyHeader()
                 .AllowAnyMethod()
                 .AllowCredentials());
@@ -244,6 +250,10 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI(options => options.EnablePersistAuthorization());
+}
+
+if (app.Environment.IsDevelopment() || corsOrigins.Length > 0)
+{
     app.UseCors();
 }
 
