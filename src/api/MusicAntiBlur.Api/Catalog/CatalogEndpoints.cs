@@ -60,6 +60,33 @@ public static class CatalogEndpoints
 
         admin.MapPut("/tracks/{id:guid}", async (Guid id, UpsertTrackRequest req, CatalogService svc, CancellationToken ct) =>
             Results.Ok(await svc.UpdateTrackAsync(id, req, ct)));
+
+        admin.MapGet("/albums/{id:guid}/tracks", async (Guid id, AdminCatalogService svc, CancellationToken ct) =>
+            Results.Ok(await svc.ListAlbumTracksAsync(id, ct)));
+
+        admin.MapGet("/tracks/deleted", async (AdminCatalogService svc, CancellationToken ct) =>
+            Results.Ok(await svc.ListDeletedTracksAsync(ct)));
+
+        admin.MapDelete("/tracks/{id:guid}", async (Guid id, AdminCatalogService svc, CancellationToken ct) =>
+        {
+            await svc.DeleteTrackAsync(id, ct);
+            return Results.NoContent();
+        });
+
+        admin.MapPost("/tracks/{id:guid}/restore", async (Guid id, AdminCatalogService svc, CancellationToken ct) =>
+            Results.Ok(await svc.RestoreTrackAsync(id, ct)));
+
+        admin.MapDelete("/albums/{id:guid}", async (Guid id, AdminCatalogService svc, CancellationToken ct) =>
+        {
+            await svc.DeleteAlbumAsync(id, ct);
+            return Results.NoContent();
+        });
+
+        admin.MapDelete("/artists/{id:guid}", async (Guid id, AdminCatalogService svc, CancellationToken ct) =>
+        {
+            await svc.DeleteArtistAsync(id, ct);
+            return Results.NoContent();
+        });
     }
 
     private static Guid UserId(ClaimsPrincipal user)

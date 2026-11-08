@@ -7,7 +7,15 @@
 #   bash devops/start.sh local|publish|dual|api
 #   LANG=en DEVICE1=chrome DEVICE2=none bash devops/start.sh local
 #   START_LANG=en START_DEVICE1=windows START_DEVICE2=emulator bash devops/start.sh
+# В локальном режиме (в т.ч. api) дополнительно всегда стартует веб-админка на :8090.
 set -euo pipefail
+
+# Launched as `bash ...` from PowerShell/cmd, Git Bash keeps the Windows PATH order:
+# C:\Windows\System32 (WSL bash.exe) comes before /usr/bin. Tools with a
+# `#!/usr/bin/env bash` shebang (flutter, dart) then hit WSL bash and fail with
+# "No such file or directory". Git's POSIX directories must come first.
+PATH="/usr/bin:/bin:$PATH"
+export PATH
 
 DEVOPS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$DEVOPS_ROOT/.." && pwd)"
@@ -116,6 +124,8 @@ t() {
         flutter_pub_offline) fmt="No network (pub.dev) — skipping flutter pub get, using local cache." ;;
         flutter_pub_fail) fmt="flutter pub get failed." ;;
         flutter_start) fmt="Starting Flutter (%s) in a new terminal..." ;;
+        admin_start) fmt="Starting web admin (Chrome, port 8090) in a new terminal..." ;;
+        admin_no_flutter) fmt="Flutter not found - web admin skipped." ;;
         flutter_bg) fmt="No windowed terminal found, Flutter (%s) in background. Log: %s" ;;
         chrome_missing) fmt="chrome not found in flutter devices." ;;
         done_server) fmt="Server running without Flutter. Stop: bash devops/stop.sh" ;;
@@ -217,6 +227,8 @@ t() {
         flutter_pub_offline) fmt="Нет сети (pub.dev) — flutter pub get пропускаем, используем локальный кэш." ;;
         flutter_pub_fail) fmt="flutter pub get не удался." ;;
         flutter_start) fmt="Запуск Flutter (%s) в отдельном терминале..." ;;
+        admin_start) fmt="Запуск веб-админки (Chrome, порт 8090) в отдельном терминале..." ;;
+        admin_no_flutter) fmt="Flutter не найден — веб-админка не запущена." ;;
         flutter_bg) fmt="Оконный терминал не найден, Flutter (%s) в фоне. Лог: %s" ;;
         chrome_missing) fmt="В flutter devices нет chrome." ;;
         done_server) fmt="Сервер запущен без Flutter. Остановка: bash devops/stop.sh" ;;
@@ -790,6 +802,31 @@ start_flutter_dev() {
   done
 }
 
+# Веб-админка каталога: всегда в локальном режиме, независимо от выбранных клиентов.
+start_admin_web() {
+  if ! command -v flutter >/dev/null 2>&1; then
+    warn "$(t admin_no_flutter)"
+    return 0
+  fi
+  mkdir -p "$RUN_DIR"
+  [[ "$need_flutter" -eq 1 ]] || run_flutter_pub_get
+  local runner="$RUN_DIR/flutter-run-admin.sh"
+  cat >"$runner" <<ADMIN_EOF
+#!/usr/bin/env bash
+set -euo pipefail
+echo \$\$ >$(printf '%q' "$RUN_DIR/flutter-admin.pid")
+cd $(printf '%q' "$MOBILE_DIR")
+flutter run -d chrome -t lib/main_admin.dart --web-port 8090
+ADMIN_EOF
+  chmod +x "$runner"
+  info "$(t admin_start)"
+  if open_in_terminal "Music Anti Blur — Admin web" "$(printf '%q' "$runner")"; then
+    return 0
+  fi
+  warn "$(t flutter_bg "admin" "$RUN_DIR/flutter-admin.log")"
+  nohup bash "$runner" >"$RUN_DIR/flutter-admin.log" 2>&1 &
+}
+
 lan_ipv4() {
   hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9.]+$' | grep -vE '^(127\.|169\.254\.)' || true
 }
@@ -1148,6 +1185,10 @@ if [[ "$kind" == "local" && "$need_flutter" -eq 1 ]]; then
   start_flutter_dev "${resolved[@]}"
 fi
 
+if [[ "$kind" == "local" ]]; then
+  start_admin_web
+fi
+
 echo
 echo "HTTP API     http://127.0.0.1:5080"
 echo "Swagger      http://127.0.0.1:5080/swagger  (Development)"
@@ -1155,6 +1196,9 @@ echo "MailHog      http://127.0.0.1:8025"
 echo "MinIO S3     http://127.0.0.1:9000"
 echo "MinIO UI     http://127.0.0.1:9001  (minio / minio-local-only)"
 echo "Hangfire     http://127.0.0.1:5080/hangfire"
+if [[ "$kind" == "local" ]]; then
+  echo "Web admin    http://127.0.0.1:8090  (admin / AdminPassword123)"
+fi
 
 if [[ "$want_usb" -eq 1 || ( "$need_flutter" -eq 0 && "$kind" == "local" ) ]]; then
   write_phone_hints

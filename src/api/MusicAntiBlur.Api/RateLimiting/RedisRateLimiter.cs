@@ -18,6 +18,7 @@ public sealed class RedisRateLimiter(IConnectionMultiplexer redis)
 
             if (count > limit)
             {
+                Observability.AppMetrics.RateLimitHit(Scope(key));
                 var ttl = await db.KeyTimeToLiveAsync(key) ?? window;
                 throw new RateLimitedException(Math.Max(1, (int)ttl.TotalSeconds));
             }
@@ -30,6 +31,12 @@ public sealed class RedisRateLimiter(IConnectionMultiplexer redis)
         {
             throw new ApiException(503, "dependency_unavailable", "Rate limiter is unavailable.");
         }
+    }
+
+    public static string Scope(string key)
+    {
+        var parts = key.Split(':', 3);
+        return parts.Length >= 2 && parts[0] == "rl" ? parts[1] : "other";
     }
 }
 

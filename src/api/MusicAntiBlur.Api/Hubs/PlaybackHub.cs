@@ -66,21 +66,28 @@ public sealed class PlaybackHub(
         }
 
         logger.LogInformation(
-            "[sync] hub-connect user={UserId} device={Device} group={Group} conn={Conn}",
+            "[sync] hub-connect user={UserId} device={DeviceId} group={Group} conn={Conn}",
             userId,
             hasDevice ? deviceId.ToString() : "-",
             group,
             Context.ConnectionId);
 
+        Context.Items["counted"] = true;
+        Observability.AppMetrics.SignalrConnected();
         await base.OnConnectedAsync();
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
+        if (Context.Items.ContainsKey("counted"))
+        {
+            Observability.AppMetrics.SignalrDisconnected();
+        }
+
         if (Context.Items["userId"] is Guid userId)
         {
             logger.LogInformation(
-                "[sync] hub-disconnect user={UserId} device={Device} conn={Conn} error={Error}",
+                "[sync] hub-disconnect user={UserId} device={DeviceId} conn={Conn} error={Error}",
                 userId,
                 Context.Items["deviceId"],
                 Context.ConnectionId,

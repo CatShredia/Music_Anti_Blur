@@ -1,3 +1,5 @@
+using Serilog.Context;
+
 namespace MusicAntiBlur.Api.Http;
 
 public sealed class RequestIdMiddleware(RequestDelegate next)
@@ -20,6 +22,9 @@ public sealed class RequestIdMiddleware(RequestDelegate next)
             context.Response.Headers[HeaderName] = value;
             return Task.CompletedTask;
         });
-        await next(context);
+        using (LogContext.PushProperty("RequestId", value))
+        {
+            await next(context);
+        }
     }
 }

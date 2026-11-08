@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
+import '../account/security_models.dart';
 import '../catalog/catalog_models.dart';
 import '../overrides/override_models.dart';
 import '../player/playback_models.dart';
@@ -156,6 +157,7 @@ class ApiClient {
           if (status == 401 &&
               !_refreshing &&
               !path.contains('/auth/login') &&
+              !path.contains('/auth/2fa') &&
               !path.contains('/auth/refresh') &&
               !path.contains('/auth/register')) {
             _refreshing = true;
@@ -258,7 +260,8 @@ class ApiClient {
     return session;
   }
 
-  Future<Session> login({
+  /// Returns [Session] when signed in, or [TwoFactorChallenge] when a second factor is required.
+  Future<Object> login({
     required String identifierType,
     required String identifier,
     required String password,
@@ -273,10 +276,100 @@ class ApiClient {
         },
       ),
     );
+    final json = res.data as Map<String, dynamic>;
+    if (TwoFactorChallenge.isChallenge(json)) {
+      return TwoFactorChallenge.fromJson(json);
+    }
+    final session = Session.fromJson(json);
+    await saveSession(session);
+    return session;
+  }
+
+  Future<void> sendTwoFactorEmail(String challengeId) async {
+    await _send(() => _dio.post('/api/v1/auth/2fa/email', data: {'challengeId': challengeId}));
+  }
+
+  Future<Session> verifyTwoFactor({
+    required String challengeId,
+    required String method,
+    required String code,
+  }) async {
+    final res = await _send(
+      () => _dio.post(
+        '/api/v1/auth/2fa/verify',
+        data: {'challengeId': challengeId, 'method': method, 'code': code},
+      ),
+    );
     final session = Session.fromJson(res.data as Map<String, dynamic>);
     await saveSession(session);
     return session;
   }
+
+  Future<TwoFactorStatus> twoFactorStatus() async {
+    final res = await _send(() => _dio.get('/api/v1/me/2fa'));
+    return TwoFactorStatus.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<TotpSetup> beginTotpSetup(String currentPassword) async {
+    final res = await _send(
+      () => _dio.post('/api/v1/me/2fa/totp/setup', data: {'currentPassword': currentPassword}),
+    );
+    return TotpSetup.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  Future<List<String>> confirmTotp(String code) async {
+    final res = await _send(() => _dio.post('/api/v1/me/2fa/totp/confirm', data: {'code': code}));
+    return _codes(res.data);
+  }
+
+  /// Returns new recovery codes when the account had none, otherwise null.
+  Future<List<String>?> enableEmailTwoFactor(String currentPassword) async {
+    final res = await _send(
+      () => _dio.post('/api/v1/me/2fa/email/enable', data: {'currentPassword': currentPassword}),
+    );
+    return res.statusCode == 204 || res.data == null || res.data == '' ? null : _codes(res.data);
+  }
+
+  Future<void> disableEmailTwoFactor(String currentPassword) async {
+    await _send(
+      () => _dio.post('/api/v1/me/2fa/email/disable', data: {'currentPassword': currentPassword}),
+    );
+  }
+
+  Future<List<String>> regenerateRecoveryCodes(String currentPassword) async {
+    final res = await _send(
+      () => _dio.post('/api/v1/me/2fa/recovery-codes/regenerate', data: {'currentPassword': currentPassword}),
+    );
+    return _codes(res.data);
+  }
+
+  Future<void> disableTwoFactor({required String currentPassword, String? code}) async {
+    await _send(
+      () => _dio.post('/api/v1/me/2fa/disable', data: {'currentPassword': currentPassword, 'code': code}),
+    );
+  }
+
+  Future<CatalogPage<LoginEvent>> loginEvents({String? cursor, int limit = 30}) async {
+    final res = await _send(
+      () => _dio.get(
+        '/api/v1/me/login-events',
+        queryParameters: {'limit': limit, 'cursor': ?cursor},
+      ),
+    );
+    return CatalogPage.fromJson(res.data as Map<String, dynamic>, LoginEvent.fromJson);
+  }
+
+  Future<void> reportNotMe(String eventId) async {
+    await _send(() => _dio.post('/api/v1/me/login-events/$eventId/not-me'));
+  }
+
+  Future<StorageQuota> quota() async {
+    final res = await _send(() => _dio.get('/api/v1/me/quota'));
+    return StorageQuota.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  static List<String> _codes(dynamic data) =>
+      ((data as Map<String, dynamic>)['codes'] as List<dynamic>).cast<String>();
 
   Future<bool> refresh() async {
     final refreshToken = await _storage.read(key: _refreshKey);
@@ -643,6 +736,10 @@ class ApiClient {
     );
     return CatalogPage.fromJson(res.data as Map<String, dynamic>, SearchItem.fromJson);
   }
+
+  /// Для расширений (админка): запрос через общий Dio с токеном и разбором ошибок API.
+  Future<Response<dynamic>> send(Future<Response<dynamic>> Function(Dio dio) run) =>
+      _send(() => run(_dio));
 
   Future<Response<dynamic>> _send(Future<Response<dynamic>> Function() run) async {
     try {

@@ -19,6 +19,7 @@ public sealed class PrivateUploadService(
     IdempotencyStore idempotency,
     OverrideService overrides,
     IOptions<StorageOptions> storageOptions,
+    QuotaService quotas,
     IHostEnvironment env,
     ILogger<PrivateUploadService> logger)
 {
@@ -44,17 +45,7 @@ public sealed class PrivateUploadService(
             await LockUserAsync(userId, ct);
             await overrides.EnsureRowAsync(userId, trackId, ct);
 
-            var used = await db.UserPrivateUploads
-                .Where(u => u.UserId == userId && u.Status != "cancelled" && u.Status != "deleting")
-                .SumAsync(u => u.SizeBytes ?? 0, ct);
-            var quota = storageOptions.Value.PrivateQuotaBytes <= 0
-                ? 2L * 1024 * 1024 * 1024
-                : storageOptions.Value.PrivateQuotaBytes;
-            if (used + size > quota)
-            {
-                throw new ApiException(400, "validation_failed", "Validation failed.",
-                    new Dictionary<string, string[]> { ["sizeBytes"] = ["too_large"] });
-            }
+            await quotas.EnsureFitsAsync(userId, size, ct);
 
             var generationId = Guid.NewGuid();
             var objectKey = ObjectKeys.PrivateSource(userId, trackId, generationId);
@@ -185,6 +176,7 @@ public sealed class PrivateUploadService(
             }
 
             upload.Status = "uploaded";
+            Observability.AppMetrics.UploadCompleted("private", "uploaded");
             upload.MultipartUploadId = null;
             upload.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(ct);

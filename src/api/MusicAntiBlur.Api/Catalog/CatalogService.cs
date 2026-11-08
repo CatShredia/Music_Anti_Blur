@@ -261,9 +261,10 @@ public sealed class CatalogService(
               FROM tracks t
               JOIN artists ar ON ar.id = t.artist_id
               JOIN albums al ON al.id = t.album_id
-              WHERE similarity(t.title, {query}) > {minSim}
+              WHERE t.deleted_at IS NULL
+                AND (similarity(t.title, {query}) > {minSim}
                  OR t.title % {query}
-                 OR t.title ILIKE {like} ESCAPE E'\\'
+                 OR t.title ILIKE {like} ESCAPE E'\\')
             ) s
             ORDER BY rank DESC, title, id
             """).ToListAsync(ct);

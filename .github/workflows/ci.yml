@@ -2,13 +2,17 @@ name: CI
 
 on:
   push:
-    branches: [develop]
+    branches: [develop, main]
   pull_request:
-    branches: [develop]
+    branches: [develop, main]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
 
 jobs:
   api:
@@ -19,12 +23,62 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('src/api/**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
       - name: Restore
         run: dotnet restore src/api/MusicAntiBlur.Api.Tests/MusicAntiBlur.Api.Tests.csproj
       - name: Build
         run: dotnet build src/api/MusicAntiBlur.Api/MusicAntiBlur.Api.csproj --no-restore -c Release
       - name: Test
-        run: dotnet test src/api/MusicAntiBlur.Api.Tests/MusicAntiBlur.Api.Tests.csproj --no-restore -c Release
+        run: >
+          dotnet test src/api/MusicAntiBlur.Api.Tests/MusicAntiBlur.Api.Tests.csproj --no-restore -c Release
+          --collect:"XPlat Code Coverage" --results-directory ./coverage/api
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-api
+          path: coverage/api
+          if-no-files-found: ignore
+
+  migrations:
+    name: Migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: music
+          POSTGRES_PASSWORD: music
+          POSTGRES_DB: music_anti_blur
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U music -d music_anti_blur"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      ConnectionStrings__Postgres: Host=localhost;Port=5432;Database=music_anti_blur;Username=music;Password=music
+      ConnectionStrings__Redis: localhost:6379
+      Jwt__Key: ci-only-key-not-a-secret-at-least-32-bytes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('src/api/**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - run: dotnet tool restore
+      - name: Restore
+        run: dotnet restore src/api/MusicAntiBlur.Api/MusicAntiBlur.Api.csproj
+      - name: Model matches migrations
+        run: dotnet ef migrations has-pending-model-changes --project src/api/MusicAntiBlur.Api
+      - name: Migrations apply to an empty database
+        run: dotnet ef database update --project src/api/MusicAntiBlur.Api
 
   flutter:
     name: Flutter
@@ -40,4 +94,37 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter analyze --fatal-infos
-      - run: flutter test
+      - run: flutter test --coverage
+      - name: Build web admin
+        run: flutter build web -t lib/main_admin.dart --output build/web_admin
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-flutter
+          path: src/mobile/coverage
+          if-no-files-found: ignore
+
+  apk:
+    name: APK
+    needs: flutter
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: src/mobile/build/app/outputs/flutter-apk/app-release.apk

@@ -77,3 +77,22 @@ public sealed record UpsertTrackRequest(
     int? TrackNumber,
     int? DurationMs,
     string? Isrc);
+
+public sealed record AdminTrackRowDto(
+    Guid Id,
+    string Title,
+    int TrackNumber,
+    int? DurationMs,
+    string? Isrc,
+    string Status,
+    int ReadyRenditions,
+    int TotalRenditions);
+
+public sealed record DeletedTrackDto(
+    Guid Id,
+    string Title,
+    int TrackNumber,
+    ArtistRefDto Artist,
+    AlbumRefDto Album,
+    DateTimeOffset DeletedAt,
+    DateTimeOffset PurgeAt);

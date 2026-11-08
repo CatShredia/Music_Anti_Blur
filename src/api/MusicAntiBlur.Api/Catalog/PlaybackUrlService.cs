@@ -74,6 +74,7 @@ public sealed class PlaybackUrlService(
                 .Where(o => o.UserId == userId && o.TrackId == trackId)
                 .Select(o => o.DurationMs)
                 .FirstOrDefaultAsync(ct);
+            Observability.AppMetrics.PlaybackUrlIssued("local");
             return new PlaybackUrlResponse(
                 "local",
                 "local",
@@ -127,6 +128,7 @@ public sealed class PlaybackUrlService(
         }
 
         var signed = signer.Sign(chosen.BucketKey, clientHost);
+        Observability.AppMetrics.PlaybackUrlIssued(source.Chosen);
         var response = new PlaybackUrlResponse(
             source.Chosen,
             "cdn",

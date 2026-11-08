@@ -453,11 +453,18 @@ class _VizePasswordFieldState extends State<VizePasswordField> {
 }
 
 class VizeCodeField extends StatelessWidget {
-  const VizeCodeField({super.key, required this.controller, this.errorText, this.onChanged});
+  const VizeCodeField({
+    super.key,
+    required this.controller,
+    this.errorText,
+    this.onChanged,
+    this.label = 'Код из письма',
+  });
 
   final TextEditingController controller;
   final String? errorText;
   final ValueChanged<String>? onChanged;
+  final String label;
 
   @override
   Widget build(BuildContext context) {
@@ -468,7 +475,7 @@ class VizeCodeField extends StatelessWidget {
       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
       onChanged: onChanged,
       decoration: InputDecoration(
-        labelText: 'Код из письма',
+        labelText: label,
         errorText: errorText,
         counterText: '',
       ),

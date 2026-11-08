@@ -11,6 +11,7 @@ public sealed class Track
     public string? Isrc { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+    public DateTimeOffset? DeletedAt { get; set; }
 
     public Album Album { get; set; } = null!;
     public Artist Artist { get; set; } = null!;

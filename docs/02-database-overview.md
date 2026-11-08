@@ -61,6 +61,11 @@ flowchart LR
 | Rate limit API | Redis, матрица в `03-api-contract.md` |
 | Джобы Hangfire | схема `hangfire` (создаёт библиотека, не EF) |
 | Лайки / «Мне нравится» | PostgreSQL `liked_tracks`, `playlists`, `playlist_tracks` |
+| 2FA: секрет TOTP (зашифрован), резервные коды (хеш) | PostgreSQL `user_two_factor`, `user_recovery_codes` |
+| Ключи Data Protection (шифруют секреты TOTP) | PostgreSQL `data_protection_keys` |
+| Login challenge 2FA, черновик TOTP, последний принятый шаг TOTP | Redis, TTL 5–10 минут |
+| Журнал входов | PostgreSQL `login_events`, 90 дней |
+| Переопределение квоты приватных загрузок | PostgreSQL `user_quotas` |
 | ListenEvent, reco, пользовательские плейлисты (kind=`user`) | post-MVP |
 
 ---
@@ -598,12 +603,14 @@ CHECK: `year IS NULL OR year BETWEEN 1000 AND 9999`.
 | `isrc` | `text` | да | под будущий импорт библиотек; в MVP пусто |
 | `created_at` | `timestamptz` | нет | |
 | `updated_at` | `timestamptz` | нет | |
+| `deleted_at` | `timestamptz` | да | мягкое удаление; NULL = трек активен. EF global query filter скрывает такие строки, задача `purge-deleted-tracks` стирает их после `Catalog__DeletedRetentionDays` (180) |
 
 ```text
 CHECK (track_number >= 1)
 CHECK (duration_ms IS NULL OR duration_ms > 0)
-UNIQUE INDEX ux_tracks_isrc ON tracks (isrc) WHERE isrc IS NOT NULL
-UNIQUE INDEX ux_tracks_album_number ON tracks (album_id, track_number)
+UNIQUE INDEX ux_tracks_isrc ON tracks (isrc) WHERE isrc IS NOT NULL AND deleted_at IS NULL
+UNIQUE INDEX ux_tracks_album_number ON tracks (album_id, track_number) WHERE deleted_at IS NULL
+INDEX ix_tracks_deleted_at ON tracks (deleted_at) WHERE deleted_at IS NOT NULL
 INDEX ix_tracks_artist ON tracks (artist_id)
 GIN (title gin_trgm_ops)
 ```
@@ -875,6 +882,61 @@ UNIQUE `(user_id, route, idempotency_key)`, индекс `(expires_at)`. Тра�
 | `played_at` | `timestamptz` | нет | |
 
 Индекс `(user_id, played_at, id)` для cursor-страницы истории.
+
+---
+
+### 7.18. `user_two_factor`
+
+| Колонка | Тип | Null | Описание |
+|---|---|---|---|
+| `user_id` | `uuid` | нет | PK, FK → users CASCADE |
+| `totp_secret_protected` | `text` | да | секрет TOTP, зашифрован ASP.NET Data Protection |
+| `totp_enabled_at` | `timestamptz` | да | null — TOTP выключен |
+| `email_otp_enabled` | `bool` | нет | код на почту как второй фактор |
+| `updated_at` | `timestamptz` | нет | |
+
+CHECK: `totp_secret_protected` и `totp_enabled_at` оба null или оба заданы. Строка без включённых факторов удаляется.
+
+### 7.19. `user_recovery_codes`
+
+| Колонка | Тип | Null | Описание |
+|---|---|---|---|
+| `id` | `uuid` | нет | PK |
+| `user_id` | `uuid` | нет | FK → users CASCADE |
+| `code_hash` | `text` | нет | SHA-256 нормализованного кода (нижний регистр, без дефиса) |
+| `created_at` | `timestamptz` | нет | |
+| `used_at` | `timestamptz` | да | одноразовость: атомарный `UPDATE … WHERE used_at IS NULL` |
+
+UNIQUE `(user_id, code_hash)`. Перевыпуск удаляет все коды пользователя.
+
+### 7.20. `login_events`
+
+| Колонка | Тип | Null | Описание |
+|---|---|---|---|
+| `id` | `uuid` | нет | PK |
+| `user_id` | `uuid` | нет | FK → users CASCADE |
+| `device_id` | `uuid` | да | `X-Device-Id` |
+| `at` | `timestamptz` | нет | |
+| `ip` | `varchar(64)` | нет | |
+| `user_agent` | `varchar(512)` | да | обрезается |
+| `result` | `text` | нет | CHECK: `success`, `bad_password`, `2fa_required`, `2fa_failed`, `refresh_reuse` |
+| `method` | `text` | нет | CHECK: `password`, `totp`, `email`, `recovery`, `refresh` |
+| `not_me_at` | `timestamptz` | да | пользователь отметил «Это не я» |
+
+Индексы `(user_id, at, id)` для курсора и `(at)` для чистки. Hangfire `cleanup-login-events` ежедневно удаляет записи старше 90 дней.
+
+### 7.21. `user_quotas`
+
+| Колонка | Тип | Null | Описание |
+|---|---|---|---|
+| `user_id` | `uuid` | нет | PK, FK → users CASCADE |
+| `max_bytes` | `bigint` | да | ≥ 0; null — `Storage__PrivateQuotaBytes` |
+| `max_files` | `int` | да | ≥ 0; null — `Storage__PrivateQuotaFiles` |
+| `updated_at` | `timestamptz` | нет | |
+
+### 7.22. `data_protection_keys`
+
+Таблица пакета `Microsoft.AspNetCore.DataProtection.EntityFrameworkCore` (`id`, `friendly_name`, `xml`). Потеря ключей = потеря всех секретов TOTP: бэкапить вместе с БД, не чистить вручную.
 
 ---
 

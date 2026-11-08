@@ -16,6 +16,7 @@ Production-инварианты (health, backup, deploy) — [04-operations.md](
 | MinIO S3 / консоль | Compose | `9000` / http://localhost:9001 |
 | ASP.NET Core API | хост | http://localhost:5080 |
 | Flutter | хост | `flutter run` (устройство выбирается) |
+| Prometheus / Loki / Grafana | Compose, профиль `observability` | http://localhost:9090 / `3100` / http://localhost:3000 |
 
 API **не** стримит аудиобайты. Playback URL — S3 presigned GET в MinIO (`Storage__UseCdn=false`). Поле JSON `delivery` остаётся `cdn` (ветка remote HTTP), как в [03-api-contract.md](03-api-contract.md). Host внутри подписи берётся из запроса к API (`Host`): эмулятор Android → `http://10.0.2.2:9000`, Windows/Chrome → `127.0.0.1:9000`. Явный `Storage__PresignEndpoint` перекрывает это. Не подменяйте hostname у уже подписанного URL на клиенте — сломается SigV4.
 
@@ -180,6 +181,18 @@ flutter run
 | Windows / iOS simulator | `http://127.0.0.1:5080` |
 | Физическое устройство | `--dart-define=API_BASE_URL=http://<LAN-IP-ПК>:5080` |
 
+**Веб-админка** (раздел Flutter web, отдельная точка входа):
+
+`devops/start.*` в локальном режиме (в том числе `api`) сам открывает админку в отдельном окне: Chrome, `http://127.0.0.1:8090`. Если `flutter` не найден, шаг пропускается с предупреждением. Вручную:
+
+```bash
+cd src/mobile
+flutter run -d chrome -t lib/main_admin.dart --web-port 8090
+# сборка: flutter build web -t lib/main_admin.dart --output build/web_admin
+```
+
+Нужна роль `admin` (локально `admin` / `AdminPassword123`). Локально CORS открыт для loopback, а MinIO отвечает на PUT частей из браузера с `ETag` (`MINIO_API_CORS_ALLOW_ORIGIN=*`). Для внешнего API задайте `Cors__AllowedOrigins`, для реального S3 — CORS бакета (см. [devops/yandex-storage-cdn.md](../devops/yandex-storage-cdn.md)). Подробности — [06-admin-and-operations.md](06-admin-and-operations.md) §9.
+
 Тот же `API_BASE_URL` нужен, чтобы плеер ходил в API по LAN; signed MinIO URL берёт hostname из `Host` запроса к API.
 
 Фон: iOS `UIBackgroundModes = audio`; Android media notification через `audio_service`. На Android 13+ запрашивается `POST_NOTIFICATIONS`; если отказать, трек всё равно играет, notification может не появиться. Windows desktop играет в процессе приложения, lock screen там не критерий.
@@ -203,6 +216,43 @@ flutter run
 GitHub Actions ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) на ветке `develop`: push и pull request.
 
 - API: `dotnet restore`, `dotnet build -c Release` и `dotnet test` проекта `src/api/MusicAntiBlur.Api.Tests`
-- Flutter: `flutter pub get`, `flutter analyze --fatal-infos`, `flutter test` в `src/mobile`
+- Flutter: `flutter pub get`, `flutter analyze --fatal-infos`, `flutter test` в `src/mobile`, сборка веб-админки `flutter build web -t lib/main_admin.dart`
+
+- Migrations: Postgres в service container, `dotnet ef migrations has-pending-model-changes` (модель совпадает с миграциями) и `dotnet ef database update` на пустую БД. `dotnet-ef` берётся из [dotnet-tools.json](../dotnet-tools.json) (`dotnet tool restore`).
+- APK: `flutter build apk --release` после зелёного Flutter, только на push; файл — артефакт `app-release-apk`.
+- Покрытие API и Flutter — артефакты `coverage-api`, `coverage-flutter` (без порога).
+
+Триггеры: push и pull request в `develop` и `main`.
+
+Обязательные проверки `API`, `Flutter`, `Migrations` включаются вручную: GitHub → Settings → Branches → правило для `develop` и `main` → Require status checks.
 
 OpenAPI spec diff в CI нет.
+
+## 8. Наблюдаемость
+
+Стек в профиле Compose `observability`. Включить постоянно: добавить в `.env` строку `COMPOSE_PROFILES=observability` — тогда `start`/`stop` поднимают и гасят его вместе с остальным. Разово:
+
+```bash
+docker compose --profile observability up -d
+```
+
+| Что | Адрес |
+|---|---|
+| Grafana (`GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`, по умолчанию `admin` / `admin-local-only`) | http://localhost:3000 |
+| Prometheus | http://localhost:9090 |
+| Loki (push API для логов) | http://localhost:3100 |
+| Метрики API | http://localhost:5080/metrics |
+
+Чтобы логи API шли в Loki, в `.env`: `Loki__Url=http://localhost:3100`. Prometheus в контейнере забирает метрики с `host.docker.internal:5080`. Если задан `Metrics__ScrapeToken`, Prometheus берёт его из той же переменной.
+
+Дашборды в папке MusicAntiBlur: «API» (RPS, p50/p95, 5xx, топ ошибок, rate limit), «Фоновые задачи» (transcode, Hangfire, письма, загрузки), «Плеер» (SignalR, выданные playback URL).
+
+Найти все логи запроса: взять `X-Request-Id` (или `requestId` из problem+json), в Grafana → Explore → Loki:
+
+```text
+{app="musicantiblur-api"} | json | RequestId="<id>"
+```
+
+В выдачу попадают и строки Hangfire-задач, которые этот запрос поставил в очередь.
+
+Алерты уходят письмом на `ALERT_EMAIL_TO` через SMTP Grafana. Локально — в MailHog (http://localhost:8025). Для реального ящика задать `GRAFANA_SMTP_HOST` (`host:port`), `GRAFANA_SMTP_USER`, `GRAFANA_SMTP_PASSWORD`, `GRAFANA_SMTP_FROM`, `GRAFANA_SMTP_STARTTLS_POLICY`.
