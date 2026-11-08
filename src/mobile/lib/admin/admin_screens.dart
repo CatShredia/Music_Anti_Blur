@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../api/api_client.dart';
+import '../catalog/catalog_screens.dart' show CatalogCover;
 import '../catalog/catalog_models.dart';
 import 'admin_api.dart';
 import 'admin_models.dart';
@@ -176,30 +177,59 @@ Future<Map<String, String>?> _form(
   required String title,
   required Map<String, String> fields,
 }) {
-  final controllers = {for (final e in fields.entries) e.key: TextEditingController(text: e.value)};
   return showDialog<Map<String, String>>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text(title),
+    builder: (_) => _FormDialog(title: title, fields: fields),
+  );
+}
+
+/// Форма из текстовых полей. Контроллеры живут в состоянии диалога и освобождаются вместе с ним.
+class _FormDialog extends StatefulWidget {
+  const _FormDialog({required this.title, required this.fields});
+
+  final String title;
+  final Map<String, String> fields;
+
+  @override
+  State<_FormDialog> createState() => _FormDialogState();
+}
+
+class _FormDialogState extends State<_FormDialog> {
+  late final Map<String, TextEditingController> _controllers = {
+    for (final e in widget.fields.entries) e.key: TextEditingController(text: e.value),
+  };
+
+  @override
+  void dispose() {
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
       content: SizedBox(
         width: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            for (final e in controllers.entries)
+            for (final e in _controllers.entries)
               TextField(controller: e.value, decoration: InputDecoration(labelText: e.key)),
           ],
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
         FilledButton(
-          onPressed: () => Navigator.pop(ctx, {for (final e in controllers.entries) e.key: e.value.text.trim()}),
+          onPressed: () => Navigator.pop(context, {for (final e in _controllers.entries) e.key: e.value.text.trim()}),
           child: const Text('Сохранить'),
         ),
       ],
-    ),
-  );
+    );
+  }
 }
 
 Color _statusColor(String status) => switch (status) {
@@ -237,19 +267,24 @@ class _Page extends StatelessWidget {
   final List<Widget> actions;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: Theme.of(context).textTheme.headlineSmall),
-            if (actions.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: actions),
+  // Переход страницы кладёт в дерево ColoredBox: без своего Material ListTile не показывает заливку и рябь
+  // (в debug это ассерт). Material должен быть внутри страницы, поэтому он здесь, а не в оболочке.
+  Widget build(BuildContext context) => Material(
+        type: MaterialType.transparency,
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: Theme.of(context).textTheme.headlineSmall),
+              if (actions.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: actions),
+              ],
+              const SizedBox(height: 16),
+              Expanded(child: child),
             ],
-            const SizedBox(height: 16),
-            Expanded(child: child),
-          ],
+          ),
         ),
       );
 }
@@ -270,26 +305,30 @@ Future<void> pickAndUploadSource(BuildContext context, ApiClient api, String tra
   }
   final stage = ValueNotifier<(String, double)>(('старт', 0));
   var cancelled = false;
+  BuildContext? dialogContext;
   unawaited(
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: Text(file.name),
-        content: ValueListenableBuilder<(String, double)>(
-          valueListenable: stage,
-          builder: (_, v, _) => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [Text(v.$1), const SizedBox(height: 8), LinearProgressIndicator(value: v.$2)],
+      builder: (ctx) {
+        dialogContext = ctx;
+        return AlertDialog(
+          title: Text(file.name),
+          content: ValueListenableBuilder<(String, double)>(
+            valueListenable: stage,
+            builder: (_, v, _) => Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [Text(v.$1), const SizedBox(height: 8), LinearProgressIndicator(value: v.$2)],
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => cancelled = true,
-            child: const Text('Отменить'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => cancelled = true,
+              child: const Text('Отменить'),
+            ),
+          ],
+        );
+      },
     ),
   );
   String result;
@@ -307,8 +346,14 @@ Future<void> pickAndUploadSource(BuildContext context, ApiClient api, String tra
   } catch (e) {
     result = describeError(e);
   }
+  // Закрываем именно свой диалог, а не верхний маршрут: пользователь мог уйти с экрана.
+  final dialog = dialogContext;
+  if (dialog != null && dialog.mounted) {
+    Navigator.of(dialog).pop();
+  }
+  // Диалог ещё анимируется и слушает notifier: освобождаем после его закрытия.
+  Future<void>.delayed(const Duration(milliseconds: 400), stage.dispose);
   if (context.mounted) {
-    Navigator.of(context, rootNavigator: true).pop();
     _toast(context, result);
   }
 }
@@ -476,7 +521,7 @@ class _AdminArtistScreenState extends State<AdminArtistScreen> {
                   ListTile(
                     leading: a.coverUrl == null
                         ? const Icon(Icons.album)
-                        : Image.network(a.coverUrl!, width: 48, height: 48, fit: BoxFit.cover),
+                        : CatalogCover(coverUrl: a.coverUrl, width: 48, height: 48, icon: Icons.album, iconSize: 22, radius: 8),
                     title: Text(a.title),
                     subtitle: Text('${a.year ?? ''}'),
                     onTap: () => context.go('/admin/album/${a.id}'),
@@ -654,7 +699,7 @@ class _AdminAlbumScreenState extends State<AdminAlbumScreen> {
                 if (album.coverUrl != null)
                   Padding(
                     padding: const EdgeInsets.only(right: 16),
-                    child: Image.network(album.coverUrl!, width: 160, height: 160, fit: BoxFit.cover),
+                    child: CatalogCover(coverUrl: album.coverUrl, width: 160, height: 160, icon: Icons.album, iconSize: 48, radius: 8),
                   ),
                 Expanded(
                   child: ListView(
