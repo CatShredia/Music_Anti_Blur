@@ -8,6 +8,7 @@ import 'account/security_models.dart';
 import 'account/two_factor_screens.dart';
 import 'api/api_client.dart';
 import 'catalog/catalog_screens.dart';
+import 'catalog/discovery_screens.dart';
 import 'catalog/history_screen.dart';
 import 'library/deep_link.dart';
 import 'library/library_screens.dart';
@@ -135,6 +136,10 @@ class MusicAntiBlurApp extends StatelessWidget {
         builder: (_, _) => LikedPlaylistScreen(api: api),
       ),
       GoRoute(path: '/library', builder: (_, _) => LibraryScreen(api: api)),
+      GoRoute(
+        path: '/genre/:id',
+        builder: (_, state) => GenreScreen(api: api, id: state.pathParameters['id']!),
+      ),
       GoRoute(
         path: '/playlist/:id',
         builder: (_, state) => PlaylistScreen(api: api, id: state.pathParameters['id']!),

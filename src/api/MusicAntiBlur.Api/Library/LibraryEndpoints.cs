@@ -76,6 +76,28 @@ public static class LibraryEndpoints
             return Results.NoContent();
         });
 
+        v1.MapGet("/me/search-history", async (
+            int? limit, SearchHistoryService svc, ClaimsPrincipal user, CancellationToken ct) =>
+            Results.Ok(await svc.ListAsync(UserId(user), limit, ct)));
+
+        v1.MapPost("/me/search-history", async (
+            AddSearchHistoryRequest req, SearchHistoryService svc, ClaimsPrincipal user, CancellationToken ct) =>
+            Results.Ok(await svc.AddAsync(UserId(user), req.Query, ct)));
+
+        v1.MapDelete("/me/search-history/{id:guid}", async (
+            Guid id, SearchHistoryService svc, ClaimsPrincipal user, CancellationToken ct) =>
+        {
+            await svc.RemoveAsync(UserId(user), id, ct);
+            return Results.NoContent();
+        });
+
+        v1.MapDelete("/me/search-history", async (
+            SearchHistoryService svc, ClaimsPrincipal user, CancellationToken ct) =>
+        {
+            await svc.ClearAsync(UserId(user), ct);
+            return Results.NoContent();
+        });
+
         v1.MapGet("/me/library", async (
             string? type, string? cursor, int? limit, SavedLibraryService svc, ClaimsPrincipal user, CancellationToken ct) =>
             Results.Ok(await svc.ListAsync(UserId(user), type, cursor, limit, ct)));

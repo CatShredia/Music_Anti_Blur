@@ -126,10 +126,13 @@ Idempotency records хранятся в PostgreSQL (`idempotency_records`). Тр
 
 ## 3. Каталог и поиск
 
-- `GET /artists`, `GET /artists/{id}`
+- `GET /artists`, `GET /artists/{id}` — страница исполнителя: дискография, `popular` (до 5 треков) и `genres` (жанры его альбомов)
+- `GET /artists/{id}/popular?limit=10` (1..50) → `{ items: [track] }`. Порядок: сумма прослушиваний всех пользователей по убыванию, при равенстве выше трек, который текущий пользователь слушал чаще, затем порядок в альбоме. Числа прослушиваний в ответе нет; без прослушиваний список пуст. Удалённые (мягко) треки не попадают.
+- `GET /genres` → `[{ id, name, albumCount, trackCount }]` по алфавиту; `GET /genres/{id}` → `{ id, name, albums[], popularTracks[] }` (до 50 альбомов и 20 популярных треков жанра; трек принадлежит жанру, если жанр стоит у него самого или у его альбома)
 - `GET /albums?artistId=`, `GET /albums/{id}`
 - `GET /tracks/{id}` → включает `liked: bool` для текущего пользователя
-- `GET /search?q=&cursor=&limit=20`
+- `GET /search?q=&cursor=&limit=20` — одна выдача по типам `artist`, `album`, `track`, `genre`; фильтра по типу нет
+- `GET /albums/{id}` и `GET /tracks/{id}` содержат `genres: [{ id, name }]`
 
 Альбом (list/detail) и альбомы в `GET /artists/{id}` отдают `coverObjectKey` (ключ в бакете) и, если ключ есть, `coverUrl` + `coverUrlExpiresAt` (presign/CDN, TTL 1 час, host как у playback). `GET /tracks/{id}` повторяет `coverObjectKey` / `coverUrl` / `coverUrlExpiresAt` с альбома. Поиск обложку не включает.
 
@@ -162,11 +165,19 @@ Idempotency records хранятся в PostgreSQL (`idempotency_records`). Тр
 - Deep link `musicantiblur://app/{track|album|playlist}/{id}`.
 - `GET /s/{track|album|playlist}/{id}` (без авторизации) → HTML с Open Graph (название, подзаголовок, обложка) и кнопкой «Открыть в приложении». Базовый адрес ссылок — `Sharing__PublicBaseUrl` (пусто — адрес запроса). Приватный плейлист, удалённый и несуществующий трек — `404` без раскрытия названия. Обложка в превью — подписанный URL на 1 час.
 
-`limit` 1..50; cursor opaque. Search `q` 2..100 символов, wildcard экранируются. Результаты track/album/artist сортируются по rank DESC, display name, id:
+`limit` 1..50; cursor opaque. Search `q` 2..100 символов, wildcard экранируются. Результаты track/album/artist/genre сортируются по rank DESC, display name, id:
 
 ```json
 { "items": [{ "type": "track", "id": "uuid", "title": "...", "subtitle": "...", "rank": 0.87 }], "nextCursor": null }
 ```
+
+Жанр в выдаче: `type=genre`, `subtitle` — «Жанр». Его `rank` умножается на `Catalog__GenreRankFactor` (0.8), поэтому при равной похожести жанр идёт после артистов, альбомов и треков.
+
+История поиска (на сервере, до `Library__SearchHistoryMax` = 50 записей на пользователя):
+
+- `GET /me/search-history?limit=` → `[{ id, query, searchedAt }]`, новые сверху (по умолчанию 20, максимум 50).
+- `POST /me/search-history` `{ query }` (2..100 символов, как у `q`) → запись. Повтор того же текста (без учёта регистра и лишних пробелов) поднимает запись наверх без дубля; записи сверх лимита вытесняются, старые первыми. Клиент пишет в историю после поиска с результатами и при выборе результата, а не на каждый символ.
+- `DELETE /me/search-history/{id}` → `204` (чужая запись и несуществующая — `404`), `DELETE /me/search-history` → `204` (очистить всё).
 
 Private metadata не включается.
 
@@ -178,6 +189,10 @@ Admin metadata (роль `admin`, использует seed/upload-скрипт�
 - `POST /admin/tracks`, `PUT /admin/tracks/{id}`
 - `GET /admin/albums/{id}/tracks` — треки альбома со сводкой рендиций: `status` (`none` | `processing` | `ready` | `failed` по последней не отменённой загрузке), `readyRenditions`, `totalRenditions`.
 - `DELETE /admin/tracks/{id}` → `204`. Мягкое удаление (`deleted_at`): трек исчезает из каталога, поиска, лайков, плейлистов и playback-url. Хранится `Catalog__DeletedRetentionDays` (по умолчанию 180 дней), затем задача `purge-deleted-tracks` удаляет запись и ставит файлы в очередь удаления S3.
+- Жанры (справочник): `GET /admin/genres`, `POST /admin/genres` `{ name }` (`201`, дубль без учёта регистра — `409 genre_exists`, имя 1..60), `PUT /admin/genres/{id}` (переименование, тот же `409`), `DELETE /admin/genres/{id}` → `{ tracks, albums }` (сколько связей снято; связи удаляются каскадом).
+- `PUT /admin/albums/{id}/genres` и `PUT /admin/tracks/{id}/genres` `{ genreIds[] }` — полный набор, до 10 (`400`), неизвестный жанр — `404`.
+- `GET /admin/search?q=&cursor=&limit=` — как `/search`, но треки из корзины тоже в выдаче с `deleted: true`.
+- Жанр из тега файла: при транскоде каталога ffprobe читает тег `genre` (разделители `;` `/` `,`), недостающие жанры создаются в справочнике и ставятся треку, если у него жанров нет, и альбому, если их нет у альбома. Ручной выбор не перезаписывается; ошибка разбора тега транскод не ломает (метрика `mab_genre_tag_errors`).
 - `GET /admin/tracks/deleted` — корзина (до 200 записей): `id`, `title`, `trackNumber`, `artist`, `album`, `deletedAt`, `purgeAt`.
 - `POST /admin/tracks/{id}/restore` → `200` с карточкой трека. `409 restore_conflict` (поля `trackNumber` / `isrc` = `taken`), если номер в альбоме или ISRC уже заняты; `404`, если трека нет в корзине.
 - `DELETE /admin/albums/{id}`, `DELETE /admin/artists/{id}` → `204`. `409 has_dependents`, если есть треки (для альбома считаются и удалённые, ещё не стёртые) или альбомы. Файл обложки альбома уходит в очередь удаления S3.

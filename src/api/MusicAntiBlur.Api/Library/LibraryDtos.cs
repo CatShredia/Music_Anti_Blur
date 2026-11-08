@@ -67,3 +67,7 @@ public sealed record LibraryItemDto(
     DateTimeOffset SortAt);
 
 public sealed record LibraryPageDto(IReadOnlyList<LibraryItemDto> Items, string? NextCursor);
+
+public sealed record SearchHistoryItemDto(Guid Id, string Query, DateTimeOffset SearchedAt);
+
+public sealed record AddSearchHistoryRequest(string? Query);

@@ -132,7 +132,7 @@ class DeviceSession {
 }
 
 class ApiClient {
-  ApiClient({String? baseUrl})
+  ApiClient({String? baseUrl, @visibleForTesting HttpClientAdapter? adapter})
       : _dio = Dio(
           BaseOptions(
             baseUrl: resolveBaseUrl(baseUrl),
@@ -141,6 +141,9 @@ class ApiClient {
             headers: {'Content-Type': 'application/json'},
           ),
         ) {
+    if (adapter != null) {
+      _dio.httpClientAdapter = adapter;
+    }
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {

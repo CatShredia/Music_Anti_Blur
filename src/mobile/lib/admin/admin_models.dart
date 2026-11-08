@@ -92,3 +92,20 @@ class AdminRendition {
         errorMessage: json['errorMessage'] as String?,
       );
 }
+
+/// Жанр справочника с числом связанных треков и альбомов.
+class AdminGenre {
+  AdminGenre({required this.id, required this.name, required this.albumCount, required this.trackCount});
+
+  final String id;
+  final String name;
+  final int albumCount;
+  final int trackCount;
+
+  factory AdminGenre.fromJson(Map<String, dynamic> json) => AdminGenre(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        albumCount: json['albumCount'] as int? ?? 0,
+        trackCount: json['trackCount'] as int? ?? 0,
+      );
+}

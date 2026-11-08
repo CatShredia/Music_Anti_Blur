@@ -12,6 +12,33 @@ public sealed record ProbeResult(
 
 public static class FfprobeParser
 {
+    /// <summary>Жанры из тега <c>genre</c> формата (имя тега без учёта регистра); пусто при любой ошибке разбора.</summary>
+    public static IReadOnlyList<string> ExtractGenreTags(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("format", out var format) &&
+                format.TryGetProperty("tags", out var tags) &&
+                tags.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var tag in tags.EnumerateObject())
+                {
+                    if (string.Equals(tag.Name, "genre", StringComparison.OrdinalIgnoreCase) &&
+                        tag.Value.ValueKind == JsonValueKind.String)
+                    {
+                        return Catalog.GenreNames.ParseTag(tag.Value.GetString());
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return [];
+    }
+
     private static readonly HashSet<string> AllowedFormats =
     [
         "mp3", "mp4", "m4a", "mov", "aac", "flac", "ogg", "opus", "wav", "wave"

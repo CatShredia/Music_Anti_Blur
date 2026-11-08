@@ -23,7 +23,9 @@ public sealed record ArtistDetailDto(
     string Name,
     string? CoverUrl,
     DateTimeOffset? CoverUrlExpiresAt,
-    IReadOnlyList<ArtistAlbumItemDto> Albums);
+    IReadOnlyList<ArtistAlbumItemDto> Albums,
+    IReadOnlyList<PopularTrackDto>? Popular = null,
+    IReadOnlyList<GenreRefDto>? Genres = null);
 
 public sealed record AlbumListItemDto(
     Guid Id,
@@ -44,7 +46,8 @@ public sealed record AlbumDetailDto(
     string? CoverUrl,
     DateTimeOffset? CoverUrlExpiresAt,
     ArtistRefDto Artist,
-    IReadOnlyList<TrackListItemDto> Tracks);
+    IReadOnlyList<TrackListItemDto> Tracks,
+    IReadOnlyList<GenreRefDto>? Genres = null);
 
 public sealed record TrackDetailDto(
     Guid Id,
@@ -58,11 +61,13 @@ public sealed record TrackDetailDto(
     bool Liked,
     string? CoverObjectKey,
     string? CoverUrl,
-    DateTimeOffset? CoverUrlExpiresAt);
+    DateTimeOffset? CoverUrlExpiresAt,
+    IReadOnlyList<GenreRefDto>? Genres = null);
 
 public sealed record QualityDto(string Code, int BitrateKbps);
 
-public sealed record SearchItemDto(string Type, Guid Id, string Title, string? Subtitle, double Rank);
+/// <summary><c>Deleted</c> бывает истинным только в админском поиске (мягко удалённый трек).</summary>
+public sealed record SearchItemDto(string Type, Guid Id, string Title, string? Subtitle, double Rank, bool Deleted = false);
 
 public sealed record PageDto<T>(IReadOnlyList<T> Items, string? NextCursor);
 

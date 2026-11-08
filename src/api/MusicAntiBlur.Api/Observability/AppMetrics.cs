@@ -30,6 +30,9 @@ public static class AppMetrics
     private static readonly Counter<long> RateLimited =
         Meter.CreateCounter<long>("mab_rate_limited", description: "Requests rejected by the rate limiter.");
 
+    private static readonly Counter<long> GenreTagErrors =
+        Meter.CreateCounter<long>("mab_genre_tag_errors", description: "Failed genre tag reads during catalog transcode.");
+
     private static readonly Counter<long> TracksPurged =
         Meter.CreateCounter<long>("mab_tracks_purged", description: "Soft-deleted tracks removed after the retention period.");
 
@@ -67,6 +70,8 @@ public static class AppMetrics
     public static void QuotaRejected() => QuotaRejections.Add(1);
 
     public static void TracksPurgedAdd(int count) => TracksPurged.Add(count);
+
+    public static void GenreTagErrorAdd() => GenreTagErrors.Add(1);
 
     private static IEnumerable<Measurement<long>> ObserveHangfire()
     {

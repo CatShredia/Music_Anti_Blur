@@ -62,6 +62,7 @@ class AdminApp extends StatelessWidget {
             path: '/admin/track/:id',
             builder: (_, s) => AdminTrackScreen(api: api, id: s.pathParameters['id']!),
           ),
+          GoRoute(path: '/admin/genres', builder: (_, _) => AdminGenresScreen(api: api)),
           GoRoute(path: '/admin/trash', builder: (_, _) => AdminTrashScreen(api: api)),
           GoRoute(path: '/admin/import', builder: (_, _) => AdminImportScreen(api: api)),
         ],

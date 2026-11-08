@@ -12,6 +12,8 @@ import '../theme.dart';
 import '../validation/catalog_rules.dart';
 import '../widgets.dart';
 import 'catalog_models.dart';
+import 'discovery_api.dart';
+import 'discovery_screens.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.api});
@@ -171,13 +173,72 @@ class _SearchScreenState extends State<SearchScreen> {
   final _query = TextEditingController();
   FormFeedback _feedback = FormFeedback.empty;
   List<SearchItem> _items = const [];
+  List<SearchHistoryItem> _history = const [];
   bool _busy = false;
   bool _searched = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
 
   @override
   void dispose() {
     _query.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadHistory() async {
+    try {
+      final items = await widget.api.searchHistory();
+      if (mounted) {
+        setState(() => _history = items);
+      }
+    } catch (_) {
+      // История необязательна: поиск работает и без неё.
+    }
+  }
+
+  /// Записывает запрос в историю на сервере; ошибки молча игнорируются.
+  Future<void> _record(String query) async {
+    try {
+      final entry = await widget.api.addSearchHistory(query);
+      if (mounted) {
+        setState(() => _history = bumpHistory(_history, entry));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _removeHistory(SearchHistoryItem item) async {
+    final before = _history;
+    setState(() => _history = before.where((e) => e.id != item.id).toList());
+    try {
+      await widget.api.removeSearchHistory(item.id);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _history = before);
+        showVizeError(context, e);
+      }
+    }
+  }
+
+  Future<void> _clearHistory() async {
+    final before = _history;
+    setState(() => _history = const []);
+    try {
+      await widget.api.clearSearchHistory();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _history = before);
+        showVizeError(context, e);
+      }
+    }
+  }
+
+  void _searchFromHistory(SearchHistoryItem item) {
+    _query.text = item.query;
+    _search();
   }
 
   Future<void> _search() async {
@@ -204,6 +265,9 @@ class _SearchScreenState extends State<SearchScreen> {
         _searched = true;
         _busy = false;
       });
+      if (page.items.isNotEmpty) {
+        _record(_query.text.trim());
+      }
     } catch (e) {
       if (!mounted) {
         return;
@@ -221,9 +285,11 @@ class _SearchScreenState extends State<SearchScreen> {
       'artist' => '/artist/${item.id}',
       'album' => '/album/${item.id}',
       'track' => '/track/${item.id}',
+      'genre' => '/genre/${item.id}',
       _ => null,
     };
     if (path != null) {
+      _record(_query.text.trim());
       context.push(path);
     }
   }
@@ -231,6 +297,7 @@ class _SearchScreenState extends State<SearchScreen> {
   IconData _icon(String type) => switch (type) {
         'artist' => Icons.person_outline,
         'album' => Icons.album_outlined,
+        'genre' => Icons.category_outlined,
         _ => Icons.audiotrack_outlined,
       };
 
@@ -245,7 +312,7 @@ class _SearchScreenState extends State<SearchScreen> {
           if (_feedback.banner != null) VizeFormBanner(message: _feedback.banner!),
           VizeTextField(
             controller: _query,
-            label: 'Название трека, альбома или исполнителя',
+            label: 'Трек, альбом, исполнитель или жанр',
             maxLength: CatalogRules.queryMax,
             textInputAction: TextInputAction.search,
             errorText: _feedback['q'],
@@ -255,6 +322,34 @@ class _SearchScreenState extends State<SearchScreen> {
           const SizedBox(height: 16),
           VizePrimaryButton(label: 'Найти', busy: _busy, onPressed: _search),
           const SizedBox(height: 20),
+          if (_query.text.trim().isEmpty && _history.isNotEmpty) ...[
+            Row(
+              children: [
+                Expanded(child: Text('История', style: Theme.of(context).textTheme.titleMedium)),
+                TextButton(onPressed: _clearHistory, child: const Text('Очистить')),
+              ],
+            ),
+            const SizedBox(height: 8),
+            for (final entry in _history)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: VizeCard(
+                  onTap: () => _searchFromHistory(entry),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.history, color: VizeColors.accentMuted),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(entry.query, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                      IconButton(
+                        tooltip: 'Убрать из истории',
+                        onPressed: () => _removeHistory(entry),
+                        icon: const Icon(Icons.close, color: VizeColors.accentMuted),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
           if (_searched && _items.isEmpty && _feedback.banner == null)
             const Text('Ничего не найдено', style: TextStyle(color: VizeColors.accentMuted)),
           ..._items.map(
@@ -270,70 +365,6 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
         ],
       ),
-    );
-  }
-}
-
-class ArtistScreen extends StatefulWidget {
-  const ArtistScreen({super.key, required this.api, required this.id});
-  final ApiClient api;
-  final String id;
-
-  @override
-  State<ArtistScreen> createState() => _ArtistScreenState();
-}
-
-class _ArtistScreenState extends State<ArtistScreen> {
-  ArtistDetail? _artist;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    widget.api.artist(widget.id).then((value) {
-      if (mounted) {
-        setState(() => _artist = value);
-      }
-    }).catchError((e) {
-      if (mounted) {
-        setState(() => _error = e is ApiException ? e.localizedMessage : e.toString());
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return VizeScaffold(
-      header: VizeHeader(title: _artist?.name ?? 'Исполнитель'),
-      body: _error != null
-          ? Padding(
-              padding: const EdgeInsets.all(20),
-              child: Text(_error!, style: const TextStyle(color: VizeColors.danger)),
-            )
-          : _artist == null
-              ? const Center(child: CircularProgressIndicator())
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                  children: [
-                    CatalogCover(coverUrl: _artist!.coverUrl),
-                    const SizedBox(height: 16),
-                    if (_artist!.albums.isEmpty)
-                      const Text('Альбомов пока нет', style: TextStyle(color: VizeColors.accentMuted))
-                    else
-                      ..._artist!.albums.map(
-                        (album) => Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: CatalogTile(
-                            icon: Icons.album_outlined,
-                            title: album.title,
-                            subtitle: album.year?.toString(),
-                            coverUrl: album.coverUrl,
-                            onTap: () => context.push('/album/${album.id}'),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
     );
   }
 }
@@ -431,6 +462,10 @@ class _AlbumScreenState extends State<AlbumScreen> {
                     Text(album.artist.name, style: Theme.of(context).textTheme.titleMedium),
                     if (album.year != null)
                       Text('${album.year}', style: Theme.of(context).textTheme.bodySmall),
+                    if (album.genres.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      GenreChips(genres: album.genres),
+                    ],
                     const SizedBox(height: 20),
                     VizePrimaryButton(
                       label: 'Играть альбом',
