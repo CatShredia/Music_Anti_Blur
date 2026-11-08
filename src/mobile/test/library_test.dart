@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:music_anti_blur/api/api_client.dart';
 import 'package:music_anti_blur/catalog/catalog_models.dart';
 import 'package:music_anti_blur/library/deep_link.dart';
 import 'package:music_anti_blur/library/library_api.dart';
@@ -215,6 +217,27 @@ void main() {
 
       await pump(t, const ['http://x/a.png', 'http://x/b.png']);
       expect(find.byType(Image), findsNWidgets(4));
+    });
+  });
+
+  group('LibraryScreen link dialog', () {
+    testWidgets('cancel closes the dialog without exceptions', (t) async {
+      final router = GoRouter(
+        initialLocation: '/library',
+        routes: [GoRoute(path: '/library', builder: (_, _) => LibraryScreen(api: ApiClient()))],
+      );
+      await t.pumpWidget(MaterialApp.router(theme: VizeTheme.data(), routerConfig: router));
+      await t.pump();
+
+      await t.tap(find.byTooltip('Открыть по ссылке'));
+      await t.pump(const Duration(milliseconds: 600));
+      expect(find.text('Открыть по ссылке'), findsWidgets);
+
+      await t.tap(find.text('Отмена'));
+      await t.pump(const Duration(milliseconds: 600));
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(t.takeException(), isNull);
     });
   });
 }

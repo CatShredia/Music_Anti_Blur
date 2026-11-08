@@ -363,6 +363,45 @@ class LibraryScreen extends StatefulWidget {
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
+/// Ввод ссылки. Контроллер живёт в состоянии диалога: освобождать его снаружи нельзя,
+/// пока идёт анимация закрытия.
+class _LinkDialog extends StatefulWidget {
+  const _LinkDialog();
+
+  @override
+  State<_LinkDialog> createState() => _LinkDialogState();
+}
+
+class _LinkDialogState extends State<_LinkDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Открыть по ссылке'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: const InputDecoration(hintText: 'https://…/s/playlist/…'),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+        FilledButton(
+          style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+          onPressed: () => Navigator.pop(context, _controller.text),
+          child: const Text('Открыть'),
+        ),
+      ],
+    );
+  }
+}
+
 class _LibraryScreenState extends State<LibraryScreen> {
   static const _filters = {'all': 'Всё', 'playlists': 'Плейлисты', 'albums': 'Альбомы'};
 
@@ -439,27 +478,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _openLink() async {
-    final controller = TextEditingController();
-    final text = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Открыть по ссылке'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: 'https://…/s/playlist/…'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
-          FilledButton(
-            style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
-            onPressed: () => Navigator.pop(ctx, controller.text),
-            child: const Text('Открыть'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
+    final text = await showDialog<String>(context: context, builder: (_) => const _LinkDialog());
     if (text == null || !mounted) {
       return;
     }
