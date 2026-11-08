@@ -25,6 +25,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Playlist> Playlists => Set<Playlist>();
     public DbSet<PlaylistTrack> PlaylistTracks => Set<PlaylistTrack>();
     public DbSet<LikedTrack> LikedTracks => Set<LikedTrack>();
+    public DbSet<SavedPlaylist> SavedPlaylists => Set<SavedPlaylist>();
+    public DbSet<SavedAlbum> SavedAlbums => Set<SavedAlbum>();
     public DbSet<UserTrackStat> UserTrackStats => Set<UserTrackStat>();
     public DbSet<UserPlayHistory> UserPlayHistories => Set<UserPlayHistory>();
     public DbSet<UserTwoFactor> UserTwoFactors => Set<UserTwoFactor>();
@@ -386,11 +388,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 t.HasCheckConstraint("ck_playlists_title", "char_length(btrim(title)) BETWEEN 1 AND 200");
                 t.HasCheckConstraint("ck_playlists_liked_title",
                     "kind <> 'liked' OR title = 'Мне нравится'");
+                t.HasCheckConstraint("ck_playlists_description", "description IS NULL OR char_length(description) <= 500");
+                t.HasCheckConstraint("ck_playlists_liked_private", "kind <> 'liked' OR NOT is_public");
             });
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
             e.Property(x => x.Title).IsRequired();
             e.Property(x => x.Kind).IsRequired();
+            e.Property(x => x.IsPublic).HasDefaultValue(false);
             e.HasIndex(x => x.UserId).HasDatabaseName("ix_playlists_user");
             e.HasIndex(x => x.UserId).IsUnique().HasDatabaseName("ux_playlists_user_liked")
                 .HasFilter("kind = 'liked'");
@@ -412,6 +417,26 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Track).WithMany(x => x.PlaylistEntries).HasForeignKey(x => x.TrackId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SavedPlaylist>(e =>
+        {
+            e.ToTable("saved_playlists");
+            e.HasKey(x => new { x.UserId, x.PlaylistId });
+            e.HasIndex(x => new { x.UserId, x.AddedAt }).HasDatabaseName("ix_saved_playlists_user_added");
+            e.HasIndex(x => x.PlaylistId).HasDatabaseName("ix_saved_playlists_playlist");
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Playlist).WithMany().HasForeignKey(x => x.PlaylistId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SavedAlbum>(e =>
+        {
+            e.ToTable("saved_albums");
+            e.HasKey(x => new { x.UserId, x.AlbumId });
+            e.HasIndex(x => new { x.UserId, x.AddedAt }).HasDatabaseName("ix_saved_albums_user_added");
+            e.HasIndex(x => x.AlbumId).HasDatabaseName("ix_saved_albums_album");
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Album).WithMany().HasForeignKey(x => x.AlbumId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<LikedTrack>(e =>

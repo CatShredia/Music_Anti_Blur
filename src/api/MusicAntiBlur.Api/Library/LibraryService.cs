@@ -183,7 +183,7 @@ public sealed class LibraryService(AppDbContext db)
             })
             .ToListAsync(ct);
 
-        var page = rows.Take(take).Select(r => new LikedPlaylistTrackDto(
+        var page = rows.Take(take).Select(r => new PlaylistTrackDto(
             r.TrackId,
             r.Title,
             r.TrackNumber,

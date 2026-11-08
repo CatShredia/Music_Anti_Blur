@@ -277,6 +277,14 @@ class VizeTabBar extends StatelessWidget {
           ),
           Expanded(
             child: _TabItem(
+              icon: Icons.library_music_outlined,
+              label: 'Библиотека',
+              selected: index == 4,
+              onTap: () => context.go('/library'),
+            ),
+          ),
+          Expanded(
+            child: _TabItem(
               icon: Icons.history,
               label: 'История',
               selected: index == 2,

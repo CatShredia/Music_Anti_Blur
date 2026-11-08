@@ -202,6 +202,8 @@ class ApiClient {
   }
 
   final Dio _dio;
+
+  String get baseUrl => _dio.options.baseUrl;
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
   bool _refreshing = false;
 

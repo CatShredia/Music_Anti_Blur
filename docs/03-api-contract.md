@@ -138,9 +138,29 @@ Idempotency records хранятся в PostgreSQL (`idempotency_records`). Тр
 - `PUT /tracks/{trackId}/like` → `{ liked: true }`; добавляет трек в `liked_tracks` и в системный плейлист kind=`liked`
 - `DELETE /tracks/{trackId}/like` → `204`
 - `GET /tracks/{trackId}/like` → `{ liked: bool }`
-- `GET /me/playlists` → список плейлистов пользователя (liked всегда первый)
+- `GET /me/playlists` → список своих плейлистов (liked всегда первый), поле `isPublic`
 - `GET /me/playlists/liked?cursor=&limit=` → детали «Мне нравится» + треки (новые сверху)
-- `GET /me/playlists/{playlistId}` → то же для своего плейлиста (сейчас только liked)
+
+Пользовательские плейлисты (`kind = user`):
+
+- `POST /me/playlists` `{ title, description?, isPublic? }` → `201`. `title` 1..200, `description` до 500; лимит `Library__MaxPlaylists` (100) → `409 limit_reached`.
+- `PUT /me/playlists/{id}` `{ title?, description?, isPublic? }` (пустое `description` очищает). `DELETE /me/playlists/{id}` → `204`. Для liked обе операции и правка состава → `409 system_playlist`.
+- `GET /me/playlists/{id}?cursor=&limit=` → свой плейлист (liked тоже): метаданные, `trackCount`, `coverUrls` (до 4 обложек для коллажа), треки по `position`. `GET /playlists/{id}` → то же для чужого публичного (`isOwner=false`, `ownerName`, `inLibrary`); приватный, чужой и несуществующий — одинаковый `404`.
+- `POST /me/playlists/{id}/tracks` `{ trackIds[], position? }` → `{ added, trackCount }`. Повторное добавление идемпотентно (`added` без дублей), `position` вставляет в позицию, лимит `Library__MaxTracksPerPlaylist` (1000) → `409 limit_reached`, неизвестный/удалённый трек → `404`.
+- `DELETE /me/playlists/{id}/tracks/{trackId}` → `204`.
+- `PUT /me/playlists/{id}/tracks/order` `{ trackIds[] }` — полный порядок видимых треков; набор не совпал с текущим (кто-то изменил плейлист) → `409 order_mismatch`, клиент перечитывает.
+- Трек плейлиста: `addedAt` (для совместимости дублируется как `likedAt`).
+
+Библиотека пользователя (`/me/library`):
+
+- `GET /me/library?type=all|playlists|albums&cursor=&limit=` → плитки `{ type: playlist|album, id, title, subtitle, kind: liked|user|saved|album, isOwn, ownerName, trackCount, coverUrls[], sortAt }`. Первым всегда liked, затем по убыванию даты (`updatedAt` для своих, `addedAt` для сохранённого). Чужие плейлисты, ставшие приватными или удалённые, не попадают в ответ. `cursor` — смещение в упорядоченном списке.
+- `PUT|DELETE /me/library/playlists/{id}` — сохранить/убрать чужой публичный плейлист (ссылка, не копия). Приватный или несуществующий → `404`, свой → `409 own_playlist`. Операции идемпотентны.
+- `PUT|DELETE /me/library/albums/{id}`, `GET /me/library/albums/{id}` → `{ inLibrary }`.
+
+Ссылки:
+
+- Deep link `musicantiblur://app/{track|album|playlist}/{id}`.
+- `GET /s/{track|album|playlist}/{id}` (без авторизации) → HTML с Open Graph (название, подзаголовок, обложка) и кнопкой «Открыть в приложении». Базовый адрес ссылок — `Sharing__PublicBaseUrl` (пусто — адрес запроса). Приватный плейлист, удалённый и несуществующий трек — `404` без раскрытия названия. Обложка в превью — подписанный URL на 1 час.
 
 `limit` 1..50; cursor opaque. Search `q` 2..100 символов, wildcard экранируются. Результаты track/album/artist сортируются по rank DESC, display name, id:
 

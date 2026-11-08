@@ -241,6 +241,7 @@ class PlaylistListItem {
     required this.kind,
     required this.trackCount,
     required this.updatedAt,
+    this.isPublic = false,
   });
 
   final String id;
@@ -248,6 +249,9 @@ class PlaylistListItem {
   final String kind;
   final int trackCount;
   final DateTime updatedAt;
+  final bool isPublic;
+
+  bool get isLiked => kind == 'liked';
 
   factory PlaylistListItem.fromJson(Map<String, dynamic> json) => PlaylistListItem(
         id: json['id'] as String,
@@ -255,6 +259,7 @@ class PlaylistListItem {
         kind: json['kind'] as String,
         trackCount: json['trackCount'] as int,
         updatedAt: DateTime.parse(json['updatedAt'] as String),
+        isPublic: json['isPublic'] as bool? ?? false,
       );
 }
 
@@ -290,7 +295,7 @@ class LikedPlaylistTrack {
         artistName: json['artistName'] as String,
         albumId: json['albumId'] as String,
         albumTitle: json['albumTitle'] as String,
-        likedAt: DateTime.parse(json['likedAt'] as String),
+        likedAt: DateTime.parse((json['addedAt'] ?? json['likedAt']) as String),
       );
 }
 
@@ -304,6 +309,12 @@ class PlaylistDetail {
     required this.updatedAt,
     required this.tracks,
     this.nextCursor,
+    this.description,
+    this.isPublic = false,
+    this.isOwner = true,
+    this.ownerName,
+    this.inLibrary = false,
+    this.coverUrls = const [],
   });
 
   final String id;
@@ -314,6 +325,14 @@ class PlaylistDetail {
   final DateTime updatedAt;
   final List<LikedPlaylistTrack> tracks;
   final String? nextCursor;
+  final String? description;
+  final bool isPublic;
+  final bool isOwner;
+  final String? ownerName;
+  final bool inLibrary;
+  final List<String> coverUrls;
+
+  bool get isLiked => kind == 'liked';
 
   factory PlaylistDetail.fromJson(Map<String, dynamic> json) => PlaylistDetail(
         id: json['id'] as String,
@@ -327,6 +346,12 @@ class PlaylistDetail {
             .map(LikedPlaylistTrack.fromJson)
             .toList(),
         nextCursor: json['nextCursor'] as String?,
+        description: json['description'] as String?,
+        isPublic: json['isPublic'] as bool? ?? false,
+        isOwner: json['isOwner'] as bool? ?? true,
+        ownerName: json['ownerName'] as String?,
+        inLibrary: json['inLibrary'] as bool? ?? false,
+        coverUrls: (json['coverUrls'] as List<dynamic>? ?? const []).whereType<String>().toList(),
       );
 }
 

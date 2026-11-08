@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../api/api_client.dart';
+import '../library/deep_link.dart';
 import '../player/player_controller.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -82,7 +83,7 @@ class _TwoFactorLoginScreenState extends State<TwoFactorLoginScreen> {
       );
       if (mounted) {
         unawaited(PlayerScope.maybeOf(context)?.restoreIfNeeded());
-        context.go('/home');
+        context.go(PendingLink.take() ?? '/home');
       }
     } on ApiException catch (e) {
       if (!mounted) {

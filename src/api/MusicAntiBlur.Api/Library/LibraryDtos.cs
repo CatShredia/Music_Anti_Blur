@@ -7,9 +7,11 @@ public sealed record PlaylistListItemDto(
     string Title,
     string Kind,
     int TrackCount,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    bool IsPublic = false);
 
-public sealed record LikedPlaylistTrackDto(
+/// <summary>Трек плейлиста. <c>LikedAt</c> дублирует <c>AddedAt</c> для старых клиентов.</summary>
+public sealed record PlaylistTrackDto(
     Guid Id,
     string Title,
     int TrackNumber,
@@ -18,7 +20,10 @@ public sealed record LikedPlaylistTrackDto(
     string ArtistName,
     Guid AlbumId,
     string AlbumTitle,
-    DateTimeOffset LikedAt);
+    DateTimeOffset AddedAt)
+{
+    public DateTimeOffset LikedAt => AddedAt;
+}
 
 public sealed record PlaylistDetailDto(
     Guid Id,
@@ -27,5 +32,38 @@ public sealed record PlaylistDetailDto(
     int TrackCount,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    IReadOnlyList<LikedPlaylistTrackDto> Tracks,
-    string? NextCursor);
+    IReadOnlyList<PlaylistTrackDto> Tracks,
+    string? NextCursor,
+    string? Description = null,
+    bool IsPublic = false,
+    bool IsOwner = true,
+    string? OwnerName = null,
+    bool InLibrary = false,
+    IReadOnlyList<string>? CoverUrls = null);
+
+public sealed record CreatePlaylistRequest(string? Title, string? Description, bool? IsPublic);
+
+public sealed record UpdatePlaylistRequest(string? Title, string? Description, bool? IsPublic);
+
+public sealed record AddPlaylistTracksRequest(IReadOnlyList<Guid>? TrackIds, int? Position);
+
+public sealed record ReorderPlaylistRequest(IReadOnlyList<Guid>? TrackIds);
+
+public sealed record AddedTracksDto(int Added, int TrackCount);
+
+public sealed record InLibraryDto(bool InLibrary);
+
+/// <summary>Плитка библиотеки: плейлист (свой, liked или сохранённый чужой) либо альбом.</summary>
+public sealed record LibraryItemDto(
+    string Type,
+    Guid Id,
+    string Title,
+    string? Subtitle,
+    string Kind,
+    bool IsOwn,
+    string? OwnerName,
+    int TrackCount,
+    IReadOnlyList<string> CoverUrls,
+    DateTimeOffset SortAt);
+
+public sealed record LibraryPageDto(IReadOnlyList<LibraryItemDto> Items, string? NextCursor);

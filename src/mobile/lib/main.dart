@@ -9,6 +9,8 @@ import 'account/two_factor_screens.dart';
 import 'api/api_client.dart';
 import 'catalog/catalog_screens.dart';
 import 'catalog/history_screen.dart';
+import 'library/deep_link.dart';
+import 'library/library_screens.dart';
 import 'player/audio_handler.dart';
 import 'player/mini_player.dart';
 import 'player/player_controller.dart';
@@ -46,6 +48,21 @@ class MusicAntiBlurApp extends StatelessWidget {
 
   late final GoRouter _router = GoRouter(
     initialLocation: '/login',
+    // Ссылка на контент до входа: запоминаем и ведём на вход.
+    // Синхронно для обычных маршрутов (первый кадр без ожидания); асинхронно только для ссылок.
+    redirect: (_, state) {
+      final link = routeForLink(state.uri);
+      if (link == null) {
+        return null;
+      }
+      return api.hasSession().then((ok) {
+        if (ok) {
+          return null;
+        }
+        PendingLink.set(link);
+        return '/login';
+      });
+    },
     routes: [
       GoRoute(path: '/login', builder: (_, _) => LoginScreen(api: api)),
       GoRoute(path: '/register', builder: (_, _) => RegisterScreen(api: api)),
@@ -117,6 +134,13 @@ class MusicAntiBlurApp extends StatelessWidget {
         path: '/liked',
         builder: (_, _) => LikedPlaylistScreen(api: api),
       ),
+      GoRoute(path: '/library', builder: (_, _) => LibraryScreen(api: api)),
+      GoRoute(
+        path: '/playlist/:id',
+        builder: (_, state) => PlaylistScreen(api: api, id: state.pathParameters['id']!),
+      ),
+      // https-ссылка из превью: /s/{type}/{id} -> /{type}/{id}.
+      GoRoute(path: '/s/:type/:id', redirect: (_, state) => routeForLink(state.uri) ?? '/home'),
       if (player case final activePlayer?)
         GoRoute(path: '/player', builder: (_, _) => PlayerScreen(player: activePlayer)),
     ],
@@ -161,7 +185,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.initState();
     widget.api.hasSession().then((ok) {
       if (ok && mounted) {
-        context.go('/home');
+        context.go(PendingLink.take() ?? '/home');
       }
     }).catchError((_) {});
   }
@@ -238,7 +262,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   return;
                 }
                 unawaited(PlayerScope.maybeOf(context)?.restoreIfNeeded());
-                context.go('/home');
+                context.go(PendingLink.take() ?? '/home');
               } catch (e) {
                 if (mounted) {
                   setState(() => _feedback = FormFeedback.fromError(e));
@@ -423,7 +447,7 @@ class _CheckEmailScreenState extends State<CheckEmailScreen> {
                 if (!context.mounted) {
                   return;
                 }
-                context.go('/home');
+                context.go(PendingLink.take() ?? '/home');
               } catch (e) {
                 if (mounted) {
                   setState(() => _feedback = FormFeedback.fromError(e));

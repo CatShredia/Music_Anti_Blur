@@ -191,6 +191,8 @@ flutter run -d chrome -t lib/main_admin.dart --web-port 8090
 # сборка: flutter build web -t lib/main_admin.dart --output build/web_admin
 ```
 
+Ссылки на треки, альбомы и плейлисты: в приложении — `musicantiblur://app/{track|album|playlist}/{id}` (intent-filter с host `app` в `AndroidManifest.xml`), в вебе и из буфера — `https://{api}/s/{type}/{id}` (приложение превращает её в `/{type}/{id}`). До входа ссылка запоминается и открывается после авторизации (в том числе после 2FA). `GET /s/{type}/{id}` отдаёт страницу с превью; внешний адрес задаётся `Sharing__PublicBaseUrl`. Лимиты плейлистов — `Library__MaxPlaylists` (100) и `Library__MaxTracksPerPlaylist` (1000).
+
 Нужна роль `admin` (локально `admin` / `AdminPassword123`). Локально CORS открыт для loopback, а MinIO отвечает на PUT частей из браузера с `ETag` (`MINIO_API_CORS_ALLOW_ORIGIN=*`). Для внешнего API задайте `Cors__AllowedOrigins`, для реального S3 — CORS бакета (см. [devops/yandex-storage-cdn.md](../devops/yandex-storage-cdn.md)). Подробности — [06-admin-and-operations.md](06-admin-and-operations.md) §9.
 
 Тот же `API_BASE_URL` нужен, чтобы плеер ходил в API по LAN; signed MinIO URL берёт hostname из `Host` запроса к API.

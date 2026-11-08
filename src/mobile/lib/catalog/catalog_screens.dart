@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../api/api_client.dart';
+import '../library/library_api.dart';
+import '../library/library_screens.dart';
 import '../overrides/override_panel.dart';
 import '../player/player_controller.dart';
 import '../player/player_nav.dart';
@@ -348,10 +351,46 @@ class _AlbumScreenState extends State<AlbumScreen> {
   AlbumDetail? _album;
   String? _error;
   bool _busy = false;
+  bool _inLibrary = false;
+  bool _libraryBusy = false;
+
+  Future<void> _toggleLibrary() async {
+    setState(() => _libraryBusy = true);
+    try {
+      if (_inLibrary) {
+        await widget.api.removeAlbumFromLibrary(widget.id);
+      } else {
+        await widget.api.saveAlbumToLibrary(widget.id);
+      }
+      if (mounted) {
+        setState(() => _inLibrary = !_inLibrary);
+      }
+    } catch (e) {
+      if (mounted) {
+        showVizeError(context, e);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _libraryBusy = false);
+      }
+    }
+  }
+
+  Future<void> _shareAlbum() async {
+    await Clipboard.setData(ClipboardData(text: widget.api.shareUrl('album', widget.id)));
+    if (mounted) {
+      showVizeMessage(context, 'Ссылка скопирована');
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    widget.api.albumInLibrary(widget.id).then((value) {
+      if (mounted) {
+        setState(() => _inLibrary = value);
+      }
+    }).catchError((_) {});
     widget.api.album(widget.id).then((value) {
       if (mounted) {
         setState(() => _album = value);
@@ -367,7 +406,16 @@ class _AlbumScreenState extends State<AlbumScreen> {
   Widget build(BuildContext context) {
     final album = _album;
     return VizeScaffold(
-      header: VizeHeader(title: album?.title ?? 'Альбом'),
+      header: VizeHeader(
+        title: album?.title ?? 'Альбом',
+        trailing: album == null
+            ? null
+            : IconButton(
+                tooltip: 'Скопировать ссылку',
+                onPressed: _shareAlbum,
+                icon: const Icon(Icons.share_outlined, color: VizeColors.accentMuted),
+              ),
+      ),
       body: _error != null
           ? Padding(
               padding: const EdgeInsets.all(20),
@@ -410,6 +458,34 @@ class _AlbumScreenState extends State<AlbumScreen> {
                                 }
                               }
                             },
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(minimumSize: const Size(0, 48)),
+                            onPressed: _libraryBusy ? null : _toggleLibrary,
+                            icon: Icon(_inLibrary ? Icons.check : Icons.library_add_outlined),
+                            label: Text(_inLibrary ? 'В библиотеке' : 'В библиотеку', overflow: TextOverflow.ellipsis),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Flexible(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(minimumSize: const Size(0, 48)),
+                            onPressed: album.tracks.isEmpty
+                                ? null
+                                : () => showAddToPlaylistSheet(
+                                      context,
+                                      widget.api,
+                                      album.tracks.map((t) => t.id).toList(),
+                                    ),
+                            icon: const Icon(Icons.playlist_add),
+                            label: const Text('В плейлист', overflow: TextOverflow.ellipsis),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 20),
                     ...album.tracks.map(
@@ -631,6 +707,13 @@ class _TrackScreenState extends State<TrackScreen> {
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(minimumSize: const Size(0, 48)),
+                      onPressed: () => showAddToPlaylistSheet(context, widget.api, [track.id]),
+                      icon: const Icon(Icons.playlist_add),
+                      label: const Text('В плейлист'),
                     ),
                   ],
                 ),
