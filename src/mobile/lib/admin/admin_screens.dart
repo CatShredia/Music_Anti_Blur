@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../api/api_client.dart';
+import '../catalog/catalog_screens.dart' show CatalogCover;
 import '../catalog/catalog_models.dart';
 import 'admin_api.dart';
 import 'admin_models.dart';
@@ -93,8 +94,9 @@ class AdminShell extends StatelessWidget {
   final Widget child;
 
   int get _index {
-    if (location.startsWith('/admin/trash')) return 1;
-    if (location.startsWith('/admin/import')) return 2;
+    if (location.startsWith('/admin/genres')) return 1;
+    if (location.startsWith('/admin/trash')) return 2;
+    if (location.startsWith('/admin/import')) return 3;
     return 0;
   }
 
@@ -106,9 +108,10 @@ class AdminShell extends StatelessWidget {
           NavigationRail(
             selectedIndex: _index,
             labelType: NavigationRailLabelType.all,
-            onDestinationSelected: (i) => context.go(['/admin', '/admin/trash', '/admin/import'][i]),
+            onDestinationSelected: (i) => context.go(['/admin', '/admin/genres', '/admin/trash', '/admin/import'][i]),
             destinations: const [
               NavigationRailDestination(icon: Icon(Icons.library_music), label: Text('Каталог')),
+              NavigationRailDestination(icon: Icon(Icons.category_outlined), label: Text('Жанры')),
               NavigationRailDestination(icon: Icon(Icons.delete_outline), label: Text('Корзина')),
               NavigationRailDestination(icon: Icon(Icons.drive_folder_upload), label: Text('Импорт')),
             ],
@@ -176,30 +179,59 @@ Future<Map<String, String>?> _form(
   required String title,
   required Map<String, String> fields,
 }) {
-  final controllers = {for (final e in fields.entries) e.key: TextEditingController(text: e.value)};
   return showDialog<Map<String, String>>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text(title),
+    builder: (_) => _FormDialog(title: title, fields: fields),
+  );
+}
+
+/// Форма из текстовых полей. Контроллеры живут в состоянии диалога и освобождаются вместе с ним.
+class _FormDialog extends StatefulWidget {
+  const _FormDialog({required this.title, required this.fields});
+
+  final String title;
+  final Map<String, String> fields;
+
+  @override
+  State<_FormDialog> createState() => _FormDialogState();
+}
+
+class _FormDialogState extends State<_FormDialog> {
+  late final Map<String, TextEditingController> _controllers = {
+    for (final e in widget.fields.entries) e.key: TextEditingController(text: e.value),
+  };
+
+  @override
+  void dispose() {
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
       content: SizedBox(
         width: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            for (final e in controllers.entries)
+            for (final e in _controllers.entries)
               TextField(controller: e.value, decoration: InputDecoration(labelText: e.key)),
           ],
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
         FilledButton(
-          onPressed: () => Navigator.pop(ctx, {for (final e in controllers.entries) e.key: e.value.text.trim()}),
+          onPressed: () => Navigator.pop(context, {for (final e in _controllers.entries) e.key: e.value.text.trim()}),
           child: const Text('Сохранить'),
         ),
       ],
-    ),
-  );
+    );
+  }
 }
 
 Color _statusColor(String status) => switch (status) {
@@ -237,19 +269,24 @@ class _Page extends StatelessWidget {
   final List<Widget> actions;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: Theme.of(context).textTheme.headlineSmall),
-            if (actions.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: actions),
+  // Переход страницы кладёт в дерево ColoredBox: без своего Material ListTile не показывает заливку и рябь
+  // (в debug это ассерт). Material должен быть внутри страницы, поэтому он здесь, а не в оболочке.
+  Widget build(BuildContext context) => Material(
+        type: MaterialType.transparency,
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: Theme.of(context).textTheme.headlineSmall),
+              if (actions.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: actions),
+              ],
+              const SizedBox(height: 16),
+              Expanded(child: child),
             ],
-            const SizedBox(height: 16),
-            Expanded(child: child),
-          ],
+          ),
         ),
       );
 }
@@ -270,26 +307,30 @@ Future<void> pickAndUploadSource(BuildContext context, ApiClient api, String tra
   }
   final stage = ValueNotifier<(String, double)>(('старт', 0));
   var cancelled = false;
+  BuildContext? dialogContext;
   unawaited(
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: Text(file.name),
-        content: ValueListenableBuilder<(String, double)>(
-          valueListenable: stage,
-          builder: (_, v, _) => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [Text(v.$1), const SizedBox(height: 8), LinearProgressIndicator(value: v.$2)],
+      builder: (ctx) {
+        dialogContext = ctx;
+        return AlertDialog(
+          title: Text(file.name),
+          content: ValueListenableBuilder<(String, double)>(
+            valueListenable: stage,
+            builder: (_, v, _) => Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [Text(v.$1), const SizedBox(height: 8), LinearProgressIndicator(value: v.$2)],
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => cancelled = true,
-            child: const Text('Отменить'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => cancelled = true,
+              child: const Text('Отменить'),
+            ),
+          ],
+        );
+      },
     ),
   );
   String result;
@@ -307,9 +348,169 @@ Future<void> pickAndUploadSource(BuildContext context, ApiClient api, String tra
   } catch (e) {
     result = describeError(e);
   }
+  // Закрываем именно свой диалог, а не верхний маршрут: пользователь мог уйти с экрана.
+  final dialog = dialogContext;
+  if (dialog != null && dialog.mounted) {
+    Navigator.of(dialog).pop();
+  }
+  // Диалог ещё анимируется и слушает notifier: освобождаем после его закрытия.
+  Future<void>.delayed(const Duration(milliseconds: 400), stage.dispose);
   if (context.mounted) {
-    Navigator.of(context, rootNavigator: true).pop();
     _toast(context, result);
+  }
+}
+
+// ---------------------------------------------------------------- genres
+
+String _genresLabel(List<GenreRef> genres) =>
+    genres.isEmpty ? 'Жанры' : 'Жанры: ${genres.map((g) => g.name).join(', ')}';
+
+/// Выбор жанров из справочника (до 10). `null` — отмена.
+Future<List<String>?> _pickGenres(BuildContext context, ApiClient api, List<String> selected) {
+  return showDialog<List<String>>(
+    context: context,
+    builder: (_) => _GenrePickerDialog(api: api, selected: selected),
+  );
+}
+
+class _GenrePickerDialog extends StatefulWidget {
+  const _GenrePickerDialog({required this.api, required this.selected});
+
+  final ApiClient api;
+  final List<String> selected;
+
+  @override
+  State<_GenrePickerDialog> createState() => _GenrePickerDialogState();
+}
+
+class _GenrePickerDialogState extends State<_GenrePickerDialog> {
+  static const _max = 10;
+
+  late final Set<String> _selected = {...widget.selected};
+  List<AdminGenre>? _all;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.api.adminGenres().then((value) {
+      if (mounted) setState(() => _all = value);
+    }).catchError((Object e) {
+      if (mounted) setState(() => _error = describeError(e));
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final all = _all;
+    return AlertDialog(
+      title: Text('Жанры (${_selected.length}/$_max)'),
+      content: SizedBox(
+        width: 360,
+        height: 360,
+        child: _error != null
+            ? Text(_error!)
+            : all == null
+                ? const Center(child: CircularProgressIndicator())
+                : all.isEmpty
+                    ? const Text('Справочник пуст: добавьте жанры в разделе «Жанры».')
+                    : ListView(
+                        children: [
+                          for (final g in all)
+                            CheckboxListTile(
+                              title: Text(g.name),
+                              value: _selected.contains(g.id),
+                              onChanged: !_selected.contains(g.id) && _selected.length >= _max
+                                  ? null
+                                  : (v) => setState(() => v == true ? _selected.add(g.id) : _selected.remove(g.id)),
+                            ),
+                        ],
+                      ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+        FilledButton(onPressed: () => Navigator.pop(context, _selected.toList()), child: const Text('Сохранить')),
+      ],
+    );
+  }
+}
+
+class AdminGenresScreen extends StatefulWidget {
+  const AdminGenresScreen({super.key, required this.api});
+
+  final ApiClient api;
+
+  @override
+  State<AdminGenresScreen> createState() => _AdminGenresScreenState();
+}
+
+class _AdminGenresScreenState extends State<AdminGenresScreen> {
+  List<AdminGenre>? _genres;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    await _guard(context, () async => _genres = await widget.api.adminGenres());
+    if (mounted) setState(() => _genres ??= const []);
+  }
+
+  Future<void> _create() async {
+    final v = await _form(context, title: 'Новый жанр', fields: {'Название': ''});
+    if (v == null || v['Название']!.isEmpty || !mounted) return;
+    if (await _guard(context, () => widget.api.adminCreateGenre(v['Название']!))) {
+      await _load();
+    }
+  }
+
+  Future<void> _rename(AdminGenre g) async {
+    final v = await _form(context, title: 'Жанр', fields: {'Название': g.name});
+    if (v == null || v['Название']!.isEmpty || !mounted) return;
+    if (await _guard(context, () => widget.api.adminRenameGenre(g.id, v['Название']!))) {
+      await _load();
+    }
+  }
+
+  Future<void> _delete(AdminGenre g) async {
+    final text = g.albumCount + g.trackCount == 0
+        ? 'Удалить жанр «${g.name}»?'
+        : 'Удалить жанр «${g.name}»? Он будет снят у треков: ${g.trackCount}, альбомов: ${g.albumCount}.';
+    if (!await _confirm(context, text) || !mounted) return;
+    if (await _guard(context, () => widget.api.adminDeleteGenre(g.id))) {
+      await _load();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final genres = _genres;
+    return _Page(
+      title: 'Жанры',
+      actions: [FilledButton.icon(onPressed: _create, icon: const Icon(Icons.add), label: const Text('Жанр'))],
+      child: genres == null
+          ? const Center(child: CircularProgressIndicator())
+          : genres.isEmpty
+              ? const Text('Жанров пока нет. Они появятся из тегов загруженных файлов или добавьте вручную.')
+              : ListView(
+                  children: [
+                    for (final g in genres)
+                      ListTile(
+                        title: Text(g.name),
+                        subtitle: Text('Треков: ${g.trackCount} · альбомов: ${g.albumCount}'),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(tooltip: 'Переименовать', icon: const Icon(Icons.edit), onPressed: () => _rename(g)),
+                            IconButton(tooltip: 'Удалить', icon: const Icon(Icons.delete_outline), onPressed: () => _delete(g)),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+    );
   }
 }
 
@@ -326,6 +527,8 @@ class AdminArtistsScreen extends StatefulWidget {
 
 class _AdminArtistsScreenState extends State<AdminArtistsScreen> {
   final _items = <ArtistListItem>[];
+  final _search = TextEditingController();
+  List<SearchItem>? _results;
   String? _cursor;
   bool _loading = false;
   bool _loaded = false;
@@ -335,6 +538,71 @@ class _AdminArtistsScreenState extends State<AdminArtistsScreen> {
     super.initState();
     _reload();
   }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  Future<void> _runSearch() async {
+    final query = _search.text.trim();
+    if (query.length < 2) {
+      setState(() => _results = null);
+      return;
+    }
+    List<SearchItem>? found;
+    await _guard(context, () async => found = await widget.api.adminSearch(query));
+    if (mounted && found != null) {
+      setState(() => _results = found);
+    }
+  }
+
+  void _clearSearch() {
+    _search.clear();
+    setState(() => _results = null);
+  }
+
+  void _openResult(SearchItem item) {
+    final route = switch (item.type) {
+      'artist' => '/admin/artist/${item.id}',
+      'album' => '/admin/album/${item.id}',
+      'genre' => '/admin/genres',
+      _ => item.deleted ? '/admin/trash' : '/admin/track/${item.id}',
+    };
+    context.go(route);
+  }
+
+  static const _typeLabels = {'artist': 'Исполнитель', 'album': 'Альбом', 'track': 'Трек', 'genre': 'Жанр'};
+
+  Widget _searchBox() => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: TextField(
+          controller: _search,
+          decoration: InputDecoration(
+            hintText: 'Поиск по каталогу, включая корзину',
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: _results == null
+                ? null
+                : IconButton(tooltip: 'Сбросить', icon: const Icon(Icons.close), onPressed: _clearSearch),
+          ),
+          textInputAction: TextInputAction.search,
+          onSubmitted: (_) => _runSearch(),
+        ),
+      );
+
+  Widget _searchResults() => ListView(
+        children: [
+          if (_results!.isEmpty) const Padding(padding: EdgeInsets.all(16), child: Text('Ничего не найдено')),
+          for (final item in _results!)
+            ListTile(
+              title: Text(item.title),
+              subtitle: Text([_typeLabels[item.type] ?? item.type, if (item.subtitle != null && item.type != 'genre') item.subtitle!].join(' · ')),
+              trailing: item.deleted ? const Chip(label: Text('удалён'), visualDensity: VisualDensity.compact) : null,
+              onTap: () => _openResult(item),
+            ),
+        ],
+      );
 
   Future<void> _reload() async {
     _items.clear();
@@ -389,7 +657,17 @@ class _AdminArtistsScreenState extends State<AdminArtistsScreen> {
       actions: [FilledButton.icon(onPressed: _create, icon: const Icon(Icons.add), label: const Text('Исполнитель'))],
       child: !_loaded
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
+          : Column(
+              children: [
+                _searchBox(),
+                Expanded(child: _results != null ? _searchResults() : _artistList()),
+              ],
+            ),
+    );
+  }
+
+  Widget _artistList() {
+    return ListView(
               children: [
                 for (final a in _items)
                   ListTile(
@@ -406,8 +684,7 @@ class _AdminArtistsScreenState extends State<AdminArtistsScreen> {
                 if (_cursor != null)
                   TextButton(onPressed: _more, child: const Text('Загрузить ещё')),
               ],
-            ),
-    );
+            );
   }
 }
 
@@ -476,7 +753,7 @@ class _AdminArtistScreenState extends State<AdminArtistScreen> {
                   ListTile(
                     leading: a.coverUrl == null
                         ? const Icon(Icons.album)
-                        : Image.network(a.coverUrl!, width: 48, height: 48, fit: BoxFit.cover),
+                        : CatalogCover(coverUrl: a.coverUrl, width: 48, height: 48, icon: Icons.album, iconSize: 22, radius: 8),
                     title: Text(a.title),
                     subtitle: Text('${a.year ?? ''}'),
                     onTap: () => context.go('/admin/album/${a.id}'),
@@ -515,6 +792,16 @@ class _AdminAlbumScreenState extends State<AdminAlbumScreen> {
   void dispose() {
     _poll?.cancel();
     super.dispose();
+  }
+
+  Future<void> _editGenres() async {
+    final album = _album;
+    if (album == null) return;
+    final ids = await _pickGenres(context, widget.api, album.genres.map((g) => g.id).toList());
+    if (ids == null || !mounted) return;
+    if (await _guard(context, () => widget.api.adminSetAlbumGenres(widget.id, ids))) {
+      await _load();
+    }
   }
 
   Future<void> _load() async {
@@ -643,6 +930,12 @@ class _AdminAlbumScreenState extends State<AdminAlbumScreen> {
           TextButton(onPressed: () => context.go('/admin/artist/${album.artist.id}'), child: Text('← ${album.artist.name}')),
         if (album != null) IconButton(tooltip: 'Изменить', icon: const Icon(Icons.edit), onPressed: _editAlbum),
         if (album != null) OutlinedButton(onPressed: _cover, child: const Text('Обложка')),
+        if (album != null)
+          OutlinedButton.icon(
+            onPressed: _editGenres,
+            icon: const Icon(Icons.category_outlined),
+            label: Text(_genresLabel(album.genres)),
+          ),
         const SizedBox(width: 8),
         if (album != null) FilledButton.icon(onPressed: _addTrack, icon: const Icon(Icons.add), label: const Text('Трек')),
       ],
@@ -654,7 +947,7 @@ class _AdminAlbumScreenState extends State<AdminAlbumScreen> {
                 if (album.coverUrl != null)
                   Padding(
                     padding: const EdgeInsets.only(right: 16),
-                    child: Image.network(album.coverUrl!, width: 160, height: 160, fit: BoxFit.cover),
+                    child: CatalogCover(coverUrl: album.coverUrl, width: 160, height: 160, icon: Icons.album, iconSize: 48, radius: 8),
                   ),
                 Expanded(
                   child: ListView(
@@ -713,6 +1006,16 @@ class _AdminTrackScreenState extends State<AdminTrackScreen> {
     super.dispose();
   }
 
+  Future<void> _editGenres() async {
+    final track = _track;
+    if (track == null) return;
+    final ids = await _pickGenres(context, widget.api, track.genres.map((g) => g.id).toList());
+    if (ids == null || !mounted) return;
+    if (await _guard(context, () => widget.api.adminSetTrackGenres(widget.id, ids))) {
+      await _load(first: true);
+    }
+  }
+
   Future<void> _load({bool first = false}) async {
     try {
       if (first) _track = await widget.api.track(widget.id);
@@ -752,6 +1055,12 @@ class _AdminTrackScreenState extends State<AdminTrackScreen> {
           icon: const Icon(Icons.upload_file),
           label: const Text('Новый файл'),
         ),
+        if (track != null)
+          OutlinedButton.icon(
+            onPressed: _editGenres,
+            icon: const Icon(Icons.category_outlined),
+            label: Text(_genresLabel(track.genres)),
+          ),
         const SizedBox(width: 8),
         if (hasFailed)
           FilledButton.icon(onPressed: () => _retry(), icon: const Icon(Icons.refresh), label: const Text('Перекодировать')),

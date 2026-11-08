@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Http;
@@ -14,7 +15,9 @@ public sealed class CatalogService(
     AppDbContext db,
     PlaybackUrlSigner signer,
     ObjectStorageClient storage,
-    IHttpContextAccessor http)
+    IHttpContextAccessor http,
+    PopularityService popularity,
+    IOptions<CatalogOptions> options)
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -86,6 +89,55 @@ public sealed class CatalogService(
         var artistCover = SignCover((await ArtistCoverKeysAsync([artist.Id], ct)).GetValueOrDefault(artist.Id));
         return new ArtistDetailDto(artist.Id, artist.Name, artistCover.Url, artistCover.ExpiresAt, albums);
     }
+
+    /// <summary>Страница исполнителя: дискография, популярные треки (5) и жанры его альбомов.</summary>
+    public async Task<ArtistDetailDto> GetArtistPageAsync(Guid id, Guid userId, CancellationToken ct)
+    {
+        var detail = await GetArtistAsync(id, ct);
+        var popular = await popularity.ForArtistAsync(id, userId, ArtistPagePopular, ct);
+        var genres = await db.AlbumGenres.AsNoTracking()
+            .Where(x => x.Album.ArtistId == id)
+            .Select(x => new { x.GenreId, x.Genre.Name })
+            .Distinct()
+            .OrderBy(x => x.Name)
+            .ToListAsync(ct);
+        return detail with
+        {
+            Popular = ToPopularDtos(popular),
+            Genres = genres.Select(g => new GenreRefDto(g.GenreId, g.Name)).ToList()
+        };
+    }
+
+    public const int ArtistPagePopular = 5;
+    public const int PopularMax = 50;
+
+    public async Task<PopularTracksDto> GetArtistPopularAsync(Guid id, Guid userId, int? limit, CancellationToken ct)
+    {
+        var take = limit ?? 10;
+        if (take < 1 || take > PopularMax)
+        {
+            var errors = CatalogValidation.NewErrors();
+            CatalogValidation.Add(errors, "limit", CatalogValidation.LimitRange);
+            CatalogValidation.ThrowIfAny(errors);
+        }
+
+        if (!await db.Artists.AsNoTracking().AnyAsync(a => a.Id == id, ct))
+        {
+            throw NotFound();
+        }
+
+        var result = await popularity.ForArtistAsync(id, userId, take, ct);
+        return new PopularTracksDto(ToPopularDtos(result));
+    }
+
+    public IReadOnlyList<PopularTrackDto> ToPopularDtos(IEnumerable<PopularRow> rows) =>
+        rows.Select(r =>
+        {
+            var cover = SignCover(r.CoverObjectKey);
+            return new PopularTrackDto(
+                r.TrackId, r.Title, r.TrackNumber, r.DurationMs, r.ArtistId, r.ArtistName,
+                r.AlbumId, r.AlbumTitle, cover.Url, cover.ExpiresAt);
+        }).ToList();
 
     public async Task<PageDto<AlbumListItemDto>> ListAlbumsAsync(Guid? artistId, string? cursor, int? limit, CancellationToken ct)
     {
@@ -168,6 +220,11 @@ public sealed class CatalogService(
         }
 
         var cover = SignCover(album.CoverObjectKey);
+        var albumGenres = await db.AlbumGenres.AsNoTracking()
+            .Where(x => x.AlbumId == id)
+            .OrderBy(x => x.Genre.Name)
+            .Select(x => new GenreRefDto(x.GenreId, x.Genre.Name))
+            .ToListAsync(ct);
         return new AlbumDetailDto(
             album.Id,
             album.Title,
@@ -176,7 +233,8 @@ public sealed class CatalogService(
             cover.Url,
             cover.ExpiresAt,
             new ArtistRefDto(album.ArtistId, album.ArtistName),
-            album.Tracks);
+            album.Tracks,
+            albumGenres);
     }
 
     public async Task<TrackDetailDto> GetTrackAsync(Guid id, Guid userId, CancellationToken ct)
@@ -212,6 +270,11 @@ public sealed class CatalogService(
         var liked = await db.LikedTracks.AsNoTracking()
             .AnyAsync(l => l.UserId == userId && l.TrackId == id, ct);
         var cover = SignCover(track.CoverObjectKey);
+        var trackGenres = await db.TrackGenres.AsNoTracking()
+            .Where(x => x.TrackId == id)
+            .OrderBy(x => x.Genre.Name)
+            .Select(x => new GenreRefDto(x.GenreId, x.Genre.Name))
+            .ToListAsync(ct);
 
         return new TrackDetailDto(
             track.Id,
@@ -225,10 +288,19 @@ public sealed class CatalogService(
             liked,
             track.CoverObjectKey,
             cover.Url,
-            cover.ExpiresAt);
+            cover.ExpiresAt,
+            trackGenres);
     }
 
-    public async Task<PageDto<SearchItemDto>> SearchAsync(string? q, string? cursor, int? limit, CancellationToken ct)
+    public Task<PageDto<SearchItemDto>> SearchAsync(string? q, string? cursor, int? limit, CancellationToken ct) =>
+        SearchCoreAsync(q, cursor, limit, includeDeleted: false, ct);
+
+    /// <summary>Поиск для админа: треки из корзины тоже попадают в выдачу (с пометкой <c>Deleted</c>).</summary>
+    public Task<PageDto<SearchItemDto>> AdminSearchAsync(string? q, string? cursor, int? limit, CancellationToken ct) =>
+        SearchCoreAsync(q, cursor, limit, includeDeleted: true, ct);
+
+    private async Task<PageDto<SearchItemDto>> SearchCoreAsync(
+        string? q, string? cursor, int? limit, bool includeDeleted, CancellationToken ct)
     {
         var errors = CatalogValidation.NewErrors();
         var query = CatalogValidation.ParseQuery(q, errors);
@@ -238,18 +310,19 @@ public sealed class CatalogService(
 
         var like = "%" + CatalogValidation.EscapeLike(query) + "%";
         var minSim = CatalogValidation.SearchMinSimilarity;
+        var genreFactor = options.Value.GenreRankFactor;
         var rows = await db.Database.SqlQuery<SearchHitRow>($"""
-            SELECT type, id, title, subtitle, rank
+            SELECT type, id, title, subtitle, rank, deleted
             FROM (
               SELECT 'artist'::text AS type, a.id, a.name AS title, NULL::text AS subtitle,
-                     similarity(a.name, {query})::float8 AS rank
+                     similarity(a.name, {query})::float8 AS rank, false AS deleted
               FROM artists a
               WHERE similarity(a.name, {query}) > {minSim}
                  OR a.name % {query}
                  OR a.name ILIKE {like} ESCAPE E'\\'
               UNION ALL
               SELECT 'album', al.id, al.title, ar.name,
-                     similarity(al.title, {query})::float8
+                     similarity(al.title, {query})::float8, false
               FROM albums al
               JOIN artists ar ON ar.id = al.artist_id
               WHERE similarity(al.title, {query}) > {minSim}
@@ -257,14 +330,21 @@ public sealed class CatalogService(
                  OR al.title ILIKE {like} ESCAPE E'\\'
               UNION ALL
               SELECT 'track', t.id, t.title, ar.name || ' · ' || al.title,
-                     similarity(t.title, {query})::float8
+                     similarity(t.title, {query})::float8, t.deleted_at IS NOT NULL
               FROM tracks t
               JOIN artists ar ON ar.id = t.artist_id
               JOIN albums al ON al.id = t.album_id
-              WHERE t.deleted_at IS NULL
+              WHERE ({includeDeleted} OR t.deleted_at IS NULL)
                 AND (similarity(t.title, {query}) > {minSim}
                  OR t.title % {query}
                  OR t.title ILIKE {like} ESCAPE E'\\')
+              UNION ALL
+              SELECT 'genre', g.id, g.name, 'Жанр',
+                     (similarity(g.name, {query}) * {genreFactor})::float8, false
+              FROM genres g
+              WHERE similarity(g.name, {query}) > {minSim}
+                 OR g.name % {query}
+                 OR g.name ILIKE {like} ESCAPE E'\\'
             ) s
             ORDER BY rank DESC, title, id
             """).ToListAsync(ct);
@@ -281,7 +361,7 @@ public sealed class CatalogService(
 
         var pageRows = filtered.Take(take + 1).ToList();
         var page = pageRows.Take(take)
-            .Select(r => new SearchItemDto(r.Type, r.Id, r.Title, r.Subtitle, r.Rank))
+            .Select(r => new SearchItemDto(r.Type, r.Id, r.Title, r.Subtitle, r.Rank, r.Deleted))
             .ToList();
         string? next = null;
         if (pageRows.Count > take)
@@ -604,5 +684,6 @@ public sealed class CatalogService(
         public string Title { get; init; } = "";
         public string? Subtitle { get; init; }
         public double Rank { get; init; }
+        public bool Deleted { get; init; }
     }
 }

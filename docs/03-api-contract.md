@@ -126,10 +126,13 @@ Idempotency records хранятся в PostgreSQL (`idempotency_records`). Тр
 
 ## 3. Каталог и поиск
 
-- `GET /artists`, `GET /artists/{id}`
+- `GET /artists`, `GET /artists/{id}` — страница исполнителя: дискография, `popular` (до 5 треков) и `genres` (жанры его альбомов)
+- `GET /artists/{id}/popular?limit=10` (1..50) → `{ items: [track] }`. Порядок: сумма прослушиваний всех пользователей по убыванию, при равенстве выше трек, который текущий пользователь слушал чаще, затем порядок в альбоме. Числа прослушиваний в ответе нет; без прослушиваний список пуст. Удалённые (мягко) треки не попадают.
+- `GET /genres` → `[{ id, name, albumCount, trackCount }]` по алфавиту; `GET /genres/{id}` → `{ id, name, albums[], popularTracks[] }` (до 50 альбомов и 20 популярных треков жанра; трек принадлежит жанру, если жанр стоит у него самого или у его альбома)
 - `GET /albums?artistId=`, `GET /albums/{id}`
 - `GET /tracks/{id}` → включает `liked: bool` для текущего пользователя
-- `GET /search?q=&cursor=&limit=20`
+- `GET /search?q=&cursor=&limit=20` — одна выдача по типам `artist`, `album`, `track`, `genre`; фильтра по типу нет
+- `GET /albums/{id}` и `GET /tracks/{id}` содержат `genres: [{ id, name }]`
 
 Альбом (list/detail) и альбомы в `GET /artists/{id}` отдают `coverObjectKey` (ключ в бакете) и, если ключ есть, `coverUrl` + `coverUrlExpiresAt` (presign/CDN, TTL 1 час, host как у playback). `GET /tracks/{id}` повторяет `coverObjectKey` / `coverUrl` / `coverUrlExpiresAt` с альбома. Поиск обложку не включает.
 
@@ -138,15 +141,43 @@ Idempotency records хранятся в PostgreSQL (`idempotency_records`). Тр
 - `PUT /tracks/{trackId}/like` → `{ liked: true }`; добавляет трек в `liked_tracks` и в системный плейлист kind=`liked`
 - `DELETE /tracks/{trackId}/like` → `204`
 - `GET /tracks/{trackId}/like` → `{ liked: bool }`
-- `GET /me/playlists` → список плейлистов пользователя (liked всегда первый)
+- `GET /me/playlists` → список своих плейлистов (liked всегда первый), поле `isPublic`
 - `GET /me/playlists/liked?cursor=&limit=` → детали «Мне нравится» + треки (новые сверху)
-- `GET /me/playlists/{playlistId}` → то же для своего плейлиста (сейчас только liked)
 
-`limit` 1..50; cursor opaque. Search `q` 2..100 символов, wildcard экранируются. Результаты track/album/artist сортируются по rank DESC, display name, id:
+Пользовательские плейлисты (`kind = user`):
+
+- `POST /me/playlists` `{ title, description?, isPublic? }` → `201`. `title` 1..200, `description` до 500; лимит `Library__MaxPlaylists` (100) → `409 limit_reached`.
+- `PUT /me/playlists/{id}` `{ title?, description?, isPublic? }` (пустое `description` очищает). `DELETE /me/playlists/{id}` → `204`. Для liked обе операции и правка состава → `409 system_playlist`.
+- `GET /me/playlists/{id}?cursor=&limit=` → свой плейлист (liked тоже): метаданные, `trackCount`, `coverUrls` (до 4 обложек для коллажа), треки по `position`. `GET /playlists/{id}` → то же для чужого публичного (`isOwner=false`, `ownerName`, `inLibrary`); приватный, чужой и несуществующий — одинаковый `404`.
+- `POST /me/playlists/{id}/tracks` `{ trackIds[], position? }` → `{ added, trackCount }`. Повторное добавление идемпотентно (`added` без дублей), `position` вставляет в позицию, лимит `Library__MaxTracksPerPlaylist` (1000) → `409 limit_reached`, неизвестный/удалённый трек → `404`.
+- `DELETE /me/playlists/{id}/tracks/{trackId}` → `204`.
+- `PUT /me/playlists/{id}/tracks/order` `{ trackIds[] }` — полный порядок видимых треков; набор не совпал с текущим (кто-то изменил плейлист) → `409 order_mismatch`, клиент перечитывает.
+- Трек плейлиста: `addedAt` (для совместимости дублируется как `likedAt`).
+
+Библиотека пользователя (`/me/library`):
+
+- `GET /me/library?type=all|playlists|albums&cursor=&limit=` → плитки `{ type: playlist|album, id, title, subtitle, kind: liked|user|saved|album, isOwn, ownerName, trackCount, coverUrls[], sortAt }`. Первым всегда liked, затем по убыванию даты (`updatedAt` для своих, `addedAt` для сохранённого). Чужие плейлисты, ставшие приватными или удалённые, не попадают в ответ. `cursor` — смещение в упорядоченном списке.
+- `PUT|DELETE /me/library/playlists/{id}` — сохранить/убрать чужой публичный плейлист (ссылка, не копия). Приватный или несуществующий → `404`, свой → `409 own_playlist`. Операции идемпотентны.
+- `PUT|DELETE /me/library/albums/{id}`, `GET /me/library/albums/{id}` → `{ inLibrary }`.
+
+Ссылки:
+
+- Deep link `musicantiblur://app/{track|album|playlist}/{id}`.
+- `GET /s/{track|album|playlist}/{id}` (без авторизации) → HTML с Open Graph (название, подзаголовок, обложка) и кнопкой «Открыть в приложении». Базовый адрес ссылок — `Sharing__PublicBaseUrl` (пусто — адрес запроса). Приватный плейлист, удалённый и несуществующий трек — `404` без раскрытия названия. Обложка в превью — подписанный URL на 1 час.
+
+`limit` 1..50; cursor opaque. Search `q` 2..100 символов, wildcard экранируются. Результаты track/album/artist/genre сортируются по rank DESC, display name, id:
 
 ```json
 { "items": [{ "type": "track", "id": "uuid", "title": "...", "subtitle": "...", "rank": 0.87 }], "nextCursor": null }
 ```
+
+Жанр в выдаче: `type=genre`, `subtitle` — «Жанр». Его `rank` умножается на `Catalog__GenreRankFactor` (0.8), поэтому при равной похожести жанр идёт после артистов, альбомов и треков.
+
+История поиска (на сервере, до `Library__SearchHistoryMax` = 50 записей на пользователя):
+
+- `GET /me/search-history?limit=` → `[{ id, query, searchedAt }]`, новые сверху (по умолчанию 20, максимум 50).
+- `POST /me/search-history` `{ query }` (2..100 символов, как у `q`) → запись. Повтор того же текста (без учёта регистра и лишних пробелов) поднимает запись наверх без дубля; записи сверх лимита вытесняются, старые первыми. Клиент пишет в историю после поиска с результатами и при выборе результата, а не на каждый символ.
+- `DELETE /me/search-history/{id}` → `204` (чужая запись и несуществующая — `404`), `DELETE /me/search-history` → `204` (очистить всё).
 
 Private metadata не включается.
 
@@ -158,6 +189,10 @@ Admin metadata (роль `admin`, использует seed/upload-скрипт�
 - `POST /admin/tracks`, `PUT /admin/tracks/{id}`
 - `GET /admin/albums/{id}/tracks` — треки альбома со сводкой рендиций: `status` (`none` | `processing` | `ready` | `failed` по последней не отменённой загрузке), `readyRenditions`, `totalRenditions`.
 - `DELETE /admin/tracks/{id}` → `204`. Мягкое удаление (`deleted_at`): трек исчезает из каталога, поиска, лайков, плейлистов и playback-url. Хранится `Catalog__DeletedRetentionDays` (по умолчанию 180 дней), затем задача `purge-deleted-tracks` удаляет запись и ставит файлы в очередь удаления S3.
+- Жанры (справочник): `GET /admin/genres`, `POST /admin/genres` `{ name }` (`201`, дубль без учёта регистра — `409 genre_exists`, имя 1..60), `PUT /admin/genres/{id}` (переименование, тот же `409`), `DELETE /admin/genres/{id}` → `{ tracks, albums }` (сколько связей снято; связи удаляются каскадом).
+- `PUT /admin/albums/{id}/genres` и `PUT /admin/tracks/{id}/genres` `{ genreIds[] }` — полный набор, до 10 (`400`), неизвестный жанр — `404`.
+- `GET /admin/search?q=&cursor=&limit=` — как `/search`, но треки из корзины тоже в выдаче с `deleted: true`.
+- Жанр из тега файла: при транскоде каталога ffprobe читает тег `genre` (разделители `;` `/` `,`), недостающие жанры создаются в справочнике и ставятся треку, если у него жанров нет, и альбому, если их нет у альбома. Ручной выбор не перезаписывается; ошибка разбора тега транскод не ломает (метрика `mab_genre_tag_errors`).
 - `GET /admin/tracks/deleted` — корзина (до 200 записей): `id`, `title`, `trackNumber`, `artist`, `album`, `deletedAt`, `purgeAt`.
 - `POST /admin/tracks/{id}/restore` → `200` с карточкой трека. `409 restore_conflict` (поля `trackNumber` / `isrc` = `taken`), если номер в альбоме или ISRC уже заняты; `404`, если трека нет в корзине.
 - `DELETE /admin/albums/{id}`, `DELETE /admin/artists/{id}` → `204`. `409 has_dependents`, если есть треки (для альбома считаются и удалённые, ещё не стёртые) или альбомы. Файл обложки альбома уходит в очередь удаления S3.

@@ -1,6 +1,7 @@
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using MusicAntiBlur.Api.Catalog;
 using MusicAntiBlur.Api.Data;
 using MusicAntiBlur.Api.Data.Entities;
 using MusicAntiBlur.Api.Http;
@@ -15,6 +16,7 @@ public sealed class TranscodeCatalogJob(
     ObjectStorageClient storage,
     MediaProcessRunner runner,
     IOptions<MediaOptions> mediaOptions,
+    GenreTagService genreTags,
     ILogger<TranscodeCatalogJob> logger)
 {
     [AutomaticRetry(Attempts = 5)]
@@ -117,6 +119,17 @@ public sealed class TranscodeCatalogJob(
 
         upload.DurationMs = probe.DurationMs;
         await db.SaveChangesAsync(ct);
+
+        // Жанры из тегов необязательны: ошибка здесь не должна ронять транскод.
+        try
+        {
+            await genreTags.ApplyAsync(upload.TrackId, FfprobeParser.ExtractGenreTags(probeRun.Stdout), ct);
+        }
+        catch (Exception ex)
+        {
+            AppMetrics.GenreTagErrorAdd();
+            logger.LogWarning(ex, "Genre tags were not applied for track {TrackId}.", upload.TrackId);
+        }
 
         foreach (var profile in TranscodeProfiles.CatalogEncode)
         {

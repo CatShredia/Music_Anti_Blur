@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:uuid/uuid.dart';
 
 import '../api/api_client.dart';
+import '../catalog/catalog_models.dart';
 import '../overrides/override_models.dart';
 import 'admin_models.dart';
 
@@ -211,4 +212,34 @@ extension AdminApi on ApiClient {
 
   Future<void> adminCancelUpload({required String trackId, required String generationId}) =>
       send((d) => d.delete('/api/v1/admin/tracks/$trackId/uploads/$generationId'));
+
+  Future<List<AdminGenre>> adminGenres() async {
+    final res = await send((d) => d.get('/api/v1/admin/genres'));
+    return [
+      for (final row in res.data as List<dynamic>) AdminGenre.fromJson(row as Map<String, dynamic>),
+    ];
+  }
+
+  Future<void> adminCreateGenre(String name) => send((d) => d.post('/api/v1/admin/genres', data: {'name': name}));
+
+  Future<void> adminRenameGenre(String id, String name) =>
+      send((d) => d.put('/api/v1/admin/genres/$id', data: {'name': name}));
+
+  Future<void> adminDeleteGenre(String id) => send((d) => d.delete('/api/v1/admin/genres/$id'));
+
+  Future<void> adminSetAlbumGenres(String albumId, List<String> genreIds) =>
+      send((d) => d.put('/api/v1/admin/albums/$albumId/genres', data: {'genreIds': genreIds}));
+
+  Future<void> adminSetTrackGenres(String trackId, List<String> genreIds) =>
+      send((d) => d.put('/api/v1/admin/tracks/$trackId/genres', data: {'genreIds': genreIds}));
+
+  /// Поиск для админа: треки из корзины тоже в выдаче (`deleted`).
+  Future<List<SearchItem>> adminSearch(String query) async {
+    final res = await send((d) => d.get('/api/v1/admin/search', queryParameters: {'q': query, 'limit': 50}));
+    final items = (res.data as Map<String, dynamic>)['items'] as List<dynamic>? ?? const [];
+    return [
+      for (final row in items)
+        if (row is Map<String, dynamic>) SearchItem.fromJson(row),
+    ];
+  }
 }

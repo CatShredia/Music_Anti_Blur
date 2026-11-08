@@ -61,12 +61,24 @@ class ArtistAlbumItem {
 }
 
 class ArtistDetail {
-  ArtistDetail({required this.id, required this.name, required this.albums, this.coverUrl});
+  ArtistDetail({
+    required this.id,
+    required this.name,
+    required this.albums,
+    this.coverUrl,
+    this.popular = const [],
+    this.genres = const [],
+  });
 
   final String id;
   final String name;
   final String? coverUrl;
   final List<ArtistAlbumItem> albums;
+  final List<PopularTrack> popular;
+  final List<GenreRef> genres;
+
+  /// Сколько популярных треков сервер отдаёт в самой странице исполнителя.
+  static const popularPreview = 5;
 
   factory ArtistDetail.fromJson(Map<String, dynamic> json) => ArtistDetail(
         id: json['id'] as String,
@@ -75,7 +87,59 @@ class ArtistDetail {
         albums: (json['albums'] as List<dynamic>)
             .map((e) => ArtistAlbumItem.fromJson(e as Map<String, dynamic>))
             .toList(),
+        popular: PopularTrack.listFrom(json['popular']),
+        genres: GenreRef.listFrom(json['genres']),
       );
+}
+
+class GenreRef {
+  GenreRef({required this.id, required this.name});
+
+  final String id;
+  final String name;
+
+  factory GenreRef.fromJson(Map<String, dynamic> json) =>
+      GenreRef(id: json['id'] as String, name: json['name'] as String);
+
+  static List<GenreRef> listFrom(Object? raw) =>
+      (raw as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>().map(GenreRef.fromJson).toList();
+}
+
+/// Трек в разделе «Популярное» (числа прослушиваний нет).
+class PopularTrack {
+  PopularTrack({
+    required this.id,
+    required this.title,
+    required this.artistId,
+    required this.artistName,
+    required this.albumId,
+    required this.albumTitle,
+    this.durationMs,
+    this.coverUrl,
+  });
+
+  final String id;
+  final String title;
+  final int? durationMs;
+  final String artistId;
+  final String artistName;
+  final String albumId;
+  final String albumTitle;
+  final String? coverUrl;
+
+  factory PopularTrack.fromJson(Map<String, dynamic> json) => PopularTrack(
+        id: json['id'] as String,
+        title: json['title'] as String,
+        durationMs: json['durationMs'] as int?,
+        artistId: json['artistId'] as String,
+        artistName: json['artistName'] as String,
+        albumId: json['albumId'] as String,
+        albumTitle: json['albumTitle'] as String,
+        coverUrl: json['coverUrl'] as String?,
+      );
+
+  static List<PopularTrack> listFrom(Object? raw) =>
+      (raw as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>().map(PopularTrack.fromJson).toList();
 }
 
 class AlbumListItem {
@@ -138,6 +202,7 @@ class AlbumDetail {
     this.year,
     this.coverObjectKey,
     this.coverUrl,
+    this.genres = const [],
   });
 
   final String id;
@@ -147,6 +212,7 @@ class AlbumDetail {
   final String? coverUrl;
   final ArtistRef artist;
   final List<TrackListItem> tracks;
+  final List<GenreRef> genres;
 
   factory AlbumDetail.fromJson(Map<String, dynamic> json) => AlbumDetail(
         id: json['id'] as String,
@@ -158,6 +224,7 @@ class AlbumDetail {
         tracks: (json['tracks'] as List<dynamic>)
             .map((e) => TrackListItem.fromJson(e as Map<String, dynamic>))
             .toList(),
+        genres: GenreRef.listFrom(json['genres']),
       );
 }
 
@@ -188,6 +255,7 @@ class TrackDetail {
     this.coverUrl,
     this.coverObjectKey,
     this.liked = false,
+    this.genres = const [],
   });
 
   final String id;
@@ -201,6 +269,7 @@ class TrackDetail {
   final String? coverUrl;
   final String? coverObjectKey;
   final bool liked;
+  final List<GenreRef> genres;
 
   TrackDetail copyWith({bool? liked}) => TrackDetail(
         id: id,
@@ -214,6 +283,7 @@ class TrackDetail {
         coverUrl: coverUrl,
         coverObjectKey: coverObjectKey,
         liked: liked ?? this.liked,
+        genres: genres,
       );
 
   factory TrackDetail.fromJson(Map<String, dynamic> json) => TrackDetail(
@@ -231,6 +301,7 @@ class TrackDetail {
             .map(TrackQuality.fromJson)
             .toList(),
         liked: json['liked'] as bool? ?? false,
+        genres: GenreRef.listFrom(json['genres']),
       );
 }
 
@@ -241,6 +312,7 @@ class PlaylistListItem {
     required this.kind,
     required this.trackCount,
     required this.updatedAt,
+    this.isPublic = false,
   });
 
   final String id;
@@ -248,6 +320,9 @@ class PlaylistListItem {
   final String kind;
   final int trackCount;
   final DateTime updatedAt;
+  final bool isPublic;
+
+  bool get isLiked => kind == 'liked';
 
   factory PlaylistListItem.fromJson(Map<String, dynamic> json) => PlaylistListItem(
         id: json['id'] as String,
@@ -255,6 +330,7 @@ class PlaylistListItem {
         kind: json['kind'] as String,
         trackCount: json['trackCount'] as int,
         updatedAt: DateTime.parse(json['updatedAt'] as String),
+        isPublic: json['isPublic'] as bool? ?? false,
       );
 }
 
@@ -290,7 +366,7 @@ class LikedPlaylistTrack {
         artistName: json['artistName'] as String,
         albumId: json['albumId'] as String,
         albumTitle: json['albumTitle'] as String,
-        likedAt: DateTime.parse(json['likedAt'] as String),
+        likedAt: DateTime.parse((json['addedAt'] ?? json['likedAt']) as String),
       );
 }
 
@@ -304,6 +380,12 @@ class PlaylistDetail {
     required this.updatedAt,
     required this.tracks,
     this.nextCursor,
+    this.description,
+    this.isPublic = false,
+    this.isOwner = true,
+    this.ownerName,
+    this.inLibrary = false,
+    this.coverUrls = const [],
   });
 
   final String id;
@@ -314,6 +396,14 @@ class PlaylistDetail {
   final DateTime updatedAt;
   final List<LikedPlaylistTrack> tracks;
   final String? nextCursor;
+  final String? description;
+  final bool isPublic;
+  final bool isOwner;
+  final String? ownerName;
+  final bool inLibrary;
+  final List<String> coverUrls;
+
+  bool get isLiked => kind == 'liked';
 
   factory PlaylistDetail.fromJson(Map<String, dynamic> json) => PlaylistDetail(
         id: json['id'] as String,
@@ -327,6 +417,12 @@ class PlaylistDetail {
             .map(LikedPlaylistTrack.fromJson)
             .toList(),
         nextCursor: json['nextCursor'] as String?,
+        description: json['description'] as String?,
+        isPublic: json['isPublic'] as bool? ?? false,
+        isOwner: json['isOwner'] as bool? ?? true,
+        ownerName: json['ownerName'] as String?,
+        inLibrary: json['inLibrary'] as bool? ?? false,
+        coverUrls: (json['coverUrls'] as List<dynamic>? ?? const []).whereType<String>().toList(),
       );
 }
 
@@ -337,6 +433,7 @@ class SearchItem {
     required this.title,
     required this.rank,
     this.subtitle,
+    this.deleted = false,
   });
 
   final String type;
@@ -345,12 +442,18 @@ class SearchItem {
   final String? subtitle;
   final double rank;
 
+  /// Только в админском поиске: трек лежит в корзине.
+  final bool deleted;
+
+  bool get isGenre => type == 'genre';
+
   factory SearchItem.fromJson(Map<String, dynamic> json) => SearchItem(
         type: json['type'] as String,
         id: json['id'] as String,
         title: json['title'] as String,
         subtitle: json['subtitle'] as String?,
         rank: (json['rank'] as num).toDouble(),
+        deleted: json['deleted'] as bool? ?? false,
       );
 }
 

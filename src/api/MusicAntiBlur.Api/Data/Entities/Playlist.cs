@@ -10,6 +10,8 @@ public sealed class Playlist
     public Guid UserId { get; set; }
     public string Title { get; set; } = "";
     public string Kind { get; set; } = KindUser;
+    public string? Description { get; set; }
+    public bool IsPublic { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 

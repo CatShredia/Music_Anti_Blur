@@ -25,6 +25,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Playlist> Playlists => Set<Playlist>();
     public DbSet<PlaylistTrack> PlaylistTracks => Set<PlaylistTrack>();
     public DbSet<LikedTrack> LikedTracks => Set<LikedTrack>();
+    public DbSet<SavedPlaylist> SavedPlaylists => Set<SavedPlaylist>();
+    public DbSet<SavedAlbum> SavedAlbums => Set<SavedAlbum>();
+    public DbSet<Genre> Genres => Set<Genre>();
+    public DbSet<TrackGenre> TrackGenres => Set<TrackGenre>();
+    public DbSet<AlbumGenre> AlbumGenres => Set<AlbumGenre>();
+    public DbSet<SearchHistoryEntry> SearchHistory => Set<SearchHistoryEntry>();
     public DbSet<UserTrackStat> UserTrackStats => Set<UserTrackStat>();
     public DbSet<UserPlayHistory> UserPlayHistories => Set<UserPlayHistory>();
     public DbSet<UserTwoFactor> UserTwoFactors => Set<UserTwoFactor>();
@@ -386,11 +392,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 t.HasCheckConstraint("ck_playlists_title", "char_length(btrim(title)) BETWEEN 1 AND 200");
                 t.HasCheckConstraint("ck_playlists_liked_title",
                     "kind <> 'liked' OR title = 'Мне нравится'");
+                t.HasCheckConstraint("ck_playlists_description", "description IS NULL OR char_length(description) <= 500");
+                t.HasCheckConstraint("ck_playlists_liked_private", "kind <> 'liked' OR NOT is_public");
             });
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
             e.Property(x => x.Title).IsRequired();
             e.Property(x => x.Kind).IsRequired();
+            e.Property(x => x.IsPublic).HasDefaultValue(false);
             e.HasIndex(x => x.UserId).HasDatabaseName("ix_playlists_user");
             e.HasIndex(x => x.UserId).IsUnique().HasDatabaseName("ux_playlists_user_liked")
                 .HasFilter("kind = 'liked'");
@@ -412,6 +421,76 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Track).WithMany(x => x.PlaylistEntries).HasForeignKey(x => x.TrackId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Genre>(e =>
+        {
+            e.ToTable("genres", t =>
+            {
+                t.HasCheckConstraint("ck_genres_name", "char_length(btrim(name)) BETWEEN 1 AND 60");
+            });
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(x => x.Name).IsRequired();
+            e.Property(x => x.Slug).IsRequired();
+            e.HasIndex(x => x.Slug).IsUnique().HasDatabaseName("ux_genres_slug");
+            e.HasIndex(x => x.Name).HasDatabaseName("gin_genres_name").HasMethod("gin")
+                .HasOperators("gin_trgm_ops");
+        });
+
+        modelBuilder.Entity<TrackGenre>(e =>
+        {
+            e.ToTable("track_genres");
+            e.HasKey(x => new { x.TrackId, x.GenreId });
+            e.HasIndex(x => x.GenreId).HasDatabaseName("ix_track_genres_genre");
+            e.HasOne(x => x.Track).WithMany().HasForeignKey(x => x.TrackId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Genre).WithMany().HasForeignKey(x => x.GenreId).OnDelete(DeleteBehavior.Cascade);
+            // Тот же фильтр, что у Track: жанры мягко удалённых треков не видны и не дают предупреждений EF.
+            e.HasQueryFilter(x => x.Track.DeletedAt == null);
+        });
+
+        modelBuilder.Entity<AlbumGenre>(e =>
+        {
+            e.ToTable("album_genres");
+            e.HasKey(x => new { x.AlbumId, x.GenreId });
+            e.HasIndex(x => x.GenreId).HasDatabaseName("ix_album_genres_genre");
+            e.HasOne(x => x.Album).WithMany().HasForeignKey(x => x.AlbumId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Genre).WithMany().HasForeignKey(x => x.GenreId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SearchHistoryEntry>(e =>
+        {
+            e.ToTable("search_history", t =>
+            {
+                t.HasCheckConstraint("ck_search_history_query", "char_length(query) BETWEEN 2 AND 100");
+            });
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+            e.Property(x => x.Query).IsRequired();
+            e.Property(x => x.Normalized).IsRequired();
+            e.HasIndex(x => new { x.UserId, x.Normalized }).IsUnique().HasDatabaseName("ux_search_history_user_query");
+            e.HasIndex(x => new { x.UserId, x.SearchedAt }).HasDatabaseName("ix_search_history_user_time");
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SavedPlaylist>(e =>
+        {
+            e.ToTable("saved_playlists");
+            e.HasKey(x => new { x.UserId, x.PlaylistId });
+            e.HasIndex(x => new { x.UserId, x.AddedAt }).HasDatabaseName("ix_saved_playlists_user_added");
+            e.HasIndex(x => x.PlaylistId).HasDatabaseName("ix_saved_playlists_playlist");
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Playlist).WithMany().HasForeignKey(x => x.PlaylistId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SavedAlbum>(e =>
+        {
+            e.ToTable("saved_albums");
+            e.HasKey(x => new { x.UserId, x.AlbumId });
+            e.HasIndex(x => new { x.UserId, x.AddedAt }).HasDatabaseName("ix_saved_albums_user_added");
+            e.HasIndex(x => x.AlbumId).HasDatabaseName("ix_saved_albums_album");
+            e.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Album).WithMany().HasForeignKey(x => x.AlbumId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<LikedTrack>(e =>

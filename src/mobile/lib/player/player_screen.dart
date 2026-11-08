@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../catalog/catalog_screens.dart';
+import '../library/library_screens.dart';
 import '../overrides/override_models.dart';
 import '../theme.dart';
 import '../widgets.dart';
@@ -359,9 +360,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                   ),
                 const SizedBox(height: 28),
-                Text(
-                  'Очередь · ${player.queue.items.length}',
-                  style: Theme.of(context).textTheme.titleMedium,
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Очередь · ${player.queue.items.length}',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    if (player.queue.items.isNotEmpty)
+                      TextButton.icon(
+                        onPressed: () => showAddToPlaylistSheet(
+                          context,
+                          player.api,
+                          player.queue.items.map((i) => i.trackId).toSet().toList(),
+                        ),
+                        icon: const Icon(Icons.playlist_add),
+                        label: const Text('В плейлист'),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 if (player.queue.items.isEmpty)

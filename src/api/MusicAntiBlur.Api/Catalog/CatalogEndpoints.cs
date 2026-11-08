@@ -15,8 +15,18 @@ public static class CatalogEndpoints
         v1.MapGet("/artists", async (string? cursor, int? limit, CatalogService svc, CancellationToken ct) =>
             Results.Ok(await svc.ListArtistsAsync(cursor, limit, ct)));
 
-        v1.MapGet("/artists/{id:guid}", async (Guid id, CatalogService svc, CancellationToken ct) =>
-            Results.Ok(await svc.GetArtistAsync(id, ct)));
+        v1.MapGet("/artists/{id:guid}", async (Guid id, CatalogService svc, ClaimsPrincipal user, CancellationToken ct) =>
+            Results.Ok(await svc.GetArtistPageAsync(id, UserId(user), ct)));
+
+        v1.MapGet("/artists/{id:guid}/popular", async (
+            Guid id, int? limit, CatalogService svc, ClaimsPrincipal user, CancellationToken ct) =>
+            Results.Ok(await svc.GetArtistPopularAsync(id, UserId(user), limit, ct)));
+
+        v1.MapGet("/genres", async (GenreService svc, CancellationToken ct) =>
+            Results.Ok(await svc.ListAsync(ct)));
+
+        v1.MapGet("/genres/{id:guid}", async (Guid id, GenreService svc, CancellationToken ct) =>
+            Results.Ok(await svc.GetAsync(id, ct)));
 
         v1.MapGet("/albums", async (Guid? artistId, string? cursor, int? limit, CatalogService svc, CancellationToken ct) =>
             Results.Ok(await svc.ListAlbumsAsync(artistId, cursor, limit, ct)));
@@ -29,6 +39,27 @@ public static class CatalogEndpoints
 
         v1.MapGet("/search", async (string? q, string? cursor, int? limit, CatalogService svc, CancellationToken ct) =>
             Results.Ok(await svc.SearchAsync(q, cursor, limit, ct)));
+
+        admin.MapGet("/search", async (string? q, string? cursor, int? limit, CatalogService svc, CancellationToken ct) =>
+            Results.Ok(await svc.AdminSearchAsync(q, cursor, limit, ct)));
+
+        admin.MapGet("/genres", async (GenreService svc, CancellationToken ct) =>
+            Results.Ok(await svc.ListAsync(ct)));
+
+        admin.MapPost("/genres", async (UpsertGenreRequest req, GenreService svc, CancellationToken ct) =>
+            Results.Json(await svc.CreateAsync(req, ct), statusCode: StatusCodes.Status201Created));
+
+        admin.MapPut("/genres/{id:guid}", async (Guid id, UpsertGenreRequest req, GenreService svc, CancellationToken ct) =>
+            Results.Ok(await svc.RenameAsync(id, req, ct)));
+
+        admin.MapDelete("/genres/{id:guid}", async (Guid id, GenreService svc, CancellationToken ct) =>
+            Results.Ok(await svc.DeleteAsync(id, ct)));
+
+        admin.MapPut("/albums/{id:guid}/genres", async (Guid id, SetGenresRequest req, GenreService svc, CancellationToken ct) =>
+            Results.Ok(await svc.SetAlbumGenresAsync(id, req, ct)));
+
+        admin.MapPut("/tracks/{id:guid}/genres", async (Guid id, SetGenresRequest req, GenreService svc, CancellationToken ct) =>
+            Results.Ok(await svc.SetTrackGenresAsync(id, req, ct)));
 
         admin.MapPost("/artists", async (UpsertArtistRequest req, CatalogService svc, CancellationToken ct) =>
             Results.Json(await svc.CreateArtistAsync(req, ct), statusCode: StatusCodes.Status201Created));
