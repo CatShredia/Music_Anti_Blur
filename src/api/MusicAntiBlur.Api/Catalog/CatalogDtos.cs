@@ -93,6 +93,14 @@ public sealed record AdminTrackRowDto(
     int ReadyRenditions,
     int TotalRenditions);
 
+public sealed record DeletedAlbumDto(
+    Guid Id,
+    string Title,
+    ArtistRefDto Artist,
+    int TrackCount,
+    DateTimeOffset DeletedAt,
+    DateTimeOffset PurgeAt);
+
 public sealed record DeletedTrackDto(
     Guid Id,
     string Title,

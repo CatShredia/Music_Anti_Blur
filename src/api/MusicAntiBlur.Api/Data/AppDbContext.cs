@@ -145,6 +145,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
             e.Property(x => x.Name).IsRequired();
             e.Property(x => x.SortName).IsRequired();
+            e.HasQueryFilter(x => x.DeletedAt == null);
+            e.HasIndex(x => x.DeletedAt).HasDatabaseName("ix_artists_deleted_at")
+                .HasFilter("deleted_at IS NOT NULL");
             e.HasIndex(x => x.SortName).HasDatabaseName("ix_artists_sort_name");
             e.HasIndex(x => x.Name).HasDatabaseName("gin_artists_name").HasMethod("gin")
                 .HasOperators("gin_trgm_ops");
@@ -159,6 +162,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
             e.Property(x => x.Title).IsRequired();
+            e.HasQueryFilter(x => x.DeletedAt == null);
+            e.HasIndex(x => x.DeletedAt).HasDatabaseName("ix_albums_deleted_at")
+                .HasFilter("deleted_at IS NOT NULL");
             e.HasIndex(x => x.ArtistId).HasDatabaseName("ix_albums_artist");
             e.HasIndex(x => x.Title).HasDatabaseName("gin_albums_title").HasMethod("gin")
                 .HasOperators("gin_trgm_ops");

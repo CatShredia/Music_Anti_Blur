@@ -20,8 +20,11 @@ extension AdminApi on ApiClient {
   Future<void> adminUpdateArtist(String id, String name) =>
       send((d) => d.put('/api/v1/admin/artists/$id', data: {'name': name}));
 
-  Future<void> adminDeleteArtist(String id) =>
-      send((d) => d.delete('/api/v1/admin/artists/$id'));
+  /// [cascade]: вместе с альбомами и треками (они уходят в корзину).
+  Future<void> adminDeleteArtist(String id, {bool cascade = false}) => send((d) => d.delete(
+        '/api/v1/admin/artists/$id',
+        queryParameters: cascade ? {'cascade': true} : null,
+      ));
 
   Future<String> adminCreateAlbum({
     required String artistId,
@@ -50,7 +53,19 @@ extension AdminApi on ApiClient {
         }),
       );
 
-  Future<void> adminDeleteAlbum(String id) => send((d) => d.delete('/api/v1/admin/albums/$id'));
+  Future<void> adminDeleteAlbum(String id, {bool cascade = false}) => send((d) => d.delete(
+        '/api/v1/admin/albums/$id',
+        queryParameters: cascade ? {'cascade': true} : null,
+      ));
+
+  Future<void> adminRestoreAlbum(String id) => send((d) => d.post('/api/v1/admin/albums/$id/restore'));
+
+  Future<List<DeletedAlbum>> adminDeletedAlbums() async {
+    final res = await send((d) => d.get('/api/v1/admin/albums/deleted'));
+    return [
+      for (final row in res.data as List<dynamic>) DeletedAlbum.fromJson(row as Map<String, dynamic>),
+    ];
+  }
 
   Future<void> adminUploadCover({
     required String albumId,

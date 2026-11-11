@@ -317,17 +317,17 @@ public sealed class CatalogService(
               SELECT 'artist'::text AS type, a.id, a.name AS title, NULL::text AS subtitle,
                      similarity(a.name, {query})::float8 AS rank, false AS deleted
               FROM artists a
-              WHERE similarity(a.name, {query}) > {minSim}
+              WHERE a.deleted_at IS NULL AND (similarity(a.name, {query}) > {minSim}
                  OR a.name % {query}
-                 OR a.name ILIKE {like} ESCAPE E'\\'
+                 OR a.name ILIKE {like} ESCAPE E'\\')
               UNION ALL
               SELECT 'album', al.id, al.title, ar.name,
                      similarity(al.title, {query})::float8, false
               FROM albums al
               JOIN artists ar ON ar.id = al.artist_id
-              WHERE similarity(al.title, {query}) > {minSim}
+              WHERE al.deleted_at IS NULL AND (similarity(al.title, {query}) > {minSim}
                  OR al.title % {query}
-                 OR al.title ILIKE {like} ESCAPE E'\\'
+                 OR al.title ILIKE {like} ESCAPE E'\\')
               UNION ALL
               SELECT 'track', t.id, t.title, ar.name || ' · ' || al.title,
                      similarity(t.title, {query})::float8, t.deleted_at IS NOT NULL

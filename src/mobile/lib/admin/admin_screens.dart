@@ -174,6 +174,32 @@ Future<bool> _confirm(BuildContext context, String text) async {
   return ok ?? false;
 }
 
+/// Диалог удаления объекта с зависимостями. Возвращает null (отмена), false (только сам объект) или true (каскад).
+Future<bool?> _confirmCascade(BuildContext context, {required String title, required String cascadeLabel}) async {
+  var cascade = false;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setState) => AlertDialog(
+        title: Text(title),
+        content: CheckboxListTile(
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          value: cascade,
+          onChanged: (v) => setState(() => cascade = v ?? false),
+          title: Text(cascadeLabel),
+          subtitle: const Text('Треки уйдут в корзину и будут храниться 180 дней. Без галочки удаляется только пустой объект.'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Удалить')),
+        ],
+      ),
+    ),
+  );
+  return ok == true ? cascade : null;
+}
+
 Future<Map<String, String>?> _form(
   BuildContext context, {
   required String title,
@@ -644,8 +670,13 @@ class _AdminArtistsScreenState extends State<AdminArtistsScreen> {
   }
 
   Future<void> _delete(ArtistListItem a) async {
-    if (!await _confirm(context, 'Удалить исполнителя «${a.name}»?') || !mounted) return;
-    if (await _guard(context, () => widget.api.adminDeleteArtist(a.id))) {
+    final cascade = await _confirmCascade(
+      context,
+      title: 'Удалить исполнителя «${a.name}»?',
+      cascadeLabel: 'Удалить также все альбомы и треки',
+    );
+    if (cascade == null || !mounted) return;
+    if (await _guard(context, () => widget.api.adminDeleteArtist(a.id, cascade: cascade))) {
       await _reload();
     }
   }
@@ -730,8 +761,13 @@ class _AdminArtistScreenState extends State<AdminArtistScreen> {
   }
 
   Future<void> _delete(ArtistAlbumItem a) async {
-    if (!await _confirm(context, 'Удалить альбом «${a.title}»?') || !mounted) return;
-    if (await _guard(context, () => widget.api.adminDeleteAlbum(a.id))) {
+    final cascade = await _confirmCascade(
+      context,
+      title: 'Удалить альбом «${a.title}»?',
+      cascadeLabel: 'Удалить также все треки альбома',
+    );
+    if (cascade == null || !mounted) return;
+    if (await _guard(context, () => widget.api.adminDeleteAlbum(a.id, cascade: cascade))) {
       await _load();
     }
   }
@@ -1113,6 +1149,7 @@ class AdminTrashScreen extends StatefulWidget {
 
 class _AdminTrashScreenState extends State<AdminTrashScreen> {
   List<DeletedTrack>? _items;
+  List<DeletedAlbum>? _albums;
 
   @override
   void initState() {
@@ -1121,8 +1158,18 @@ class _AdminTrashScreenState extends State<AdminTrashScreen> {
   }
 
   Future<void> _load() async {
-    await _guard(context, () async => _items = await widget.api.adminDeletedTracks());
+    await _guard(context, () async {
+      _items = await widget.api.adminDeletedTracks();
+      _albums = await widget.api.adminDeletedAlbums();
+    });
     if (mounted) setState(() {});
+  }
+
+  Future<void> _restoreAlbum(DeletedAlbum a) async {
+    if (await _guard(context, () => widget.api.adminRestoreAlbum(a.id)) && mounted) {
+      _toast(context, 'Альбом восстановлен');
+      await _load();
+    }
   }
 
   Future<void> _restore(DeletedTrack t) async {
@@ -1137,14 +1184,23 @@ class _AdminTrashScreenState extends State<AdminTrashScreen> {
   @override
   Widget build(BuildContext context) {
     final items = _items;
+    final albums = _albums ?? const <DeletedAlbum>[];
     return _Page(
       title: 'Корзина',
       child: items == null
           ? const Center(child: CircularProgressIndicator())
-          : items.isEmpty
+          : items.isEmpty && albums.isEmpty
               ? const Text('Пусто')
               : ListView(
                   children: [
+                    if (albums.isNotEmpty) const ListTile(title: Text('Альбомы')),
+                    for (final a in albums)
+                      ListTile(
+                        title: Text(a.title),
+                        subtitle: Text('${a.artistName} · треков: ${a.trackCount} · удалён ${_date(a.deletedAt)}, будет стёрт ${_date(a.purgeAt)}'),
+                        trailing: FilledButton(onPressed: () => _restoreAlbum(a), child: const Text('Восстановить')),
+                      ),
+                    if (items.isNotEmpty) const ListTile(title: Text('Треки')),
                     for (final t in items)
                       ListTile(
                         title: Text(t.title),

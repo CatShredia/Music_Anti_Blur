@@ -107,15 +107,24 @@ public static class CatalogEndpoints
         admin.MapPost("/tracks/{id:guid}/restore", async (Guid id, AdminCatalogService svc, CancellationToken ct) =>
             Results.Ok(await svc.RestoreTrackAsync(id, ct)));
 
-        admin.MapDelete("/albums/{id:guid}", async (Guid id, AdminCatalogService svc, CancellationToken ct) =>
+        admin.MapGet("/albums/deleted", async (AdminCatalogService svc, CancellationToken ct) =>
+            Results.Ok(await svc.ListDeletedAlbumsAsync(ct)));
+
+        admin.MapPost("/albums/{id:guid}/restore", async (Guid id, AdminCatalogService svc, CancellationToken ct) =>
         {
-            await svc.DeleteAlbumAsync(id, ct);
+            await svc.RestoreAlbumAsync(id, ct);
             return Results.NoContent();
         });
 
-        admin.MapDelete("/artists/{id:guid}", async (Guid id, AdminCatalogService svc, CancellationToken ct) =>
+        admin.MapDelete("/albums/{id:guid}", async (Guid id, bool? cascade, AdminCatalogService svc, CancellationToken ct) =>
         {
-            await svc.DeleteArtistAsync(id, ct);
+            await svc.DeleteAlbumAsync(id, cascade == true, ct);
+            return Results.NoContent();
+        });
+
+        admin.MapDelete("/artists/{id:guid}", async (Guid id, bool? cascade, AdminCatalogService svc, CancellationToken ct) =>
+        {
+            await svc.DeleteArtistAsync(id, cascade == true, ct);
             return Results.NoContent();
         });
     }

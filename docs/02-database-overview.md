@@ -603,7 +603,7 @@ CHECK: `year IS NULL OR year BETWEEN 1000 AND 9999`.
 | `isrc` | `text` | да | под будущий импорт библиотек; в MVP пусто |
 | `created_at` | `timestamptz` | нет | |
 | `updated_at` | `timestamptz` | нет | |
-| `deleted_at` | `timestamptz` | да | мягкое удаление; NULL = трек активен. EF global query filter скрывает такие строки, задача `purge-deleted-tracks` стирает их после `Catalog__DeletedRetentionDays` (180) |
+| `deleted_at` | `timestamptz` | да | мягкое удаление; NULL = трек активен. EF global query filter скрывает такие строки, задача `purge-deleted-tracks` стирает их после `Catalog__DeletedRetentionDays` (180). Такое же поле `deleted_at` (с фильтром и индексом `ix_*_deleted_at`) есть у `albums` и `artists`: каскадное удаление из админки скрывает их, пока в них есть треки из корзины; стираются той же задачей, когда треков не осталось |
 
 ```text
 CHECK (track_number >= 1)

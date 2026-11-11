@@ -47,6 +47,31 @@ public sealed class StorageCleanupJobs(
             AppMetrics.TracksPurgedAdd(tracks.Count);
             logger.LogInformation("Purged {Count} deleted tracks older than retention.", tracks.Count);
         }
+
+        // Скрытые альбомы и исполнители стираются, когда в них не осталось треков.
+        var albums = await db.Albums.IgnoreQueryFilters()
+            .Where(a => a.DeletedAt != null && a.DeletedAt < cutoff &&
+                        !db.Tracks.IgnoreQueryFilters().Any(t => t.AlbumId == a.Id))
+            .Take(100).ToListAsync(ct);
+        foreach (var album in albums)
+        {
+            if (!string.IsNullOrWhiteSpace(album.CoverObjectKey))
+            {
+                ObjectDeletionQueue.Enqueue(db, album.CoverObjectKey, null);
+            }
+
+            db.Albums.Remove(album);
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        var artists = await db.Artists.IgnoreQueryFilters()
+            .Where(a => a.DeletedAt != null && a.DeletedAt < cutoff &&
+                        !db.Albums.IgnoreQueryFilters().Any(al => al.ArtistId == a.Id) &&
+                        !db.Tracks.IgnoreQueryFilters().Any(t => t.ArtistId == a.Id))
+            .Take(100).ToListAsync(ct);
+        db.Artists.RemoveRange(artists);
+        await db.SaveChangesAsync(ct);
     }
 
     public async Task Sweep()

@@ -63,6 +63,33 @@ class DeletedTrack {
       );
 }
 
+class DeletedAlbum {
+  DeletedAlbum({
+    required this.id,
+    required this.title,
+    required this.artistName,
+    required this.trackCount,
+    required this.deletedAt,
+    required this.purgeAt,
+  });
+
+  final String id;
+  final String title;
+  final String artistName;
+  final int trackCount;
+  final DateTime deletedAt;
+  final DateTime purgeAt;
+
+  factory DeletedAlbum.fromJson(Map<String, dynamic> json) => DeletedAlbum(
+        id: json['id'] as String,
+        title: json['title'] as String,
+        artistName: (json['artist'] as Map<String, dynamic>)['name'] as String,
+        trackCount: (json['trackCount'] as num).toInt(),
+        deletedAt: DateTime.parse(json['deletedAt'] as String),
+        purgeAt: DateTime.parse(json['purgeAt'] as String),
+      );
+}
+
 class AdminRendition {
   AdminRendition({
     required this.generationId,
