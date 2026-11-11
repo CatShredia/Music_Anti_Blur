@@ -120,6 +120,9 @@ t() {
         emu_wait) fmt="Waiting for Android emulator in flutter devices..." ;;
         emu_found) fmt="Emulator: %s" ;;
         emu_timeout) fmt="Emulator did not appear in flutter devices within 120s." ;;
+        emu_cold) fmt="Restarting emulator with Cold Boot..." ;;
+        emu_manual) fmt="Emulator still unresponsive after Cold Boot. Start it manually; a terminal is open for flutter run." ;;
+        emu_term_hint) fmt="Once the emulator is up: flutter devices, then flutter run -d emulator-5554 (use your id)." ;;
         flutter_pub) fmt="flutter pub get..." ;;
         flutter_pub_offline) fmt="No network (pub.dev) — skipping flutter pub get, using local cache." ;;
         flutter_pub_fail) fmt="flutter pub get failed." ;;
@@ -223,6 +226,9 @@ t() {
         emu_wait) fmt="Ждём Android-эмулятор в flutter devices..." ;;
         emu_found) fmt="Эмулятор: %s" ;;
         emu_timeout) fmt="Эмулятор не появился в flutter devices за 120 с." ;;
+        emu_cold) fmt="Перезапускаю эмулятор холодным запуском (Cold Boot)..." ;;
+        emu_manual) fmt="Эмулятор не отвечает и после Cold Boot. Запустите его вручную; открыт терминал для flutter run." ;;
+        emu_term_hint) fmt="Когда эмулятор загрузится: flutter devices, затем flutter run -d emulator-5554 (свой id)." ;;
         flutter_pub) fmt="flutter pub get..." ;;
         flutter_pub_offline) fmt="Нет сети (pub.dev) — flutter pub get пропускаем, используем локальный кэш." ;;
         flutter_pub_fail) fmt="flutter pub get не удался." ;;
@@ -717,7 +723,12 @@ start_android_emulator_if_needed() {
     exit 1
   fi
   info "$(t emu_start "$avd")"
-  flutter emulators --launch "$avd" || true
+  if [[ "${1:-}" == "cold" ]]; then
+    local sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+    "$sdk/emulator/emulator" -avd "$avd" -no-snapshot-load >/dev/null 2>&1 &
+  else
+    flutter emulators --launch "$avd" || true
+  fi
 }
 
 wait_android_emulator() {
@@ -732,8 +743,24 @@ wait_android_emulator() {
     fi
     sleep 3
   done
-  err "$(t emu_timeout)"
-  exit 1
+  return 1
+}
+
+resolve_android_emulator() {
+  local id
+  start_android_emulator_if_needed
+  if id="$(wait_android_emulator)"; then echo "$id"; return 0; fi
+  warn "$(t emu_timeout)"
+  warn "$(t emu_cold)"
+  taskkill //F //T //IM qemu-system-x86_64.exe >/dev/null 2>&1 || pkill -f qemu-system >/dev/null 2>&1 || true
+  sleep 3
+  start_android_emulator_if_needed cold
+  if id="$(wait_android_emulator)"; then echo "$id"; return 0; fi
+  warn "$(t emu_manual)"
+  if command -v cygpath >/dev/null 2>&1; then
+    powershell.exe -NoProfile -Command "Start-Process powershell.exe -WorkingDirectory '$(cygpath -w "$ROOT/src/mobile")' -ArgumentList '-NoExit','-NoProfile','-Command','Write-Host ''$(t emu_term_hint)'' -ForegroundColor Yellow'" || true
+  fi
+  return 0
 }
 
 write_flutter_runner() {
@@ -1004,8 +1031,7 @@ expand_device_choice() {
   case "$choice" in
     none|"") echo ""; return ;;
     emulator:launch|emulator)
-      start_android_emulator_if_needed
-      wait_android_emulator
+      resolve_android_emulator
       return
       ;;
     chrome)
@@ -1110,6 +1136,8 @@ fi
 pending_seed=1
 if [[ "$USE_REPLAY" == "1" ]]; then
   pending_seed="$REPLAY_SEED"
+elif [[ "$kind" == "local" && -t 0 ]]; then
+  if confirm_yes "$(t seed_ask)"; then pending_seed=1; else pending_seed=0; fi
 fi
 save_last_start "$kind" "$d1" "$d2" "$pending_seed"
 
@@ -1147,16 +1175,7 @@ fi
 wait_api
 
 if [[ "$kind" == "local" ]]; then
-  do_seed=1
-  if [[ "$USE_REPLAY" == "1" ]]; then
-    [[ "$REPLAY_SEED" == "0" ]] && do_seed=0
-  elif [[ -t 0 ]]; then
-    if confirm_yes "$(t seed_ask)"; then
-      do_seed=1
-    else
-      do_seed=0
-    fi
-  fi
+  do_seed="$pending_seed"
   save_last_start "$kind" "$d1" "$d2" "$do_seed"
   if [[ "$do_seed" -eq 1 ]]; then
     info "$(t seed)"

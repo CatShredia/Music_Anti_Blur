@@ -120,6 +120,9 @@ $script:Messages = @{
         emu_wait              = "Ждём Android-эмулятор в flutter devices..."
         emu_found             = "Эмулятор: {0}"
         emu_timeout           = "Эмулятор не появился в flutter devices за 120 с."
+        emu_cold              = "Перезапускаю эмулятор холодным запуском (Cold Boot)..."
+        emu_manual            = "Эмулятор не отвечает и после Cold Boot. Запустите его вручную (Android Studio -> Device Manager или flutter emulators --launch <id>); открыт терминал для flutter run."
+        emu_term_hint         = "Когда эмулятор загрузится: flutter devices, затем flutter run -d emulator-5554 (укажите свой id эмулятора)."
         emu_exe_missing       = "Не найден Android emulator ({0}). Проверьте ANDROID_HOME."
         flutter_pub           = "flutter pub get..."
         flutter_pub_offline   = "Нет сети (pub.dev) — flutter pub get пропускаем, используем локальный кэш."
@@ -227,6 +230,9 @@ $script:Messages = @{
         emu_wait              = "Waiting for Android emulator in flutter devices..."
         emu_found             = "Emulator: {0}"
         emu_timeout           = "Emulator did not appear in flutter devices within 120s."
+        emu_cold              = "Restarting emulator with Cold Boot..."
+        emu_manual            = "Emulator still unresponsive after Cold Boot. Start it manually (Android Studio Device Manager or flutter emulators --launch <id>); a terminal is open for flutter run."
+        emu_term_hint         = "Once the emulator is up: flutter devices, then flutter run -d emulator-5554 (use your emulator id)."
         emu_exe_missing       = "Android emulator not found ({0}). Check ANDROID_HOME."
         flutter_pub           = "flutter pub get..."
         flutter_pub_offline   = "No network (pub.dev) — skipping flutter pub get, using local cache."
@@ -861,7 +867,7 @@ function Get-PathFreeGigabytes([string]$Path) {
     }
 }
 
-function Start-AndroidEmulatorIfNeeded {
+function Start-AndroidEmulatorIfNeeded([bool]$ColdBoot = $false) {
     if (Get-AndroidEmulatorDeviceId) {
         Write-Info (T "emu_already")
         return
@@ -885,7 +891,9 @@ function Start-AndroidEmulatorIfNeeded {
     $errLog = Join-Path $RunDir "emulator-launch.err.log"
     $outLog = Join-Path $RunDir "emulator-launch.out.log"
     Remove-Item -Force -ErrorAction SilentlyContinue $errLog, $outLog
-    $proc = Start-Process -FilePath $exe -ArgumentList @("-avd", $avdId) -PassThru -RedirectStandardError $errLog -RedirectStandardOutput $outLog
+    $script:EmuProc = $null
+    $proc = Start-Process -FilePath $exe -ArgumentList $(if ($ColdBoot) { @("-avd", $avdId, "-no-snapshot-load") } else { @("-avd", $avdId) }) -PassThru -RedirectStandardError $errLog -RedirectStandardOutput $outLog
+    $script:EmuProc = $proc
     Start-Sleep -Seconds 5
     if ($proc.HasExited) {
         $detail = ""
@@ -914,7 +922,27 @@ function Wait-AndroidEmulatorDevice {
         }
         Start-Sleep -Seconds 3
     } while ((Get-Date) -lt $deadline)
-    throw (T "emu_timeout")
+    return $null
+}
+
+function Resolve-AndroidEmulator {
+    Start-AndroidEmulatorIfNeeded
+    $id = Wait-AndroidEmulatorDevice
+    if ($id) { return $id }
+    Write-Warn (T "emu_timeout")
+    Write-Warn (T "emu_cold")
+    if ($script:EmuProc -and -not $script:EmuProc.HasExited) {
+        & taskkill.exe /PID $script:EmuProc.Id /T /F 2>&1 | Out-Null
+    }
+    Start-Sleep -Seconds 3
+    Start-AndroidEmulatorIfNeeded -ColdBoot $true
+    $id = Wait-AndroidEmulatorDevice
+    if ($id) { return $id }
+    Write-Warn (T "emu_manual")
+    $mobileDir = $MobileDir
+    $banner = "Write-Host '$((T "emu_term_hint") -replace "'","''")' -ForegroundColor Yellow"
+    Start-Process -FilePath "powershell.exe" -WorkingDirectory $mobileDir -ArgumentList @("-NoExit", "-NoProfile", "-Command", $banner)
+    return $null
 }
 
 function Get-DeviceMenuOptions([bool]$ExcludeEmulator) {
@@ -1021,8 +1049,7 @@ function Expand-DeviceChoice([string]$Choice) {
         return $null
     }
     if ($Choice -eq "emulator:launch" -or $Choice -eq "emulator") {
-        Start-AndroidEmulatorIfNeeded
-        return Wait-AndroidEmulatorDevice
+        return Resolve-AndroidEmulator
     }
     if ($Choice -eq "chrome") {
         $rows = Get-FlutterDeviceRows
@@ -1408,7 +1435,13 @@ if ($kind -eq "local") {
     }
 }
 
-$script:PendingSeed = if ($script:UseReplay) { $script:ReplaySeed } else { $true }
+$script:PendingSeed = if ($script:UseReplay) {
+    $script:ReplaySeed
+} elseif ($kind -eq "local" -and (Test-InteractivePrompt)) {
+    Confirm-Yes (T "seed_ask")
+} else {
+    $true
+}
 Save-LastStart $script:UiLang $kind $deviceChoices[0] $deviceChoices[1] $script:PendingSeed
 
 $needFlutter = $false
@@ -1446,13 +1479,7 @@ if ($kind -eq "publish") {
 Wait-Api
 
 if ($kind -eq "local") {
-    $doSeed = $true
-    if ($script:UseReplay) {
-        $doSeed = $script:ReplaySeed
-    } elseif (Test-InteractivePrompt) {
-        $doSeed = Confirm-Yes (T "seed_ask")
-    }
-    $script:PendingSeed = $doSeed
+    $doSeed = $script:PendingSeed
     Save-LastStart $script:UiLang $kind $deviceChoices[0] $deviceChoices[1] $doSeed
     if ($doSeed) {
         $seedScript = Join-Path $DevopsRoot "seed-local-music.ps1"
